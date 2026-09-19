@@ -87,6 +87,7 @@ public final class AuthManager {
     private final Map<UUID, Long> premiumFallback = new ConcurrentHashMap<>();
     // 登录超时任务启动时间戳：用于判断超时任务是否为最新（重启时旧任务自动失效）
     private final Map<UUID, Long> loginTimeoutStartedAt = new ConcurrentHashMap<>();
+    private volatile Consumer<UUID> unregisterConfirmInvalidator;
     // 缓存世界结构类型：26.1+ 采用新结构（players/data + dimensions/minecraft/overworld）
     private final boolean newWorldStructure;
     // 注销后拒绝重连时长（毫秒）
@@ -675,11 +676,21 @@ public final class AuthManager {
         }
     }
 
+    public void setUnregisterConfirmInvalidator(Consumer<UUID> invalidator) {
+        this.unregisterConfirmInvalidator = invalidator;
+    }
+
+    private void invalidateUnregisterConfirm(UUID uuid) {
+        Consumer<UUID> invalidator = unregisterConfirmInvalidator;
+        if (invalidator != null) invalidator.accept(uuid);
+    }
+
     // ===== 管理员强制操作 =====
 
     /** 强制登出玩家（无需玩家在线，清除登录状态，并使登录会话与 2FA 会话失效） */
     public boolean forceLogout(UUID uuid) {
         if (!loggedIn.remove(uuid)) return false;
+        invalidateUnregisterConfirm(uuid);
         pendingLogin.add(uuid);
         // 清除 lastLogin 使登录会话立即失效，下次必须用密码登录
         PlayerData data = dataManager.getPlayer(uuid);
@@ -712,6 +723,7 @@ public final class AuthManager {
 
     /** 凭据变更后使登录会话失效：清除 lastLogin（免密窗口）与登录/2FA 会话，强制下次重新验证 */
     private void invalidateLoginSessions(UUID uuid) {
+        invalidateUnregisterConfirm(uuid);
         PlayerData data = dataManager.getPlayer(uuid);
         if (data != null) {
             data.lastLogin(0);
@@ -1084,6 +1096,7 @@ public final class AuthManager {
     // 玩家退出时调用 — 清理会话状态
     public void clearSession(Player player) {
         UUID uuid = player.getUniqueId();
+        invalidateUnregisterConfirm(uuid);
         loggedIn.remove(uuid);
         pendingLogin.remove(uuid);
         // 清除密码校验进行中标记（玩家在校验完成前退出时，异步回调的 player 调度不会执行，需在此兜底清理）

@@ -48,7 +48,7 @@ public final class PreJoinAuthListener implements Listener {
     private final Map<UUID, AuthOutcome> outcomes = new ConcurrentHashMap<>();
     // 活跃的配置阶段会话（Dialog 提交回调查找）
     private final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
-    // timeout=0 时的兜底等待上限（秒）：防止配置阶段断开导致 Session+阻塞线程泄漏
+    // timeout=0 时由配置阶段连接生命周期负责释放 Session
     private static final int CONFIG_WAIT_FALLBACK_SECONDS = 600;
 
     /** 配置阶段会话：连接 + 完成信号（配置线程阻塞等待 Dialog 提交结果） */
@@ -130,7 +130,9 @@ public final class PreJoinAuthListener implements Listener {
         }
 
         Session session = new Session(conn);
-        sessions.put(uuid, session);
+        synchronized (sessions) {
+            sessions.put(uuid, session);
+        }
         // 提为方法作用域：超时断连时仍需玩家语言
         String locale = resolveLocale(conn);
         try {
@@ -150,17 +152,25 @@ public final class PreJoinAuthListener implements Listener {
             // 无下限会导致 Session+阻塞线程随恶意连接累积泄漏；10 分钟兜底到点走超时断连释放
             ConfigManager cfg = plugin.getConfigManager();
             int timeout = isLogin ? cfg.loginTimeout() : cfg.registerTimeout();
-            // 认证结果由上方 session 标志判断，await 返回值无需使用
-            //noinspection ResultOfMethodCallIgnored
-            session.latch.await(timeout > 0 ? timeout : CONFIG_WAIT_FALLBACK_SECONDS, TimeUnit.SECONDS);
+            if (timeout > 0) {
+                //noinspection ResultOfMethodCallIgnored
+                session.latch.await(timeout, TimeUnit.SECONDS);
+            } else {
+                session.latch.await();
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } finally {
-            sessions.remove(uuid);
+            synchronized (sessions) {
+                boolean current = sessions.get(uuid) == session;
+                sessions.remove(uuid, session);
+                if (current && session.success && !session.kicked && !session.fallback) {
+                    outcomes.put(uuid, session.registered ? AuthOutcome.REGISTER : AuthOutcome.LOGIN);
+                }
+            }
         }
         if (session.kicked || session.fallback) return;
         if (session.success) {
-            outcomes.put(uuid, session.registered ? AuthOutcome.REGISTER : AuthOutcome.LOGIN);
             return;
         }
         // 超时未完成：kick-on-timeout 开启时踢出，否则由 onJoin 的 beginAuthFlow 接管

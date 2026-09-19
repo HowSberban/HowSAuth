@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 // preventXxx() 方法在调用方均以 ! 守卫子句形式使用（if (!preventXxx()) return;），
 // IDE 误报"始终反转"，但反转方法逻辑会导致与方法名语义相反，破坏统一的 preventXxx 设计模式
@@ -278,7 +279,11 @@ public final class ConfigManager {
         this.poolSize = clampRange("database.mysql.pool-size", config.getInt("database.mysql.pool-size", 10), 1, 128);
         // 记录数据库配置指纹，用于 reload 时检测是否需要重启
         this.databaseFingerprint = databaseType + "|" + mysqlHost + "|" + mysqlPort
-                + "|" + mysqlDatabase + "|" + mysqlUsername + "|" + mysqlPassword + "|" + poolSize;
+                + "|" + mysqlDatabase + "|" + mysqlUsername + "|" + mysqlPassword + "|" + poolSize
+                + "|" + mysqlParams.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> entry.getKey() + "=" + entry.getValue())
+                .collect(Collectors.joining("&"));
     }
 
     // 登录设置

@@ -425,18 +425,7 @@ public final class PlayerDataManager {
         if (name != null) {
             premiumNameIndex.put(name.toLowerCase(), uuid);
         }
-        Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(SQL_UPDATE_PREMIUM)) {
-                ps.setBoolean(1, true);
-                ps.setString(2, properties);
-                ps.setString(3, name);
-                ps.setString(4, uuid.toString());
-                ps.executeUpdate();
-            } catch (SQLException e) {
-                plugin.getLogger().severe(I18n.get("log.save_player_failed", uuid, e.getMessage()));
-            }
-        });
+        saveNow(data);
     }
 
     /**
@@ -447,18 +436,7 @@ public final class PlayerDataManager {
         PlayerData data = players.get(uuid);
         if (data == null) return;
         data.premium(true);
-        Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(SQL_UPDATE_PREMIUM)) {
-                ps.setBoolean(1, true);
-                ps.setString(2, data.properties());
-                ps.setString(3, data.name());
-                ps.setString(4, uuid.toString());
-                ps.executeUpdate();
-            } catch (SQLException e) {
-                plugin.getLogger().severe(I18n.get("log.save_player_failed", uuid, e.getMessage()));
-            }
-        });
+        saveNow(data);
     }
 
     /**
@@ -469,18 +447,7 @@ public final class PlayerDataManager {
         PlayerData data = players.get(uuid);
         if (data == null) return;
         data.premium(false);
-        Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(SQL_UPDATE_PREMIUM)) {
-                ps.setBoolean(1, false);
-                ps.setString(2, data.properties());
-                ps.setString(3, data.name());
-                ps.setString(4, uuid.toString());
-                ps.executeUpdate();
-            } catch (SQLException e) {
-                plugin.getLogger().severe(I18n.get("log.save_player_failed", uuid, e.getMessage()));
-            }
-        });
+        saveNow(data);
     }
 
     /**
@@ -728,16 +695,7 @@ public final class PlayerDataManager {
         PlayerData data = players.get(uuid);
         if (data == null) return;
         data.passwordHash(newHash);
-        Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(SQL_UPDATE_PASSWORD)) {
-                ps.setString(1, newHash);
-                ps.setString(2, uuid.toString());
-                ps.executeUpdate();
-            } catch (SQLException e) {
-                plugin.getLogger().severe(I18n.get("log.update_password_failed", uuid, e.getMessage()));
-            }
-        });
+        saveNow(data);
     }
 
     /** 关闭数据源，释放连接池（确保串行写队列先排空，防止在途写任务打到已关闭的池） */

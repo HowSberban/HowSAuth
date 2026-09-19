@@ -29,6 +29,14 @@ public final class UnregisterCommand implements BasicCommand {
     // 待确认的注销请求：UUID → 到期时间戳，凭据验证通过后写入，confirm 时校验
     private final Map<UUID, Long> pendingConfirms = new ConcurrentHashMap<>();
 
+    public void clearPendingConfirm(UUID uuid) {
+        pendingConfirms.remove(uuid);
+    }
+
+    public void clearAllPendingConfirms() {
+        pendingConfirms.clear();
+    }
+
     public UnregisterCommand(HTLogin plugin, AuthManager authManager) {
         this.plugin = plugin;
         this.authManager = authManager;
