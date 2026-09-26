@@ -150,7 +150,11 @@ public final class AuthManager {
 
     /** 提取玩家客户端 IP（getAddress 可能为 null，如代理协议未解析完成时） */
     public static String clientIp(Player player) {
-        return player.getAddress() != null ? player.getAddress().getAddress().getHostAddress() : null;
+        if (player == null) return null;
+        var socketAddress = player.getAddress();
+        if (socketAddress == null) return null;
+        var address = socketAddress.getAddress();
+        return address != null ? address.getHostAddress() : null;
     }
 
     // Registration
@@ -827,6 +831,7 @@ public final class AuthManager {
             String newHash = PasswordHash.hashPassword(newPassword, configManager.passwordHashAlgorithm(), configManager.bcryptCost());
             player.getScheduler().run(plugin, task2 -> {
                 dataManager.updatePassword(uuid, newHash);
+                invalidateLoginSessions(uuid);
                 done.accept(true);
             }, null);
         });

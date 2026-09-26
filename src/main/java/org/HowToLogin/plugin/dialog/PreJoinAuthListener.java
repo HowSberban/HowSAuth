@@ -131,7 +131,13 @@ public final class PreJoinAuthListener implements Listener {
 
         Session session = new Session(conn);
         synchronized (sessions) {
-            sessions.put(uuid, session);
+            Session previous = sessions.put(uuid, session);
+            if (previous != null) {
+                // 同 UUID 重连/并发配置连接：终止旧等待，避免旧回调失效后遗留阻塞线程
+                previous.kicked = true;
+                previous.latch.countDown();
+                previous.connection.disconnect(I18n.msgForLocale("listener.login_timeout", resolveLocale(previous.connection)));
+            }
         }
         // 提为方法作用域：超时断连时仍需玩家语言
         String locale = resolveLocale(conn);
@@ -147,17 +153,13 @@ public final class PreJoinAuthListener implements Listener {
             } else {
                 showRegister(session, uuid, locale, null);
             }
-            // 阻塞配置线程直到认证完成/超时（虚拟线程阻塞开销极小）
-            // timeout=0 时不真正无限等待：Paper 无配置阶段断开事件，客户端断开无回调释放 latch，
-            // 无下限会导致 Session+阻塞线程随恶意连接累积泄漏；10 分钟兜底到点走超时断连释放
+            // 阻塞配置线程直到认证完成/超时（虚拟线程阻塞开销极小）。
+            // 配置超时为 0 表示聊天流程无超时，但配置阶段仍需有上限，避免客户端断开后 latch 无人释放。
             ConfigManager cfg = plugin.getConfigManager();
-            int timeout = isLogin ? cfg.loginTimeout() : cfg.registerTimeout();
-            if (timeout > 0) {
-                //noinspection ResultOfMethodCallIgnored
-                session.latch.await(timeout, TimeUnit.SECONDS);
-            } else {
-                session.latch.await();
-            }
+            int configuredTimeout = isLogin ? cfg.loginTimeout() : cfg.registerTimeout();
+            int timeout = configuredTimeout > 0 ? configuredTimeout : CONFIG_WAIT_FALLBACK_SECONDS;
+            //noinspection ResultOfMethodCallIgnored
+            session.latch.await(timeout, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } finally {
@@ -239,7 +241,9 @@ public final class PreJoinAuthListener implements Listener {
     }
 
     private static String clientIp(PlayerConfigurationConnection conn) {
-        var address = conn.getClientAddress().getAddress();
+        var socketAddress = conn.getClientAddress();
+        if (socketAddress == null) return null;
+        var address = socketAddress.getAddress();
         return address != null ? address.getHostAddress() : null;
     }
 

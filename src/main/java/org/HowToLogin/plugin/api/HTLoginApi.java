@@ -161,8 +161,9 @@ public final class HTLoginApi {
      * @return 玩家不在线或已登录时返回 false
      */
     public boolean forceLogin(@NotNull Player player) {
+        if (!player.isOnline()) return false;
         if (!tryAcquire(player.getUniqueId())) return false;
-        if (authManager.isLoggedIn(player)) return false;
+        if (!player.isOnline() || authManager.isLoggedIn(player)) return false;
         authManager.forceLogin(player);
         return true;
     }
@@ -183,6 +184,7 @@ public final class HTLoginApi {
      * @return 玩家已有账号或同名账号（含正版）已存在时返回 false
      */
     public boolean forceRegister(@NotNull Player player, @NotNull String password) {
+        if (!player.isOnline()) return false;
         if (!tryAcquire(player.getUniqueId())) return false;
         if (!authManager.forceRegister(player.getUniqueId(), player.getName(), password)) return false;
         authManager.forceLogin(player);
