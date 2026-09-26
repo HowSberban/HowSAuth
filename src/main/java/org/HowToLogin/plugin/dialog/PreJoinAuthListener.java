@@ -241,9 +241,7 @@ public final class PreJoinAuthListener implements Listener {
     }
 
     private static String clientIp(PlayerConfigurationConnection conn) {
-        var socketAddress = conn.getClientAddress();
-        if (socketAddress == null) return null;
-        var address = socketAddress.getAddress();
+        var address = conn.getClientAddress().getAddress();
         return address != null ? address.getHostAddress() : null;
     }
 
