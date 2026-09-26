@@ -6,6 +6,14 @@ plugins {
 group = 'org.howtologin'
 version = '0.1.0'
 
+def buildNumber = project.findProperty('buildNumber')
+
+tasks.named('jar') {
+    archiveFileName = buildNumber
+        ? "HowToLogin-${version}-build.${buildNumber}.jar"
+        : "HowToLogin-${version}.jar"
+}
+
 repositories {
     mavenCentral()
     maven {

@@ -1,0 +1,80 @@
+name: Build Jar
+run-name: ${{ inputs.display_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      display_name:
+        description: '任务名称'
+        type: string
+        default: 'Build Jar'
+      release:
+        description: '创建 Release'
+        type: boolean
+        default: false
+      release_channel:
+        description: '发布渠道'
+        type: choice
+        default: 'Release'
+        options:
+          - Release
+          - Pre-release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+
+    - name: Set up JDK 21
+      uses: actions/setup-java@v5
+      with:
+        distribution: 'zulu'
+        java-version: '21'
+        cache: 'gradle'
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    - name: Build with Gradle
+      run: ./gradlew --no-daemon build -PbuildNumber=${{ github.run_number }}
+
+    - name: Get version from Gradle
+      id: get_version
+      run: echo "version=$(./gradlew -q properties | grep '^version:' | awk '{print $2}')" >> $GITHUB_OUTPUT
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: HowToLogin-${{ steps.get_version.outputs.version }}-build.${{ github.run_number }}
+        path: build/libs/*.jar
+        archive: false
+        if-no-files-found: error
+
+    - name: Create Release
+      if: ${{ inputs.release }}
+      uses: softprops/action-gh-release@v3
+      with:
+        tag_name: >-
+          ${{
+            inputs.release_channel == 'Pre-release'
+              && format('{0}-build.{1}', steps.get_version.outputs.version, github.run_number)
+              || format('{0}', steps.get_version.outputs.version)
+          }}
+        name: >-
+          ${{
+            inputs.release_channel == 'Pre-release'
+              && format('{0}-build.{1}', steps.get_version.outputs.version, github.run_number)
+              || format('{0}', steps.get_version.outputs.version)
+          }}
+        prerelease: ${{ inputs.release_channel == 'Pre-release' }}
+        files: build/libs/*.jar
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
