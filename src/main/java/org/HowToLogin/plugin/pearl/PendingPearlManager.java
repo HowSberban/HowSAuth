@@ -83,7 +83,10 @@ public final class PendingPearlManager implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onEntityAddToWorld(EntityAddToWorldEvent event) {
         if (!(event.getEntity() instanceof EnderPearl pearl)) return;
-        if (!plugin.getConfigManager().pearlEnabled()) return;
+        if (!plugin.getConfigManager().pearlEnabled()) {
+            removePearl(pearl, true);
+            return;
+        }
         UUID owner = resolveOwner(pearl);
         if (owner == null) return;
         Player player = Bukkit.getPlayer(owner);
