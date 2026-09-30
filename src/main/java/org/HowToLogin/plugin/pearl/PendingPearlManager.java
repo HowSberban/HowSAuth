@@ -88,7 +88,7 @@ public final class PendingPearlManager implements Listener {
         if (owner == null) return;
         Player player = Bukkit.getPlayer(owner);
         if (player != null && plugin.getAuthManager().isLoggedIn(player)) return;
-        absorb(pearl, owner);
+        absorb(pearl, owner, true);
         save();
     }
 
@@ -157,6 +157,10 @@ public final class PendingPearlManager implements Listener {
     }
 
     private void absorb(EnderPearl pearl, UUID owner) {
+        absorb(pearl, owner, false);
+    }
+
+    private void absorb(EnderPearl pearl, UUID owner, boolean fromAddToWorld) {
         Location loc = pearl.getLocation();
         World world = loc.getWorld();
         if (world == null) return;
@@ -182,7 +186,7 @@ public final class PendingPearlManager implements Listener {
             updated.add(snapshot);
             return List.copyOf(updated);
         });
-        removePearl(pearl);
+        removePearl(pearl, fromAddToWorld);
     }
 
     private UUID resolveOwner(EnderPearl pearl) {
@@ -223,25 +227,34 @@ public final class PendingPearlManager implements Listener {
                 && Math.abs(snapshot.vz() - vel.getZ()) < STATE_MATCH_EPSILON;
     }
 
-    private void removePearl(EnderPearl pearl) {
+    private void removePearl(EnderPearl pearl, boolean fromAddToWorld) {
         if (!pearl.isValid()) return;
         UUID pearlId = pearl.getUniqueId();
-        handledPearls.add(pearlId);
-        if (Bukkit.isOwnedByCurrentRegion(pearl.getLocation())) {
-            try {
-                pearl.remove();
-            } finally {
-                handledPearls.remove(pearlId);
-            }
+        if (!fromAddToWorld && Bukkit.isOwnedByCurrentRegion(pearl.getLocation())) {
+            markAndRemove(pearl, pearlId);
+            clearHandledLater(pearl, pearlId);
             return;
         }
-        pearl.getScheduler().run(plugin, task -> {
-            try {
-                if (pearl.isValid()) pearl.remove();
-            } finally {
-                handledPearls.remove(pearlId);
-            }
-        }, () -> handledPearls.remove(pearlId));
+        boolean scheduled = pearl.getScheduler().runDelayed(plugin, task -> {
+            if (!pearl.isValid()) return;
+            markAndRemove(pearl, pearlId);
+        }, () -> handledPearls.remove(pearlId), 1) != null;
+        if (!scheduled) handledPearls.remove(pearlId);
+    }
+
+    private void markAndRemove(EnderPearl pearl, UUID pearlId) {
+        handledPearls.add(pearlId);
+        try {
+            pearl.remove();
+        } catch (RuntimeException exception) {
+            handledPearls.remove(pearlId);
+            throw exception;
+        }
+    }
+
+    private void clearHandledLater(EnderPearl pearl, UUID pearlId) {
+        pearl.getScheduler().runDelayed(plugin, task -> handledPearls.remove(pearlId),
+                () -> handledPearls.remove(pearlId), 1);
     }
 
     private void giveItems(Player player, int count) {
