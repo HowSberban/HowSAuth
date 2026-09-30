@@ -13,6 +13,7 @@ import org.howtologin.plugin.dialog.DialogManager;
 import org.howtologin.plugin.dialog.PreJoinAuthListener;
 import org.howtologin.plugin.hook.HTLoginExpansion;
 import org.howtologin.plugin.listener.JoinQuitMessageService;
+import org.howtologin.plugin.listener.PearlDebugListener;
 import org.howtologin.plugin.listener.PlayerListener;
 import org.howtologin.plugin.packet.InventoryPacketListener;
 import org.howtologin.plugin.pearl.PendingPearlManager;
@@ -133,10 +134,6 @@ public class HTLogin extends JavaPlugin {
         I18n.shutdown();
     }
 
-    public UnregisterCommand getUnregisterCommand() {
-        return unregisterCommand;
-    }
-
     private void registerCommands() {
         // Paper 插件规范：通过 LifecycleEvents 程序化注册命令
         // 使用 var 接收 getLifecycleManager() 的返回值，让编译器自动推断通配符类型，
@@ -168,6 +165,8 @@ public class HTLogin extends JavaPlugin {
         // 末影珍珠保管：独立监听器（接管飞行珍珠，登录后按配置返还）
         pendingPearlManager = new PendingPearlManager(this);
         getServer().getPluginManager().registerEvents(pendingPearlManager, this);
+        // pearl-test 分支临时诊断：记录珍珠发射、碰撞、进出世界与传送行为
+        getServer().getPluginManager().registerEvents(new PearlDebugListener(getLogger()), this);
         // 加入/退出消息：独立监听器（模板替换 + 未登录隐藏 + 登录成功补发）
         JoinQuitMessageService joinQuitMessageService = new JoinQuitMessageService(authManager, configManager);
         getServer().getPluginManager().registerEvents(joinQuitMessageService, this);
