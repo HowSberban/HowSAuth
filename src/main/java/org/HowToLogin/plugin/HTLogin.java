@@ -40,7 +40,6 @@ public class HTLogin extends JavaPlugin {
     private DialogManager dialogManager;
     // Pre-join Dialog（配置阶段认证）：配置事件 API 不可用时为 null，自动回退聊天栏提示
     private PreJoinAuthListener preJoinAuthListener;
-    private UnregisterCommand unregisterCommand;
     // 正版验证异步组件（线程池管理等，禁用时回收）
     private MojangClient mojangClient;
     private PlayerInjector playerInjector;
@@ -133,10 +132,6 @@ public class HTLogin extends JavaPlugin {
         I18n.shutdown();
     }
 
-    public UnregisterCommand getUnregisterCommand() {
-        return unregisterCommand;
-    }
-
     private void registerCommands() {
         // Paper 插件规范：通过 LifecycleEvents 程序化注册命令
         // 使用 var 接收 getLifecycleManager() 的返回值，让编译器自动推断通配符类型，
@@ -152,6 +147,7 @@ public class HTLogin extends JavaPlugin {
             commands.register("logout", "退出登录", List.of(), new LogoutCommand(authManager));
             commands.register("upgrade", "将离线账号升级为正版账号", List.of(), new UpgradeAccountCommand(this, authManager));
             commands.register("downgrade", "将正版账号降级为离线账号", List.of(), new DowngradeAccountCommand(this, authManager));
+            UnregisterCommand unregisterCommand;
             commands.register("unregister", "注销自己的账号（凭据验证与二次确认）", List.of(), unregisterCommand = new UnregisterCommand(this, authManager));
             authManager.setUnregisterConfirmInvalidator(unregisterCommand::clearPendingConfirm);
             commands.register(new PremiumCommand(this, authManager).buildNode(), "强制切换账号正版状态（管理员）", List.of());
