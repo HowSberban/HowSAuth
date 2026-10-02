@@ -33,10 +33,6 @@ public final class UnregisterCommand implements BasicCommand {
         pendingConfirms.remove(uuid);
     }
 
-    public void clearAllPendingConfirms() {
-        pendingConfirms.clear();
-    }
-
     public UnregisterCommand(HTLogin plugin, AuthManager authManager) {
         this.plugin = plugin;
         this.authManager = authManager;

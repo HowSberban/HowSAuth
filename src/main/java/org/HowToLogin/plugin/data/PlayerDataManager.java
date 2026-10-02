@@ -65,8 +65,6 @@ public final class PlayerDataManager {
             "REPLACE INTO players (uuid, name, password_hash, ip, last_login, logout_location, premium, properties, game_mode, totp_secret, last_active) " +
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     private static final String SQL_DELETE = "DELETE FROM players WHERE uuid = ?";
-    private static final String SQL_UPDATE_PASSWORD =
-            "UPDATE players SET password_hash = ? WHERE uuid = ?";
     private static final String SQL_UPDATE_PREMIUM =
             "UPDATE players SET premium = ?, properties = ?, name = ? WHERE uuid = ?";
 

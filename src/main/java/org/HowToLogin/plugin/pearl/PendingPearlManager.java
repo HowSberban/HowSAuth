@@ -60,7 +60,7 @@ public final class PendingPearlManager implements Listener {
     private volatile boolean pearlStateInitialized;
     private volatile boolean shuttingDown;
     private volatile ScheduledTask saveTask;
-    private volatile ScheduledTask handledCleanupTask;
+    private final ScheduledTask handledCleanupTask;
 
     public PendingPearlManager(HTLogin plugin) {
         this.plugin = plugin;
@@ -347,22 +347,8 @@ public final class PendingPearlManager implements Listener {
                     UUID uuid = UUID.fromString(key);
                     List<PearlSnapshot> snapshots = new ArrayList<>();
                     for (Map<?, ?> map : yaml.getMapList(key)) {
-                        Object worldValue = map.get("world");
-                        if (!(worldValue instanceof String world)) continue;
-                        Object pearlIdValue = map.get("pearlId");
-                        UUID pearlId = null;
-                        boolean legacy = pearlIdValue == null || Boolean.TRUE.equals(map.get("legacy"));
-                        if (pearlIdValue instanceof String id) {
-                            try {
-                                pearlId = UUID.fromString(id);
-                            } catch (IllegalArgumentException ignored) {
-                                // 损坏的珍珠编号按旧格式记录处理。
-                                legacy = true;
-                            }
-                        }
-                        snapshots.add(new PearlSnapshot(pearlId, legacy, world,
-                                number(map.get("x")), number(map.get("y")), number(map.get("z")),
-                                number(map.get("vx")), number(map.get("vy")), number(map.get("vz"))));
+                        PearlSnapshot snapshot = parseSnapshot(map);
+                        if (snapshot != null) snapshots.add(snapshot);
                     }
                     if (!snapshots.isEmpty()) pending.put(uuid, List.copyOf(snapshots));
                 } catch (IllegalArgumentException ignored) {
@@ -374,6 +360,49 @@ public final class PendingPearlManager implements Listener {
         }
     }
 
+    private static PearlSnapshot parseSnapshot(Map<?, ?> map) {
+        Object worldValue = map.get("world");
+        if (!(worldValue instanceof String world)) return null;
+        Object pearlIdValue = map.get("pearlId");
+        UUID pearlId = null;
+        boolean legacy = pearlIdValue == null || Boolean.TRUE.equals(map.get("legacy"));
+        if (pearlIdValue instanceof String id) {
+            try {
+                pearlId = UUID.fromString(id);
+            } catch (IllegalArgumentException ignored) {
+                legacy = true;
+            }
+        }
+        return new PearlSnapshot(pearlId, legacy, world,
+                number(map.get("x")), number(map.get("y")), number(map.get("z")),
+                number(map.get("vx")), number(map.get("vy")), number(map.get("vz")));
+    }
+
+    private static List<Map<String, Object>> serializeSnapshots(List<PearlSnapshot> snapshots) {
+        List<Map<String, Object>> maps = new ArrayList<>(snapshots.size());
+        for (PearlSnapshot snapshot : snapshots) {
+            maps.add(serializeSnapshot(snapshot));
+        }
+        return maps;
+    }
+
+    private static Map<String, Object> serializeSnapshot(PearlSnapshot snapshot) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        if (snapshot.pearlId() != null) {
+            map.put("pearlId", snapshot.pearlId().toString());
+        } else if (snapshot.legacy()) {
+            map.put("legacy", true);
+        }
+        map.put("world", snapshot.world());
+        map.put("x", snapshot.x());
+        map.put("y", snapshot.y());
+        map.put("z", snapshot.z());
+        map.put("vx", snapshot.vx());
+        map.put("vy", snapshot.vy());
+        map.put("vz", snapshot.vz());
+        return map;
+    }
+
     private static double number(Object value) {
         return value instanceof Number n ? n.doubleValue() : 0;
     }
@@ -382,14 +411,8 @@ public final class PendingPearlManager implements Listener {
         if (shuttingDown) return;
         saveRequested.set(true);
         if (!saveScheduled.compareAndSet(false, true)) return;
-        ScheduledTask scheduled = Bukkit.getAsyncScheduler().runDelayed(plugin,
+        saveTask = Bukkit.getAsyncScheduler().runDelayed(plugin,
                 task -> flushScheduledSaves(), SAVE_COALESCE_DELAY_MILLIS, TimeUnit.MILLISECONDS);
-        saveTask = scheduled;
-        if (scheduled == null) {
-            saveScheduled.set(false);
-            saveRequested.set(false);
-            saveSync();
-        }
     }
 
     private void flushScheduledSaves() {
@@ -409,8 +432,7 @@ public final class PendingPearlManager implements Listener {
         shuttingDown = true;
         ScheduledTask pendingSave = saveTask;
         if (pendingSave != null) pendingSave.cancel();
-        ScheduledTask cleanup = handledCleanupTask;
-        if (cleanup != null) cleanup.cancel();
+        handledCleanupTask.cancel();
         saveRequested.set(false);
         saveScheduled.set(false);
         saveSync();
@@ -419,24 +441,7 @@ public final class PendingPearlManager implements Listener {
     private synchronized void saveSync() {
         YamlConfiguration yaml = new YamlConfiguration();
         for (Map.Entry<UUID, List<PearlSnapshot>> entry : pending.entrySet()) {
-            List<Map<String, Object>> maps = new ArrayList<>();
-            for (PearlSnapshot s : entry.getValue()) {
-                Map<String, Object> map = new LinkedHashMap<>();
-                if (s.pearlId() != null) {
-                    map.put("pearlId", s.pearlId().toString());
-                } else if (s.legacy()) {
-                    map.put("legacy", true);
-                }
-                map.put("world", s.world());
-                map.put("x", s.x());
-                map.put("y", s.y());
-                map.put("z", s.z());
-                map.put("vx", s.vx());
-                map.put("vy", s.vy());
-                map.put("vz", s.vz());
-                maps.add(map);
-            }
-            yaml.set(entry.getKey().toString(), maps);
+            yaml.set(entry.getKey().toString(), serializeSnapshots(entry.getValue()));
         }
         try {
             yaml.save(tempFile);
