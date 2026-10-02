@@ -2,6 +2,7 @@ package org.howtologin.plugin.pearl;
 
 import com.destroystokyo.paper.event.entity.EntityAddToWorldEvent;
 import com.destroystokyo.paper.event.entity.EntityRemoveFromWorldEvent;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -21,13 +22,19 @@ import org.howtologin.plugin.I18n;
 
 import java.io.File;
 import java.lang.reflect.Method;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** 暂存离线或尚未通过认证玩家的末影珍珠。 */
 public final class PendingPearlManager implements Listener {
@@ -37,22 +44,44 @@ public final class PendingPearlManager implements Listener {
 
     private final HTLogin plugin;
     private final File file;
+    private final File tempFile;
     private final Map<UUID, List<PearlSnapshot>> pending = new ConcurrentHashMap<>();
-    private final Set<UUID> handledPearls = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, Long> handledPearls = new ConcurrentHashMap<>();
+    private final Map<Class<?>, Optional<Method>> handleMethods = new ConcurrentHashMap<>();
+    private final Map<Class<?>, Optional<Method>> ownerUuidMethods = new ConcurrentHashMap<>();
+    private final AtomicBoolean saveScheduled = new AtomicBoolean();
+    private final AtomicBoolean saveRequested = new AtomicBoolean();
     private static final double STATE_MATCH_EPSILON = 1e-6;
-    private static Method ownerUuidMethod;
+    private static final long OWNER_WARNING_INTERVAL_MILLIS = TimeUnit.MINUTES.toMillis(1);
+    private static final long HANDLED_PEARL_TTL_MILLIS = TimeUnit.SECONDS.toMillis(30);
+    private static final long SAVE_COALESCE_DELAY_MILLIS = 100;
+    private static final AtomicLong lastOwnerWarningAt = new AtomicLong();
+    private volatile boolean lastPearlEnabled;
+    private volatile boolean pearlStateInitialized;
+    private volatile boolean shuttingDown;
+    private volatile ScheduledTask saveTask;
+    private volatile ScheduledTask handledCleanupTask;
 
     public PendingPearlManager(HTLogin plugin) {
         this.plugin = plugin;
         this.file = new File(plugin.getDataFolder(), "pearls.dat");
+        this.tempFile = new File(plugin.getDataFolder(), "pearls.dat.tmp");
         load();
+        handledCleanupTask = Bukkit.getAsyncScheduler().runAtFixedRate(plugin,
+                task -> cleanupHandledPearls(), 30, 30, TimeUnit.SECONDS);
         refresh();
     }
 
     public void refresh() {
-        if (plugin.getConfigManager().pearlEnabled()) return;
-        pending.clear();
-        saveSync();
+        boolean enabled = plugin.getConfigManager().pearlEnabled();
+        boolean wasEnabled = lastPearlEnabled;
+        boolean initialized = pearlStateInitialized;
+        lastPearlEnabled = enabled;
+        pearlStateInitialized = true;
+        if (!enabled && (!initialized || wasEnabled)) {
+            pending.clear();
+            saveSync();
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -71,11 +100,13 @@ public final class PendingPearlManager implements Listener {
     public void onEntityRemoveFromWorld(EntityRemoveFromWorldEvent event) {
         if (!(event.getEntity() instanceof EnderPearl pearl)) return;
         if (!plugin.getConfigManager().pearlEnabled()) return;
-        if (handledPearls.remove(pearl.getUniqueId())) return;
+        if (handledPearls.remove(pearl.getUniqueId()) != null) return;
         UUID owner = resolveOwner(pearl);
-        if (owner == null) return;
-        Player player = Bukkit.getPlayer(owner);
-        if (player != null && plugin.getAuthManager().isLoggedIn(player)) return;
+        if (owner == null) {
+            warnOwnerResolutionFailure(pearl);
+            return;
+        }
+        if (isAuthenticatedOwner(owner)) return;
         absorb(pearl, owner);
         save();
     }
@@ -83,15 +114,20 @@ public final class PendingPearlManager implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onEntityAddToWorld(EntityAddToWorldEvent event) {
         if (!(event.getEntity() instanceof EnderPearl pearl)) return;
+        UUID owner = resolveOwner(pearl);
         if (!plugin.getConfigManager().pearlEnabled()) {
-            removePearl(pearl, true);
+            // 开关关闭时仍清理未登录玩家的恢复珍珠，但不能干扰已登录玩家的正常投掷。
+            if (owner == null) return;
+            if (isAuthenticatedOwner(owner)) return;
+            removePearl(pearl);
             return;
         }
-        UUID owner = resolveOwner(pearl);
-        if (owner == null) return;
-        Player player = Bukkit.getPlayer(owner);
-        if (player != null && plugin.getAuthManager().isLoggedIn(player)) return;
-        absorb(pearl, owner, true);
+        if (owner == null) {
+            warnOwnerResolutionFailure(pearl);
+            return;
+        }
+        if (isAuthenticatedOwner(owner)) return;
+        absorb(pearl, owner);
         save();
     }
 
@@ -160,10 +196,6 @@ public final class PendingPearlManager implements Listener {
     }
 
     private void absorb(EnderPearl pearl, UUID owner) {
-        absorb(pearl, owner, false);
-    }
-
-    private void absorb(EnderPearl pearl, UUID owner, boolean fromAddToWorld) {
         Location loc = pearl.getLocation();
         World world = loc.getWorld();
         if (world == null) return;
@@ -189,7 +221,7 @@ public final class PendingPearlManager implements Listener {
             updated.add(snapshot);
             return List.copyOf(updated);
         });
-        removePearl(pearl, fromAddToWorld);
+        removePearl(pearl);
     }
 
     private UUID resolveOwner(EnderPearl pearl) {
@@ -199,15 +231,43 @@ public final class PendingPearlManager implements Listener {
         return readOwnerUuid(pearl);
     }
 
-    private static UUID readOwnerUuid(EnderPearl pearl) {
+    private boolean isAuthenticatedOwner(UUID owner) {
+        Player player = Bukkit.getPlayer(owner);
+        return player != null && plugin.getAuthManager().isLoggedIn(player);
+    }
+
+    private UUID readOwnerUuid(EnderPearl pearl) {
         try {
-            Object handle = pearl.getClass().getMethod("getHandle").invoke(pearl);
-            if (ownerUuidMethod == null) {
-                ownerUuidMethod = handle.getClass().getMethod("getOwnerUUID");
-            }
-            return (UUID) ownerUuidMethod.invoke(handle);
-        } catch (Exception e) {
+            Optional<Method> handleMethod = handleMethods.computeIfAbsent(
+                    pearl.getClass(), type -> findMethod(type, "getHandle"));
+            if (handleMethod.isEmpty()) return null;
+            Object handle = handleMethod.get().invoke(pearl);
+            Optional<Method> ownerMethod = ownerUuidMethods.computeIfAbsent(
+                    handle.getClass(), type -> findMethod(type, "getOwnerUUID"));
+            if (ownerMethod.isEmpty()) return null;
+            return (UUID) ownerMethod.get().invoke(handle);
+        } catch (ReflectiveOperationException | RuntimeException e) {
             return null;
+        }
+    }
+
+    private static Optional<Method> findMethod(Class<?> type, String name) {
+        try {
+            return Optional.of(type.getMethod(name));
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
+    private void warnOwnerResolutionFailure(EnderPearl pearl) {
+        long now = System.currentTimeMillis();
+        while (true) {
+            long previous = lastOwnerWarningAt.get();
+            if (now - previous < OWNER_WARNING_INTERVAL_MILLIS) return;
+            if (lastOwnerWarningAt.compareAndSet(previous, now)) {
+                plugin.getLogger().warning(I18n.get("log.pearl_owner_resolve_failed", pearl.getUniqueId()));
+                return;
+            }
         }
     }
 
@@ -230,10 +290,10 @@ public final class PendingPearlManager implements Listener {
                 && Math.abs(snapshot.vz() - vel.getZ()) < STATE_MATCH_EPSILON;
     }
 
-    private void removePearl(EnderPearl pearl, boolean fromAddToWorld) {
+    private void removePearl(EnderPearl pearl) {
         if (!pearl.isValid()) return;
         UUID pearlId = pearl.getUniqueId();
-        if (!fromAddToWorld && Bukkit.isOwnedByCurrentRegion(pearl.getLocation())) {
+        if (Bukkit.isOwnedByCurrentRegion(pearl.getLocation())) {
             markAndRemove(pearl, pearlId);
             clearHandledLater(pearl, pearlId);
             return;
@@ -245,8 +305,17 @@ public final class PendingPearlManager implements Listener {
         if (!scheduled) handledPearls.remove(pearlId);
     }
 
+    private void cleanupHandledPearls() {
+        long cutoff = System.currentTimeMillis() - HANDLED_PEARL_TTL_MILLIS;
+        handledPearls.forEach((pearlId, handledAt) -> {
+            if (handledAt <= cutoff) {
+                handledPearls.remove(pearlId, handledAt);
+            }
+        });
+    }
+
     private void markAndRemove(EnderPearl pearl, UUID pearlId) {
-        handledPearls.add(pearlId);
+        handledPearls.put(pearlId, System.currentTimeMillis());
         try {
             pearl.remove();
         } catch (RuntimeException exception) {
@@ -310,10 +379,40 @@ public final class PendingPearlManager implements Listener {
     }
 
     private void save() {
-        Bukkit.getAsyncScheduler().runNow(plugin, task -> saveSync());
+        if (shuttingDown) return;
+        saveRequested.set(true);
+        if (!saveScheduled.compareAndSet(false, true)) return;
+        ScheduledTask scheduled = Bukkit.getAsyncScheduler().runDelayed(plugin,
+                task -> flushScheduledSaves(), SAVE_COALESCE_DELAY_MILLIS, TimeUnit.MILLISECONDS);
+        saveTask = scheduled;
+        if (scheduled == null) {
+            saveScheduled.set(false);
+            saveRequested.set(false);
+            saveSync();
+        }
+    }
+
+    private void flushScheduledSaves() {
+        try {
+            do {
+                saveRequested.set(false);
+                saveSync();
+            } while (!shuttingDown && saveRequested.get());
+        } finally {
+            saveTask = null;
+            saveScheduled.set(false);
+            if (!shuttingDown && saveRequested.get()) save();
+        }
     }
 
     public void shutdown() {
+        shuttingDown = true;
+        ScheduledTask pendingSave = saveTask;
+        if (pendingSave != null) pendingSave.cancel();
+        ScheduledTask cleanup = handledCleanupTask;
+        if (cleanup != null) cleanup.cancel();
+        saveRequested.set(false);
+        saveScheduled.set(false);
         saveSync();
     }
 
@@ -340,9 +439,15 @@ public final class PendingPearlManager implements Listener {
             yaml.set(entry.getKey().toString(), maps);
         }
         try {
-            yaml.save(file);
+            yaml.save(tempFile);
+            try {
+                Files.move(tempFile.toPath(), file.toPath(),
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tempFile.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (Exception e) {
-            plugin.getLogger().warning("暂存末影珍珠保存失败：" + e.getMessage());
+            plugin.getLogger().warning(I18n.get("log.pearl_persist_failed", e.getMessage()));
         }
     }
 }
