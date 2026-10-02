@@ -1,13 +1,7 @@
 name: Build Jar
-run-name: ${{ inputs.display_name || github.ref_name }}
+run-name: ${{ inputs.display_name }}
 
 on:
-  push:
-    branches:
-    - master
-  pull_request:
-    branches:
-    - master
   workflow_dispatch:
     inputs:
       display_name:
