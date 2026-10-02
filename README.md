@@ -1,8 +1,7 @@
 <div align="center">
 
-# HowToLogin
+# HowSAuth
 
-简称`HTLogin`  
 一个 Minecraft 登录插件，使用 PaperAPI，支持 Folia.
 
 </div>
