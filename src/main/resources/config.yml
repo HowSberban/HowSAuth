@@ -1,4 +1,4 @@
-# HTLogin 配置文件
+# HowSAuth 配置文件
 
 # 配置文件版本（完整版本号），请勿修改
 version: ${version}
@@ -12,7 +12,7 @@ database:
     host: localhost
     # 端口（有效范围 1-65535）
     port: 3306
-    database: htlogin
+    database: hsauth
     username: root
     password: ""
     # 连接池大小（有效范围 1-128）
@@ -208,7 +208,7 @@ settings:
   real-unreg: true
   # 是否允许玩家自助注销账号（/unregister）
   # 须验证密码与 2FA 验证码（按账户持有情况），并二次确认；正版账户免验证
-  # 管理员删除账号不受此开关影响（/htlogin unreg）
+  # 管理员删除账号不受此开关影响（/hsauth unreg）
   allow-self-unregister: true
   # 清理不活跃账号：启动时删除超过 days 天未登录的账号（正版账号不受影响）
   purge:

@@ -3,15 +3,15 @@ plugins {
     id("xyz.jpenilla.run-paper") version "3.0.2"
 }
 
-group = 'org.howtologin'
+group = 'org.howsauth'
 version = '0.1.0'
 
 def buildNumber = project.findProperty('buildNumber')
 
 tasks.named('jar') {
     archiveFileName = buildNumber
-        ? "HowToLogin-${version}-build.${buildNumber}.jar"
-        : "HowToLogin-${version}.jar"
+        ? "HowSAuth-${version}-build.${buildNumber}.jar"
+        : "HowSAuth-${version}.jar"
 }
 
 repositories {

@@ -1,8 +1,8 @@
 <div align="center">
 
-# HowToLogin
+# HowSAuth
 
-简称`HTLogin`  
+简称`HSAuth`  
 一个 Minecraft 登录插件，使用 PaperAPI，支持 Folia.
 
 </div>
@@ -82,19 +82,19 @@
 | `/upgrade`                          | —                  | 将离线账号升级为正版账号（需开启升级功能）                                   |
 | `/downgrade`                        | —                  | 将正版账号降级为离线账号（需已设密码或绑定 2FA）                             |
 
-### 管理员命令（权限 `htlogin.admin`）
+### 管理员命令（权限 `hsauth.admin`）
 
 | 命令                                     | 说明                                                        |
 |------------------------------------------|-------------------------------------------------------------|
-| `/htlogin reload`                        | 重载配置和语言文件（数据库配置变更时需重启）                |
-| `/htlogin accounts <玩家>`               | 查询该玩家 IP 下的其它账号                                  |
-| `/htlogin forcelogout <玩家>`            | 强制登出                                                    |
-| `/htlogin forcechangepw <玩家> <新密码>` | 强制改密                                                    |
-| `/htlogin forcelogin <玩家>`             | 强制登录                                                    |
-| `/htlogin forcermpw <玩家>`              | 强制清空密码转为无密码账户（无 2FA/正版时该玩家将无法登录） |
-| `/htlogin forceregister <玩家> <密码>`   | 强制注册                                                    |
-| `/htlogin reset2fa <玩家>`               | 强制解除双因素认证                                          |
-| `/htlogin unreg <玩家>`                  | 删除账号                                                    |
+| `/hsauth reload`                        | 重载配置和语言文件（数据库配置变更时需重启）                |
+| `/hsauth accounts <玩家>`               | 查询该玩家 IP 下的其它账号                                  |
+| `/hsauth forcelogout <玩家>`            | 强制登出                                                    |
+| `/hsauth forcechangepw <玩家> <新密码>` | 强制改密                                                    |
+| `/hsauth forcelogin <玩家>`             | 强制登录                                                    |
+| `/hsauth forcermpw <玩家>`              | 强制清空密码转为无密码账户（无 2FA/正版时该玩家将无法登录） |
+| `/hsauth forceregister <玩家> <密码>`   | 强制注册                                                    |
+| `/hsauth reset2fa <玩家>`               | 强制解除双因素认证                                          |
+| `/hsauth unreg <玩家>`                  | 删除账号                                                    |
 
 ## 配置
 
@@ -102,10 +102,10 @@
 
 ## 开发者 API
 
-通过 `HTLoginApi.getInstance()` 获取 API 实例（插件未加载时返回 `null`）：
+通过 `HSAuthApi.getInstance()` 获取 API 实例（插件未加载时返回 `null`）：
 
 ```java
-HTLoginApi api = HTLoginApi.getInstance();
+HSAuthApi api = HSAuthApi.getInstance();
 if (api != null && api.isAuthenticated(player)) {
     // 玩家已登录
 }
@@ -118,15 +118,15 @@ if (api != null && api.isAuthenticated(player)) {
 - **玩家信息**：`getLastLocation` / `getLastIp` / `getLastLoginTime` / `getRegisteredUuids`
 - **密码操作**：`checkPassword` / `changePassword`
 
-事件（`org.howtologin.plugin.api.event` 包）：
+事件（`org.howsauth.plugin.api.event` 包）：
 
 | 事件                     | 触发时机                                               |
 |--------------------------|--------------------------------------------------------|
-| `HTLoginLoginEvent`      | 登录成功（密码 / IP 免密 / 正版免密 / 强制登录）       |
-| `HTLoginRegisterEvent`   | 注册成功（强制注册离线玩家时 `getPlayer()` 为 `null`） |
-| `HTLoginLogoutEvent`     | 登出 / 强制登出                                        |
-| `HTLoginUnregisterEvent` | 删除账号                                               |
-| `HTLoginLoginFailEvent`  | 登录失败（密码错误）                                   |
+| `HSAuthLoginEvent`      | 登录成功（密码 / IP 免密 / 正版免密 / 强制登录）       |
+| `HSAuthRegisterEvent`   | 注册成功（强制注册离线玩家时 `getPlayer()` 为 `null`） |
+| `HSAuthLogoutEvent`     | 登出 / 强制登出                                        |
+| `HSAuthUnregisterEvent` | 删除账号                                               |
+| `HSAuthLoginFailEvent`  | 登录失败（密码错误）                                   |
 
 ## PlaceholderAPI 变量
 
@@ -134,8 +134,8 @@ if (api != null && api.isAuthenticated(player)) {
 
 | 变量                      | 说明                       |
 |---------------------------|----------------------------|
-| `%htlogin_is_logged_in%`  | 是否已登录（`yes` / `no`） |
-| `%htlogin_is_registered%` | 是否已注册（`yes` / `no`） |
+| `%hsauth_is_logged_in%`  | 是否已登录（`yes` / `no`） |
+| `%hsauth_is_registered%` | 是否已注册（`yes` / `no`） |
 
 ## 语言文件
 

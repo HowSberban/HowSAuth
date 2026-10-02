@@ -1,6 +1,6 @@
-name: HTLogin
+name: HowSAuth
 version: '${version}'
-main: org.howtologin.plugin.HTLogin
+main: org.howsauth.plugin.HowSAuth
 api-version: '1.21'
 load: STARTUP
 authors:
@@ -8,7 +8,7 @@ authors:
 description: A login plugin with Paper API.
 license: GPL-3.0
 folia-supported: true
-loader: org.howtologin.plugin.PluginLoaderImpl
+loader: org.howsauth.plugin.PluginLoaderImpl
 
 dependencies:
   server:
@@ -20,6 +20,6 @@ dependencies:
       required: false
 
 permissions:
-  htlogin.admin:
+  hsauth.admin:
     description: 管理员权限
     default: op
