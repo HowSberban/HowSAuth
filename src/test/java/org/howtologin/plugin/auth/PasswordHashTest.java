@@ -186,7 +186,7 @@ class PasswordHashTest {
     }
 
     /** 返回 null 的哨兵值：提供 null 而不被折叠成常量条件 */
-    @SuppressWarnings("ConstantValue")
+    @SuppressWarnings("SameReturnValue")
     private static String absentHash() {
         return null;
     }
