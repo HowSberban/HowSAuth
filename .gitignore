@@ -102,6 +102,8 @@ $RECYCLE.BIN/
 
 .gradle
 build/
+# 工作区内的 Gradle 用户目录（沙箱受限运行使用；本机正常构建不需要，可随时删除）
+.gradle-local/
 
 # Ignore Gradle GUI config
 gradle-app.setting

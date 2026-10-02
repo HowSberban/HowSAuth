@@ -136,25 +136,27 @@ public class HTLogin extends JavaPlugin {
         // Paper 插件规范：通过 LifecycleEvents 程序化注册命令
         // 使用 var 接收 getLifecycleManager() 的返回值，让编译器自动推断通配符类型，
         // 避免显式声明 LifecycleEventManager<Plugin> 时与实际返回类型不匹配的警告
+        // 命令描述取自语言文件（默认语言）：命令树随登录一次性下发，无法按玩家语言本地化，
+        // 因此这里只取默认语言那一份，且 /htlogin reload 不会更新已注册的描述（需重启）
         var manager = this.getLifecycleManager();
         manager.registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             Commands commands = event.registrar();
-            commands.register("register", "注册账号", List.of("reg"), new RegisterCommand(this, authManager));
-            commands.register("login", "登录账号", List.of("l"), new LoginCommand(authManager));
-            commands.register("changepassword", "修改密码", List.of("changepw", "cp"), new ChangePasswordCommand(this, authManager));
-            commands.register("addpassword", "为无密码账户设置密码", List.of("addpw"), new AddPasswordCommand(this, authManager));
-            commands.register("removepassword", "移除密码（无密码账户）", List.of("removepw", "rmpw"), new RemovePasswordCommand(authManager));
-            commands.register("logout", "退出登录", List.of(), new LogoutCommand(authManager));
-            commands.register("upgrade", "将离线账号升级为正版账号", List.of(), new UpgradeAccountCommand(this, authManager));
-            commands.register("downgrade", "将正版账号降级为离线账号", List.of(), new DowngradeAccountCommand(this, authManager));
+            commands.register("register", I18n.get("command.desc.register"), List.of("reg"), new RegisterCommand(this, authManager));
+            commands.register("login", I18n.get("command.desc.login"), List.of("l"), new LoginCommand(authManager));
+            commands.register("changepassword", I18n.get("command.desc.changepassword"), List.of("changepw", "cp"), new ChangePasswordCommand(this, authManager));
+            commands.register("addpassword", I18n.get("command.desc.addpassword"), List.of("addpw"), new AddPasswordCommand(this, authManager));
+            commands.register("removepassword", I18n.get("command.desc.removepassword"), List.of("removepw", "rmpw"), new RemovePasswordCommand(authManager));
+            commands.register("logout", I18n.get("command.desc.logout"), List.of(), new LogoutCommand(authManager));
+            commands.register("upgrade", I18n.get("command.desc.upgrade"), List.of(), new UpgradeAccountCommand(this, authManager));
+            commands.register("downgrade", I18n.get("command.desc.downgrade"), List.of(), new DowngradeAccountCommand(this, authManager));
             UnregisterCommand unregisterCommand;
-            commands.register("unregister", "注销自己的账号（凭据验证与二次确认）", List.of(), unregisterCommand = new UnregisterCommand(this, authManager));
+            commands.register("unregister", I18n.get("command.desc.unregister"), List.of(), unregisterCommand = new UnregisterCommand(this, authManager));
             authManager.setUnregisterConfirmInvalidator(unregisterCommand::clearPendingConfirm);
-            commands.register(new PremiumCommand(this, authManager).buildNode(), "强制切换账号正版状态（管理员）", List.of());
+            commands.register(new PremiumCommand(this, authManager).buildNode(), I18n.get("command.desc.premium"), List.of());
             // 2fa 与 htlogin 一样使用 brigadier 原生注册，子命令作为 literal 节点，
             // 客户端在输入空格后能自动显示子命令列表
-            commands.register(new TwoFactorCommand(this, authManager, dialogManager).buildNode(), "双因素认证", List.of("totp"));
-            commands.register(new HTLoginCommand(this).buildNode(), "插件管理命令", List.of());
+            commands.register(new TwoFactorCommand(this, authManager, dialogManager).buildNode(), I18n.get("command.desc.2fa"), List.of("totp"));
+            commands.register(new HTLoginCommand(this).buildNode(), I18n.get("command.desc.htlogin"), List.of());
         });
     }
 

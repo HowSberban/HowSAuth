@@ -39,8 +39,9 @@ import java.util.concurrent.atomic.AtomicLong;
 /** 暂存离线或尚未通过认证玩家的末影珍珠。 */
 public final class PendingPearlManager implements Listener {
 
-    private record PearlSnapshot(UUID pearlId, boolean legacy, String world,
-                                 double x, double y, double z, double vx, double vy, double vz) {}
+    /** 珍珠快照（包内可见：供单测使用） */
+    record PearlSnapshot(UUID pearlId, boolean legacy, String world,
+                         double x, double y, double z, double vx, double vy, double vz) {}
 
     private final HTLogin plugin;
     private final File file;
@@ -360,7 +361,8 @@ public final class PendingPearlManager implements Listener {
         }
     }
 
-    private static PearlSnapshot parseSnapshot(Map<?, ?> map) {
+    /** 解析快照（包内可见：供单测使用）；world 缺失或非字符串时返回 null */
+    static PearlSnapshot parseSnapshot(Map<?, ?> map) {
         Object worldValue = map.get("world");
         if (!(worldValue instanceof String world)) return null;
         Object pearlIdValue = map.get("pearlId");
@@ -378,7 +380,8 @@ public final class PendingPearlManager implements Listener {
                 number(map.get("vx")), number(map.get("vy")), number(map.get("vz")));
     }
 
-    private static List<Map<String, Object>> serializeSnapshots(List<PearlSnapshot> snapshots) {
+    /** 快照列表转 YAML 映射（包内可见：供单测使用） */
+    static List<Map<String, Object>> serializeSnapshots(List<PearlSnapshot> snapshots) {
         List<Map<String, Object>> maps = new ArrayList<>(snapshots.size());
         for (PearlSnapshot snapshot : snapshots) {
             maps.add(serializeSnapshot(snapshot));

@@ -3,6 +3,7 @@ package org.howtologin.plugin.auth;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.SecureRandom;
+import java.util.function.LongSupplier;
 
 /**
  * TOTP 双因素认证工具（RFC 6238）。
@@ -22,8 +23,32 @@ public final class Totp {
     private static final int WINDOW = 1;
     // 密钥生成随机源（线程安全，复用避免重复初始化开销）
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    // 时间源：默认系统时钟，测试可注入
+    private static volatile LongSupplier timeSource = System::currentTimeMillis;
 
     private Totp() {}
+
+    /** 当前时间戳（毫秒）：验证路径统一经此取时，便于测试注入时钟 */
+    public static long nowMillis() {
+        return timeSource.getAsLong();
+    }
+
+    /** 注入时间源（仅供测试使用）：传 null 恢复系统时钟 */
+    public static void setTimeSource(LongSupplier source) {
+        timeSource = source != null ? source : System::currentTimeMillis;
+    }
+
+    /**
+     * 生成指定时刻的验证码（供测试与排查使用；正式登录/绑定路径不应调用）。
+     * @param base32Secret Base32 编码的密钥，非法或为空时返回空串
+     * @param epochSeconds 生成时刻（epoch 秒）
+     */
+    public static String generateCodeAt(String base32Secret, long epochSeconds) {
+        if (base32Secret == null) return "";
+        byte[] key = decodeBase32(base32Secret);
+        if (key.length == 0) return "";
+        return generateCode(key, epochSeconds);
+    }
 
     /** 生成随机 TOTP 密钥（20 字节，Base32 编码） */
     public static String generateSecret() {
@@ -37,8 +62,7 @@ public final class Totp {
      * @param base32Secret Base32 编码的密钥
      * @param code         用户输入的 6 位数字验证码
      */
-    // 调用方均以 ! 守卫子句形式使用（if (!verifyCode(...)) return;），IDE 误报"始终反转"，
-    // 但反转方法逻辑（如改名为 isCodeInvalid）会与方法名语义相反，破坏直觉命名
+    // 保持正向命名：调用方均以 ! 守卫子句使用，反转逻辑会与方法名语义相反
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public static boolean verifyCode(String base32Secret, String code) {
         return matchCounter(base32Secret, code) != null;
@@ -56,7 +80,7 @@ public final class Totp {
         }
         byte[] key = decodeBase32(base32Secret);
         if (key.length == 0) return null;
-        long now = System.currentTimeMillis() / 1000;
+        long now = nowMillis() / 1000;
         for (int offset = -WINDOW; offset <= WINDOW; offset++) {
             // 与 generateCode 的取整口径一致：counter = timeSeconds / PERIOD_SECONDS
             long timeSeconds = now + (long) offset * PERIOD_SECONDS;

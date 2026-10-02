@@ -208,8 +208,7 @@ public final class MojangClient {
      * 可达 → 清除熔断；不可达 → 失败次数 +1（冷却指数延长）。
      * probing 标记保证同一端点同一时刻至多一个探测在途。
      */
-    // client 为共享长生命周期单例（directClient / proxyClients），供所有请求复用连接池，
-    // 不能按请求 try-with-resources 关闭，否则首次探测后连接池即失效，此处抑制 IDE 资源告警
+    // client 为共享长生命周期单例（directClient / proxyClients），不能在请求内关闭：否则首次探测后连接池即失效
     @SuppressWarnings("resource")
     private void probe(Endpoint endpoint) {
         Breaker b = breakers.computeIfAbsent(endpoint.key(), k -> new Breaker());
@@ -285,8 +284,7 @@ public final class MojangClient {
      * @return 单端点查询结果：available=true 时 profile 为确定答复（有值=验证成功，空=未加入/拒绝）；
      *         available=false 表示该端点不可用（不可达/持续过载/时限耗尽），调用方应尝试下一个端点
      */
-    // client 为共享长生命周期单例（directClient / proxyClients），供所有请求复用连接池，
-    // 不能按请求 try-with-resources 关闭，否则首次请求后连接池即失效，此处抑制 IDE 资源告警
+    // client 为共享长生命周期单例（directClient / proxyClients），不能在请求内关闭：否则首次请求后连接池即失效
     @SuppressWarnings("resource")
     private QueryResult queryServer(Endpoint endpoint, String serverHash, String encodedName,
                                     String username, ConfigManager config, long deadline) {

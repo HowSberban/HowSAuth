@@ -22,15 +22,17 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
-// 表 players 在运行时由 initTable() 创建，IDE 静态分析无法解析，抑制 SqlResolve 检查
+// 表 players 在运行时由 initTable() 创建，静态分析无法解析
 @SuppressWarnings("SqlResolve")
-public final class PlayerDataManager {
+public final class PlayerDataManager implements AutoCloseable {
 
     private final HTLogin plugin;
     private final HikariDataSource dataSource;
@@ -285,6 +287,23 @@ public final class PlayerDataManager {
             Thread.currentThread().interrupt();
         }
         saveAllSync();
+    }
+
+    /**
+     * 等待串行写队列排空（不关闭线程池）：向队列提交哨兵任务，其完成表明此前入队的写入均已落库。
+     * 供需要"写入确定"的调用方与测试使用；关服保存请用 {@link #saveSync()}。
+     */
+    public void awaitPendingWrites() {
+        try {
+            dbWriteExecutor.submit(() -> {
+            }).get(30, TimeUnit.SECONDS);
+        } catch (RejectedExecutionException e) {
+            // 队列已关闭（saveSync/close 之后）：不存在在途写入需要等待
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException | TimeoutException e) {
+            plugin.getLogger().warning(I18n.get("log.db_write_await_timeout", 30));
+        }
     }
 
     /** 批量 upsert，整批一个事务；成功返回 true，失败返回 false */
@@ -697,6 +716,7 @@ public final class PlayerDataManager {
     }
 
     /** 关闭数据源，释放连接池（确保串行写队列先排空，防止在途写任务打到已关闭的池） */
+    @Override
     public void close() {
         dbWriteExecutor.shutdown();
         try {

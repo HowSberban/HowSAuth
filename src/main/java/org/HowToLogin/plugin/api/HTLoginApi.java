@@ -71,8 +71,7 @@ public final class HTLoginApi {
      * 变更操作限流：每 UUID 每秒最多 {@value RATE_LIMIT_PER_SECOND} 次，超限拒绝并返回 false。
      * 覆盖改密码/改登录态/删号等重操作，防止外部插件 bug 循环调用拖垮数据库或阻塞线程。
      */
-    // 调用方均以 ! 守卫子句形式使用（if (!tryAcquire(...)) return false;），IDE 误报"始终反转"，
-    // 但反转语义改名（如 isRateLimited）会与"获取成功"的方法名直觉相反
+    // 保持正向命名：调用方均以 ! 守卫子句使用，反转语义会与"获取成功"的名字相反
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     private static boolean tryAcquire(UUID uuid) {
         long now = System.currentTimeMillis();

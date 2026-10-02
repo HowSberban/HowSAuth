@@ -18,8 +18,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-// preventXxx() 方法在调用方均以 ! 守卫子句形式使用（if (!preventXxx()) return;），
-// IDE 误报"始终反转"，但反转方法逻辑会导致与方法名语义相反，破坏统一的 preventXxx 设计模式
+// 保持 preventXxx 正向命名：调用方均以 ! 守卫子句使用，反转逻辑会与方法名语义相反
 @SuppressWarnings("BooleanMethodIsAlwaysInverted")
 public final class ConfigManager {
 
