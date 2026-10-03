@@ -29,8 +29,8 @@ public final class LogoutCommand implements BasicCommand {
             return;
         }
 
-        // 登出流程：先保存当前位置（下次登录回到这里）→ 进入待登录状态 → 踢出服务器
-        authManager.saveLogoutLocation(player);
+        // 登出流程：进入待登录状态 → 踢出服务器
+        // 退出位置由退出流程统一保存（PlayerListener#onQuit 对本次连接已认证的玩家保存）
         authManager.logout(player);
         player.kick(I18n.msg("logout.success", player));
     }

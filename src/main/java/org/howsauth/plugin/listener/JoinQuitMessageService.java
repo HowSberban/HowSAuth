@@ -41,9 +41,10 @@ public class JoinQuitMessageService implements Listener {
     }
 
     /**
-     * 加入消息处理（HIGH：晚于 LOWEST 的认证监听——同步完成的自动登录此时已登录，
+     * 加入消息处理（HIGH：晚于 LOWEST 的认证监听——同步完成的自动登录此时已完成认证，
      * 只有挂起等待输入的玩家才会被隐藏/暂存补发）。
-     * 语义正交：模板永远替换最终广播的消息；隐藏仅针对未登录玩家；
+     * 是否已认证以本次连接标记判定（AuthManager#hasAuthenticatedThisConnection），与退出消息同口径。
+     * 语义正交：模板永远替换最终广播的消息；隐藏仅针对未认证玩家；
      * 补发仅与隐藏搭配有意义（消息没藏就无需补发）。
      */
     @EventHandler(priority = EventPriority.HIGH)
@@ -58,7 +59,7 @@ public class JoinQuitMessageService implements Listener {
         if (template != null) {
             event.joinMessage(template);
         }
-        if (authManager.isLoggedIn(player) || !configManager.joinHideUnauthenticated()) {
+        if (authManager.hasAuthenticatedThisConnection(player.getUniqueId()) || !configManager.joinHideUnauthenticated()) {
             return;
         }
         Component hidden = template != null ? template : event.joinMessage();
@@ -70,10 +71,10 @@ public class JoinQuitMessageService implements Listener {
     }
 
     /**
-     * 退出消息处理：先移除待补发项（未登录退出即丢弃补发，同时防 map 泄漏），
-     * 再按配置隐藏未登录退出消息或应用退出模板。
-     * 依赖登录态读取：会话清理在 MONITOR（PlayerListener#onQuitCleanup）执行，
-     * 本监听器（HIGH）先于清理运行，读到的是退出前的真实登录状态
+     * 退出消息处理：先移除待补发项（未认证退出即丢弃补发，同时防 map 泄漏），
+     * 再按配置隐藏未认证退出消息或应用退出模板。
+     * 认证判定用 AuthManager#hasAuthenticatedThisConnection（与 isLoggedIn 的差异见该方法注释），
+     * 该标记在 MONITOR（PlayerListener#onQuitCleanup）才清理，本监听器（HIGH）读到的是退出前状态
      */
     @EventHandler(priority = EventPriority.HIGH)
     public void onQuitMessage(PlayerQuitEvent event) {
@@ -84,7 +85,7 @@ public class JoinQuitMessageService implements Listener {
             event.quitMessage(null);
             return;
         }
-        if (!authManager.isLoggedIn(player) && configManager.quitHideUnauthenticated()) {
+        if (!authManager.hasAuthenticatedThisConnection(player.getUniqueId()) && configManager.quitHideUnauthenticated()) {
             event.quitMessage(null);
             return;
         }

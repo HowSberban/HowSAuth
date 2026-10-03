@@ -46,6 +46,11 @@ public final class AuthManager {
     private final ConfigManager configManager;
     // 线程安全集合，用于 Folia 多线程区域化调度
     private final Set<UUID> loggedIn = ConcurrentHashMap.newKeySet();
+    // 本次连接是否完成过认证（登录/注册/免密）：供加入/退出消息、退出位置保存等会话级判定使用。
+    // 与 loggedIn 的职责划分：loggedIn 表示实时登录态（登录前防护、命令权限、免密判定），
+    // 强制登出/注销会立即失效它；本标记只记录"本次连接是否认证过"，不随提前失效而清除，
+    // 仅在退出清理（clearSession）时移除
+    private final Set<UUID> authenticatedThisConnection = ConcurrentHashMap.newKeySet();
     private final Set<UUID> pendingLogin = ConcurrentHashMap.newKeySet();
     // 标记密码异步校验进行中的玩家：防止快速重复提交 /login 触发重复校验、重复登录事件与消息
     private final Set<UUID> verifying = ConcurrentHashMap.newKeySet();
@@ -694,16 +699,8 @@ public final class AuthManager {
     /** 强制登出玩家（无需玩家在线，清除登录状态，并使登录会话与 2FA 会话失效） */
     public boolean forceLogout(UUID uuid) {
         if (!loggedIn.remove(uuid)) return false;
-        invalidateUnregisterConfirm(uuid);
         pendingLogin.add(uuid);
-        // 清除 lastLogin 使登录会话立即失效，下次必须用密码登录
-        PlayerData data = dataManager.getPlayer(uuid);
-        if (data != null) {
-            data.lastLogin(0);
-            dataManager.save(uuid);
-        }
-        clearLoginSession(uuid);
-        clear2faSession(uuid);
+        invalidateLoginSessions(uuid);
         fireEvent(new HSAuthLogoutEvent(uuid, Bukkit.getPlayer(uuid)));
         return true;
     }
@@ -725,7 +722,7 @@ public final class AuthManager {
         return true;
     }
 
-    /** 凭据变更后使登录会话失效：清除 lastLogin（免密窗口）与登录/2FA 会话，强制下次重新验证 */
+    /** 使登录会话失效（凭据变更、强制登出等场景）：清除 lastLogin（免密窗口）与登录/2FA 会话，下次必须重新验证 */
     private void invalidateLoginSessions(UUID uuid) {
         invalidateUnregisterConfirm(uuid);
         PlayerData data = dataManager.getPlayer(uuid);
@@ -1089,9 +1086,10 @@ public final class AuthManager {
         return file.delete();
     }
 
-    /** 标记玩家为已登录：清理待登录、双因素待验证、失败计数、踢出记录 */
+    /** 标记玩家为已登录：置位实时登录态与本次连接认证标记，清理待登录、双因素待验证、失败计数、踢出记录 */
     private void markLoggedIn(UUID uuid) {
         loggedIn.add(uuid);
+        authenticatedThisConnection.add(uuid);
         pendingLogin.remove(uuid);
         pending2fa.remove(uuid);
         failedAttempts.remove(uuid);
@@ -1100,12 +1098,14 @@ public final class AuthManager {
 
     /**
      * 玩家退出时调用（PlayerListener#onQuitCleanup，MONITOR）— 清理会话状态
-     * 调用点固定在退出流程的最后阶段：登录态失效须晚于依赖它的退出处理（如退出消息决策），不可提前
+     * 调用点固定在退出流程的最后阶段：实时登录态与本次连接认证标记的失效须晚于依赖它们的退出处理（如退出消息决策），不可提前
      */
     public void clearSession(Player player) {
         UUID uuid = player.getUniqueId();
         invalidateUnregisterConfirm(uuid);
         loggedIn.remove(uuid);
+        // 本次连接认证标记随连接结束失效（晚于加入/退出消息与退出位置保存的判定）
+        authenticatedThisConnection.remove(uuid);
         pendingLogin.remove(uuid);
         // 清除密码校验进行中标记（玩家在校验完成前退出时，异步回调的 player 调度不会执行，需在此兜底清理）
         verifying.remove(uuid);
@@ -1135,6 +1135,15 @@ public final class AuthManager {
 
     public boolean isLoggedIn(UUID uuid) {
         return loggedIn.contains(uuid);
+    }
+
+    /**
+     * 本次连接是否完成过认证（登录/注册/免密）
+     * 与 isLoggedIn 的区别：后者是实时登录态，强制登出/注销会提前失效；
+     * 本方法描述"本次连接认证过"这一历史事实，供加入/退出消息、退出位置保存等会话级判定使用
+     */
+    public boolean hasAuthenticatedThisConnection(UUID uuid) {
+        return authenticatedThisConnection.contains(uuid);
     }
 
     public boolean hasAccount(Player player) {
@@ -1219,16 +1228,14 @@ public final class AuthManager {
     // ===== 坐标保护相关 =====
 
     /**
-     * 保存玩家当前退出位置和游戏模式（仅已登录玩家退出时调用）。
-     * 未登录玩家退出不会更新位置和游戏模式，保持上次保存的值不变。
+     * 保存玩家当前退出位置和游戏模式。
+     * 退出流程仅对本次连接已认证的玩家调用：未认证玩家的位置是登录前的保护/出生点，写入会覆盖真实退出位置
      */
     public void saveLogoutLocation(Player player) {
         PlayerData data = dataManager.getPlayer(player.getUniqueId());
-        if (data != null) {
-            data.logoutLocation(PlayerDataManager.serializeLocation(player.getLocation()));
-            data.gameMode(player.getGameMode().name());
-            dataManager.save(player.getUniqueId());
-        }
+        if (data == null) return;
+        captureLogoutLocation(data, player);
+        dataManager.save(player.getUniqueId());
     }
 
     /**
@@ -1238,9 +1245,14 @@ public final class AuthManager {
     public void updateLogoutLocationCache(Player player) {
         PlayerData data = dataManager.getPlayer(player.getUniqueId());
         if (data != null) {
-            data.logoutLocation(PlayerDataManager.serializeLocation(player.getLocation()));
-            data.gameMode(player.getGameMode().name());
+            captureLogoutLocation(data, player);
         }
+    }
+
+    /** 把当前位置与游戏模式写入内存数据（不落库），供退出保存与关服兜底共用 */
+    private static void captureLogoutLocation(PlayerData data, Player player) {
+        data.logoutLocation(PlayerDataManager.serializeLocation(player.getLocation()));
+        data.gameMode(player.getGameMode().name());
     }
 
     /**

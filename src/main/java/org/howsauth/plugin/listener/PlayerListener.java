@@ -442,18 +442,19 @@ public final class PlayerListener implements Listener {
     }
 
     /**
-     * 玩家退出阶段一（LOWEST，最先执行）：处理依赖登录态的业务并保存退出数据。
-     * 会话状态不在此清理（见 onQuitCleanup）：登录态失效须晚于所有读取它的退出处理
+     * 玩家退出阶段一（LOWEST，最先执行）：处理依赖认证结果的业务并保存退出数据。
+     * 认证判定用 AuthManager#hasAuthenticatedThisConnection（与 isLoggedIn 的差异见该方法注释），
+     * 会话状态清理在阶段二（onQuitCleanup），须晚于本阶段的判定
      */
     @EventHandler(priority = EventPriority.LOWEST)
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
-        // 已登录玩家退出时保存退出位置（用于下次登录后传送回来）
-        // 未登录玩家退出不更新位置，保持上次保存的位置不变
-        if (authManager.isLoggedIn(player)) {
+        // 本次连接已认证的玩家退出时保存退出位置（用于下次登录后传送回来）
+        // 未认证玩家退出不更新位置：其位置是登录前的保护/出生点，写入会覆盖真实退出位置
+        if (authManager.hasAuthenticatedThisConnection(player.getUniqueId())) {
             authManager.saveLogoutLocation(player);
         } else {
-            // 未登录退出：移除登录失明，避免效果随 .dat 保存到下次会话
+            // 未认证退出：移除登录失明，避免效果随 .dat 保存到下次会话
             clearLoginBlindness(player);
         }
         // 立即清理提醒 BossBar：玩家调度器随退出 retired，任务内的清理分支不再执行
@@ -467,8 +468,8 @@ public final class PlayerListener implements Listener {
     /**
      * 玩家退出阶段二（MONITOR，最后执行）：清理会话状态。
      * 退出监听按「保存数据（LOWEST）→ 消息决策（HIGH）→ 状态清理（MONITOR）」分层，
-     * 本阶段须保持在最后：JoinQuitMessageService 在 HIGH 依据登录态决定是否隐藏退出消息，
-     * 提前清理会让已登录玩家被误判为未登录
+     * 本阶段须保持在最后：加入/退出消息与退出位置保存依据本次连接认证标记判定，
+     * 提前清理会让本次已认证的玩家被误判为未认证
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuitCleanup(PlayerQuitEvent event) {
