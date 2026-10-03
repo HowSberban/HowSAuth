@@ -11,6 +11,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.howsauth.plugin.HowSAuth;
+import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.PasswordValidator;
@@ -79,7 +80,12 @@ public final class PreJoinAuthListener implements Listener {
 
     /** 玩家进入世界时消费配置阶段认证结果（无结果返回 null，走正常登录流程） */
     public AuthOutcome consume(Player player) {
-        return outcomes.remove(player.getUniqueId());
+        AuthOutcome outcome = outcomes.remove(player.getUniqueId());
+        if (Debug.on()) {
+            Debug.log("dialog", "consume pre-join result for %s: %s", player.getName(),
+                    outcome != null ? outcome : "none");
+        }
+        return outcome;
     }
 
     /** 配置阶段是否已完成认证（供出生点决策查询，不消费结果） */
@@ -104,26 +110,58 @@ public final class PreJoinAuthListener implements Listener {
         if (uuid != null && authManager.hasAccount(uuid)
                 && authManager.hasNoUsableLoginMethod(uuid)) {
             if (plugin.getConfigManager().rejectNoAuthAccount()) {
+                if (Debug.on()) {
+                    Debug.log("dialog", "pre-join %s: no usable login method, disconnect",
+                            uuid.toString().substring(0, 8));
+                }
                 conn.disconnect(I18n.msgForLocale("prelogin.account_locked", resolveLocale(conn)));
                 return;
             }
             // 放行：跳过验证窗口（无凭据永远验不过），由 onJoin 的 beginAuthFlow 挂起至超时踢出
             return;
         }
-        if (!plugin.getConfigManager().loginDialogEnabled()) return;
+        if (!plugin.getConfigManager().loginDialogEnabled()) {
+            if (Debug.on()) {
+                Debug.log("dialog", "pre-join %s: dialog disabled, fallback to chat",
+                        uuid == null ? "unknown" : uuid.toString().substring(0, 8));
+            }
+            return;
+        }
         // 已登录（reconfigure 场景）直接放行
-        if (uuid == null || authManager.isLoggedIn(uuid)) return;
+        if (uuid == null || authManager.isLoggedIn(uuid)) {
+            if (Debug.on()) {
+                Debug.log("dialog", "pre-join %s: already logged in, pass",
+                        uuid == null ? "unknown" : uuid.toString().substring(0, 8));
+            }
+            return;
+        }
         // 客户端是否支持配置阶段 Dialog（<1.21.6 收到 Show Dialog 包会断连，回退聊天栏提示）
-        if (!supportsDialogs(uuid)) return;
+        if (!supportsDialogs(uuid)) {
+            if (Debug.on()) {
+                Debug.log("dialog", "pre-join %s: dialogs unsupported, fallback to chat",
+                        uuid.toString().substring(0, 8));
+            }
+            return;
+        }
         // 登录无需 2FA 验证码（未绑定/开关关闭/2FA 会话命中）时的免弹窗放行
         String ip = clientIp(conn);
         boolean autoLogin = skipAutoLogin(uuid, ip);
         if (!authManager.requires2faAtLogin(uuid, ip)) {
             // 免密（正版非回退/IP 会话命中）：放行，由 onJoin 现有免密分支收尾
-            if (autoLogin) return;
+            if (autoLogin) {
+                if (Debug.on()) {
+                    Debug.log("dialog", "pre-join %s: auto login (premium/session), pass",
+                            uuid.toString().substring(0, 8));
+                }
+                return;
+            }
             // 无密码账户：仅 2FA 会话命中时免验证码直接登录。无密钥账户不能满足 has2faSession，
             // 不会放行，进入下方验证码窗口等待（永远无法通过，超时断连）
             if (authManager.isPasswordless(uuid) && authManager.has2faSession(uuid, ip)) {
+                if (Debug.on()) {
+                    Debug.log("dialog", "pre-join %s: passwordless 2FA session, mark login",
+                            uuid.toString().substring(0, 8));
+                }
                 outcomes.put(uuid, AuthOutcome.LOGIN);
                 return;
             }
@@ -143,6 +181,11 @@ public final class PreJoinAuthListener implements Listener {
         String locale = resolveLocale(conn);
         try {
             boolean isLogin = authManager.hasAccount(uuid);
+            if (Debug.on()) {
+                String type = (autoLogin || (isLogin && authManager.isPasswordless(uuid))) ? "2fa"
+                        : isLogin ? "login" : "register";
+                Debug.log("dialog", "pre-join %s: show %s dialog", uuid.toString().substring(0, 8), type);
+            }
             // 免密（正版/IP）或无密码账户：跳过密码窗口，直接验证验证码
             if (autoLogin || (isLogin && authManager.isPasswordless(uuid))) {
                 session.passwordless2fa = true;
@@ -168,6 +211,10 @@ public final class PreJoinAuthListener implements Listener {
                 sessions.remove(uuid, session);
                 if (current && session.success && !session.kicked && !session.fallback) {
                     outcomes.put(uuid, session.registered ? AuthOutcome.REGISTER : AuthOutcome.LOGIN);
+                    if (Debug.on()) {
+                        Debug.log("dialog", "record pre-join result for %s: %s", uuid.toString().substring(0, 8),
+                                session.registered ? "REGISTER" : "LOGIN");
+                    }
                 }
             }
         }
@@ -248,16 +295,25 @@ public final class PreJoinAuthListener implements Listener {
     // ===== 窗口展示与确认回调（仅做线程安全操作：重弹/断连/闭锁） =====
 
     private void showLogin(Session session, UUID uuid, String locale, Component error) {
+        if (Debug.on()) {
+            Debug.log("dialog", "show login dialog for %s", uuid.toString().substring(0, 8));
+        }
         showDialog(session, dialogManager.buildLoginDialog(locale, error,
                 loginConfirm(session, uuid, locale), cancel(session, uuid, locale)));
     }
 
     private void showRegister(Session session, UUID uuid, String locale, Component error) {
+        if (Debug.on()) {
+            Debug.log("dialog", "show register dialog for %s", uuid.toString().substring(0, 8));
+        }
         showDialog(session, dialogManager.buildRegisterDialog(locale, error,
                 registerConfirm(session, uuid, locale), cancel(session, uuid, locale)));
     }
 
     private void show2fa(Session session, UUID uuid, String locale, Component error) {
+        if (Debug.on()) {
+            Debug.log("dialog", "show 2fa dialog for %s", uuid.toString().substring(0, 8));
+        }
         showDialog(session, dialogManager.build2faDialog(locale, error,
                 twoFaConfirm(session, uuid, locale), cancel(session, uuid, locale)));
     }
@@ -266,6 +322,9 @@ public final class PreJoinAuthListener implements Listener {
     private DialogActionCallback cancel(Session session, UUID uuid, String locale) {
         return (response, audience) -> {
             if (sessions.get(uuid) != session) return;
+            if (Debug.on()) {
+                Debug.log("dialog", "cancel dialog for %s: disconnecting", uuid.toString().substring(0, 8));
+            }
             session.kicked = true;
             session.latch.countDown();
             session.connection.disconnect(I18n.msgForLocale("dialog.cancelled", locale));
@@ -294,6 +353,9 @@ public final class PreJoinAuthListener implements Listener {
             }
             authManager.loginConfigAsync(uuid, password, clientIp(session.connection), (result, kickSeconds) -> {
                 if (sessions.get(uuid) != session) return;
+                if (Debug.on()) {
+                    Debug.log("dialog", "login dialog confirm for %s: %s", uuid.toString().substring(0, 8), result);
+                }
                 switch (result) {
                     case SUCCESS -> {
                         session.success = true;
@@ -344,13 +406,23 @@ public final class PreJoinAuthListener implements Listener {
             Bukkit.getAsyncScheduler().runNow(plugin, task -> {
                 if (sessions.get(uuid) != session) return;
                 if (authManager.registerConfig(uuid, name, password, ip)) {
+                    if (Debug.on()) {
+                        Debug.log("dialog", "register dialog confirm for %s: success", uuid.toString().substring(0, 8));
+                    }
                     session.registered = true;
                     session.success = true;
                     session.latch.countDown();
                 } else if (authManager.isIpAccountLimitReached(ip)) {
                     // 同 IP 注册数量已达上限：精确提示（连接层已拦已满 IP，此处兜底并发/延迟场景）
+                    if (Debug.on()) {
+                        Debug.log("dialog", "register dialog confirm for %s: failed (ip limit)",
+                                uuid.toString().substring(0, 8));
+                    }
                     showRegister(session, uuid, locale, I18n.msgForLocale("register.ip_limit", locale, plugin.getConfigManager().maxAccountsPerIp()));
                 } else {
+                    if (Debug.on()) {
+                        Debug.log("dialog", "register dialog confirm for %s: failed", uuid.toString().substring(0, 8));
+                    }
                     showRegister(session, uuid, locale, DialogManager.text(locale, "register.failed"));
                 }
             });
@@ -386,9 +458,15 @@ public final class PreJoinAuthListener implements Listener {
                 return;
             }
             if (authManager.verify2faConfig(uuid, code, clientIp(session.connection))) {
+                if (Debug.on()) {
+                    Debug.log("dialog", "2fa dialog confirm for %s: success", uuid.toString().substring(0, 8));
+                }
                 session.success = true;
                 session.latch.countDown();
             } else {
+                if (Debug.on()) {
+                    Debug.log("dialog", "2fa dialog confirm for %s: failed", uuid.toString().substring(0, 8));
+                }
                 show2fa(session, uuid, locale, DialogManager.text(locale, "2fa.confirm_incorrect"));
             }
         };

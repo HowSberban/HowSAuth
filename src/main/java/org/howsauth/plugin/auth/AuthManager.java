@@ -1,6 +1,7 @@
 package org.howsauth.plugin.auth;
 
 import org.howsauth.plugin.HowSAuth;
+import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.api.event.HSAuthLoginEvent;
 import org.howsauth.plugin.api.event.HSAuthLoginFailEvent;
@@ -180,6 +181,9 @@ public final class AuthManager {
         UUID uuid = player.getUniqueId();
         String ip = clientIp(player);
         if (isIpAccountLimitReached(ip)) {
+            if (Debug.on()) {
+                Debug.log("auth", "register %s: failed (ip account limit reached)", player.getName());
+            }
             done.accept(false);
             return;
         }
@@ -188,6 +192,9 @@ public final class AuthManager {
             player.getScheduler().run(plugin, task2 -> {
                 // 同名账号（含正版）已存在时拒绝；离线 UUID 由名推导，该判定同时覆盖账号已存在的并发竞态
                 if (dataManager.hasAccountByName(player.getName())) {
+                    if (Debug.on()) {
+                        Debug.log("auth", "register %s: failed (account already exists)", player.getName());
+                    }
                     done.accept(false);
                     return;
                 }
@@ -195,6 +202,9 @@ public final class AuthManager {
                 // 名额判定与建号原子完成：并发注册同一 IP 不会全部通过检查（防 max-accounts-per-ip 被绕过）
                 if (dataManager.createPlayerIfIpAllowed(uuid, hash, ip != null ? ip : "unknown",
                         configManager.maxAccountsPerIp()) == null) {
+                    if (Debug.on()) {
+                        Debug.log("auth", "register %s: failed (ip account limit reached, atomic check)", player.getName());
+                    }
                     done.accept(false);
                     return;
                 }
@@ -202,6 +212,9 @@ public final class AuthManager {
                 markLoggedIn(uuid);
                 onLoginSuccess(player);
                 fireEvent(new HSAuthRegisterEvent(uuid, player));
+                if (Debug.on()) {
+                    Debug.log("auth", "register %s: success", player.getName());
+                }
                 done.accept(true);
             }, null);
         });
@@ -302,11 +315,19 @@ public final class AuthManager {
      */
     public void loginConfigAsync(UUID uuid, String password, String ip, BiConsumer<LoginResult, Long> done) {
         if (isKicked(uuid)) {
-            done.accept(LoginResult.FAILED, getKickRemaining(uuid));
+            long remaining = getKickRemaining(uuid);
+            if (Debug.on()) {
+                Debug.log("auth", "login config %s: %s (kick %ss remaining)",
+                        uuid.toString().substring(0, 8), LoginResult.FAILED, remaining);
+            }
+            done.accept(LoginResult.FAILED, remaining);
             return;
         }
         PlayerData data = dataManager.getPlayer(uuid);
         if (data == null) {
+            if (Debug.on()) {
+                Debug.log("auth", "login config %s: %s (no account)", uuid.toString().substring(0, 8), LoginResult.FAILED);
+            }
             done.accept(LoginResult.FAILED, 0L);
             return;
         }
@@ -317,14 +338,30 @@ public final class AuthManager {
             boolean ok = PasswordHash.checkPassword(password, snapshot.passwordHash());
             if (!ok) {
                 handleLoginFailure(uuid, null);
-                done.accept(LoginResult.FAILED, isKicked(uuid) ? getKickRemaining(uuid) : 0L);
+                long remaining = isKicked(uuid) ? getKickRemaining(uuid) : 0L;
+                if (Debug.on()) {
+                    if (remaining > 0) {
+                        Debug.log("auth", "login config %s: %s (wrong password, kick %ss remaining)",
+                                uuid.toString().substring(0, 8), LoginResult.FAILED, remaining);
+                    } else {
+                        Debug.log("auth", "login config %s: %s (wrong password)",
+                                uuid.toString().substring(0, 8), LoginResult.FAILED);
+                    }
+                }
+                done.accept(LoginResult.FAILED, remaining);
             } else {
                 String alignedHash = alignedPasswordHash(snapshot, password);
                 if (alignedHash != null) snapshot.passwordHash(alignedHash);
                 if (requires2faAtLogin(uuid, ip)) {
                     pending2fa.add(uuid);
+                    if (Debug.on()) {
+                        Debug.log("auth", "login config %s: %s", uuid.toString().substring(0, 8), LoginResult.NEED_2FA);
+                    }
                     done.accept(LoginResult.NEED_2FA, 0L);
                 } else {
+                    if (Debug.on()) {
+                        Debug.log("auth", "login config %s: %s", uuid.toString().substring(0, 8), LoginResult.SUCCESS);
+                    }
                     done.accept(LoginResult.SUCCESS, 0L);
                 }
             }
@@ -381,6 +418,10 @@ public final class AuthManager {
     private void markLoginSession(UUID uuid, String ip) {
         if (!configManager.sessionEnabled() || ip == null) return;
         loginSessions.put(uuid, new LoginSession(ip, System.currentTimeMillis()));
+        if (Debug.on()) {
+            Debug.log("session", "login session established for %s (ttl %s min)",
+                    uuid.toString().substring(0, 8), configManager.sessionExpireMinutes());
+        }
     }
 
     /** 清除登录会话（登出/强制操作/注销时调用：安全事件后不保留免密码信任） */
@@ -478,12 +519,25 @@ public final class AuthManager {
     public boolean removePassword(Player player, String code) {
         UUID uuid = player.getUniqueId();
         PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null) return false;
+        if (data == null) {
+            if (Debug.on()) {
+                Debug.log("auth", "remove password %s: failed (no account)", player.getName());
+            }
+            return false;
+        }
         // 离线账户移除密码前须验证 TOTP（验证码成为唯一登录因素）；正版账户凭正版验证放行，无需验证码
         if (data.totpSecret() != null && !data.premium()) {
-            if (code == null || code.isEmpty() || !Totp.verifyCode(data.totpSecret(), code)) return false;
+            if (code == null || code.isEmpty() || !Totp.verifyCode(data.totpSecret(), code)) {
+                if (Debug.on()) {
+                    Debug.log("auth", "remove password %s: rejected (invalid 2fa code)", player.getName());
+                }
+                return false;
+            }
         }
         dataManager.updatePassword(uuid, "");
+        if (Debug.on()) {
+            Debug.log("auth", "remove password %s: success", player.getName());
+        }
         return true;
     }
 
@@ -511,19 +565,40 @@ public final class AuthManager {
      * @return 验证通过返回账号数据（供调用方登录收尾），失败返回 null
      */
     private PlayerData verify2faCode(UUID uuid, Player player, String code, String ip) {
-        if (!pending2fa.remove(uuid)) return null;
+        if (!pending2fa.remove(uuid)) {
+            if (Debug.on()) {
+                Debug.log("2fa", "verify %s: rejected (not pending 2fa)",
+                        player != null ? player.getName() : uuid.toString().substring(0, 8));
+            }
+            return null;
+        }
         PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null || data.totpSecret() == null) return null;
+        if (data == null || data.totpSecret() == null) {
+            if (Debug.on()) {
+                Debug.log("2fa", "verify %s: rejected (no secret)",
+                        player != null ? player.getName() : uuid.toString().substring(0, 8));
+            }
+            return null;
+        }
         Long counter = Totp.matchCounter(data.totpSecret(), code);
         // 防重放：同周期或更旧的验证码视为已消费拒绝（TOTP 无状态，同一码在 ±1 窗口内可重复匹配）
         // 入口 pending2fa.remove 已保证同一玩家同一时刻仅一个线程进入消费路径，check-then-put 无竞态
         if (counter == null || counter <= used2faCounters.getOrDefault(uuid, Long.MIN_VALUE)) {
+            if (Debug.on()) {
+                Debug.log("2fa", "verify %s: rejected (%s)",
+                        player != null ? player.getName() : uuid.toString().substring(0, 8),
+                        counter == null ? "invalid code" : "replay");
+            }
             handleLoginFailure(uuid, player);
             pending2fa.add(uuid);
             return null;
         }
         used2faCounters.put(uuid, counter);
         mark2faSession(uuid, ip);
+        if (Debug.on()) {
+            Debug.log("2fa", "verify %s: passed",
+                    player != null ? player.getName() : uuid.toString().substring(0, 8));
+        }
         return data;
     }
 
@@ -537,6 +612,10 @@ public final class AuthManager {
         return pending2faSecret.computeIfAbsent(uuid, u -> {
             String secret = Totp.generateSecret();
             pending2faSecretCreatedAt.put(uuid, System.currentTimeMillis());
+            if (Debug.on()) {
+                Debug.log("2fa", "setup %s: temp secret generated (ttl %ss)",
+                        player.getName(), configManager.twoFaTempSecretExpireSeconds());
+            }
             return secret;
         });
     }
@@ -546,13 +625,31 @@ public final class AuthManager {
         UUID uuid = player.getUniqueId();
         removeExpired2faSecret(uuid);
         String secret = pending2faSecret.get(uuid);
-        if (secret == null) return false;
-        if (!Totp.verifyCode(secret, code)) return false;
+        if (secret == null) {
+            if (Debug.on()) {
+                Debug.log("2fa", "confirm %s: rejected (no pending secret)", player.getName());
+            }
+            return false;
+        }
+        if (!Totp.verifyCode(secret, code)) {
+            if (Debug.on()) {
+                Debug.log("2fa", "confirm %s: rejected (invalid code)", player.getName());
+            }
+            return false;
+        }
         clearPending2faSecret(uuid);
         PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null) return false;
+        if (data == null) {
+            if (Debug.on()) {
+                Debug.log("2fa", "confirm %s: failed (no account)", player.getName());
+            }
+            return false;
+        }
         data.totpSecret(secret);
         dataManager.save(uuid);
+        if (Debug.on()) {
+            Debug.log("2fa", "confirm %s: enabled", player.getName());
+        }
         return true;
     }
 
@@ -596,20 +693,36 @@ public final class AuthManager {
         for (UUID uuid : expired) {
             clearPending2faSecret(uuid);
         }
+        if (!expired.isEmpty() && Debug.on()) {
+            Debug.log("2fa", "cleanup expired temp secrets: %s removed", expired.size());
+        }
     }
 
     /** 关闭双因素认证：需验证当前 TOTP 验证码（而非密码——2FA 正是防密码泄漏，解绑也须持有验证器） */
     public boolean disable2fa(Player player, String code) {
         UUID uuid = player.getUniqueId();
         PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null || data.totpSecret() == null) return false;
-        if (!Totp.verifyCode(data.totpSecret(), code)) return false;
+        if (data == null || data.totpSecret() == null) {
+            if (Debug.on()) {
+                Debug.log("2fa", "disable %s: failed (not enabled or no account)", player.getName());
+            }
+            return false;
+        }
+        if (!Totp.verifyCode(data.totpSecret(), code)) {
+            if (Debug.on()) {
+                Debug.log("2fa", "disable %s: rejected (invalid code)", player.getName());
+            }
+            return false;
+        }
         data.totpSecret(null);
         // 解绑后待验证标记已无意义，清除避免残留（残留会让玩家在密码窗口卡死/状态泄漏至下次退出）
         pending2fa.remove(uuid);
         used2faCounters.remove(uuid);
         // 关键操作立即持久化，防止断电丢失
         dataManager.saveNow(uuid);
+        if (Debug.on()) {
+            Debug.log("2fa", "disable %s: disabled", player.getName());
+        }
         return true;
     }
 
@@ -620,7 +733,12 @@ public final class AuthManager {
      */
     public boolean reset2fa(UUID uuid) {
         PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null || data.totpSecret() == null) return false;
+        if (data == null || data.totpSecret() == null) {
+            if (Debug.on()) {
+                Debug.log("2fa", "reset %s: failed (not enabled or no account)", uuid.toString().substring(0, 8));
+            }
+            return false;
+        }
         data.totpSecret(null);
         // 管理员解除同样使待验证状态失效，一并清理（语义与 disable2fa 一致）
         pending2fa.remove(uuid);
@@ -629,6 +747,9 @@ public final class AuthManager {
         clearPending2faSecret(uuid);
         // 关键操作立即持久化，防止断电丢失
         dataManager.saveNow(uuid);
+        if (Debug.on()) {
+            Debug.log("2fa", "reset %s: reset by admin", uuid.toString().substring(0, 8));
+        }
         return true;
     }
 
@@ -645,6 +766,9 @@ public final class AuthManager {
 
     /** 登录失败处理：失败计数（可能触发踢出）+ 触发失败事件（须在玩家区域线程调用；配置阶段 player 为 null，事件转全局调度器触发） */
     private void handleLoginFailure(UUID uuid, Player player) {
+        if (Debug.on()) {
+            Debug.log("auth", "login failure for %s", player != null ? player.getName() : uuid);
+        }
         // 增加计数（仅在启用失败保护时）
         if (configManager.failProtectionEnabled()) {
             long now = System.currentTimeMillis();
@@ -667,6 +791,11 @@ public final class AuthManager {
             });
             if (attempts[0] >= configManager.failMaxAttempts()) {
                 // 达到阈值，设置踢出期
+                if (Debug.on()) {
+                    Debug.log("auth", "kick %s: %s consecutive failures, banned %ss",
+                            player != null ? player.getName() : uuid.toString().substring(0, 8),
+                            attempts[0], configManager.failKickDuration());
+                }
                 kickUntil.put(uuid, now + configManager.failKickDuration() * 1000L);
                 failedAttempts.remove(uuid);
                 // 容量守卫：攻击者用大量用户名各达阈值后不再重连，踢出记录仅在被读取时懒清理，
@@ -699,6 +828,9 @@ public final class AuthManager {
     /** 强制登出玩家（无需玩家在线，清除登录状态，并使登录会话与 2FA 会话失效） */
     public boolean forceLogout(UUID uuid) {
         if (!loggedIn.remove(uuid)) return false;
+        if (Debug.on()) {
+            Debug.log("auth", "force logout: %s (live login state invalidated, connection flag kept)", uuid);
+        }
         invalidateLoginSessions(uuid);
         fireEvent(new HSAuthLogoutEvent(uuid, Bukkit.getPlayer(uuid)));
         return true;
@@ -736,6 +868,9 @@ public final class AuthManager {
     /** 强制登录玩家（不管有没有账号，仅对在线玩家生效） */
     public void forceLogin(Player player) {
         UUID uuid = player.getUniqueId();
+        if (Debug.on()) {
+            Debug.log("auth", "force login: %s", player.getName());
+        }
         markLoggedIn(uuid);
         onLoginSuccess(player);
         fireEvent(new HSAuthLoginEvent(player));
@@ -749,15 +884,29 @@ public final class AuthManager {
 
     /** 登录会话是否命中（无需 Player 对象，用于 AsyncPlayerSpawnLocationEvent） */
     public boolean hasSession(UUID uuid, String ip) {
-        if (!configManager.sessionEnabled()) return false;
+        if (!configManager.sessionEnabled()) {
+            if (Debug.on()) {
+                Debug.log("session", "login session miss for %s: session disabled", uuid.toString().substring(0, 8));
+            }
+            return false;
+        }
         PlayerData data = dataManager.getPlayer(uuid);
         if (data == null) return false;
         if (ip == null) return false;
         LoginSession s = loginSessions.get(uuid);
         if (s == null) return false;
-        if (!s.ip().equals(ip)) return false;
+        if (!s.ip().equals(ip)) {
+            if (Debug.on()) {
+                Debug.log("session", "login session miss for %s: ip mismatch", uuid.toString().substring(0, 8));
+            }
+            return false;
+        }
         // 固定窗口不滑动：命中登录不刷新建立时间，到期后需重新验证
         long expireMillis = TimeUnit.MINUTES.toMillis(configManager.sessionExpireMinutes());
+        if (Debug.on()) {
+            Debug.log("session", "login session for %s: %s", uuid.toString().substring(0, 8),
+                    System.currentTimeMillis() - s.establishedAt() < expireMillis ? "hit" : "expired");
+        }
         return System.currentTimeMillis() - s.establishedAt() < expireMillis;
     }
 
@@ -768,6 +917,9 @@ public final class AuthManager {
         PlayerData data = dataManager.getPlayer(player.getUniqueId());
         if (data == null) return;
         String ip = clientIp(player);
+        if (Debug.on()) {
+            Debug.log("session", "auto login for %s (2FA required=%s)", player.getName(), requires2faAtLogin(player.getUniqueId(), ip));
+        }
         if (requires2faAtLogin(player.getUniqueId(), ip)) {
             pending2fa.add(player.getUniqueId());
             return;
@@ -817,18 +969,29 @@ public final class AuthManager {
         UUID uuid = player.getUniqueId();
         PlayerData data = dataManager.getPlayer(uuid);
         if (data == null) {
+            if (Debug.on()) {
+                Debug.log("auth", "change password %s: failed (no account)", player.getName());
+            }
             done.accept(false);
             return;
         }
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
             if (!PasswordHash.checkPassword(oldPassword, data.passwordHash())) {
-                player.getScheduler().run(plugin, task2 -> done.accept(false), null);
+                player.getScheduler().run(plugin, task2 -> {
+                    if (Debug.on()) {
+                        Debug.log("auth", "change password %s: failed (wrong old password)", player.getName());
+                    }
+                    done.accept(false);
+                }, null);
                 return;
             }
             String newHash = PasswordHash.hashPassword(newPassword, configManager.passwordHashAlgorithm(), configManager.bcryptCost());
             player.getScheduler().run(plugin, task2 -> {
                 dataManager.updatePassword(uuid, newHash);
                 invalidateLoginSessions(uuid);
+                if (Debug.on()) {
+                    Debug.log("auth", "change password %s: success", player.getName());
+                }
                 done.accept(true);
             }, null);
         });
@@ -842,6 +1005,9 @@ public final class AuthManager {
         UUID uuid = player.getUniqueId();
         PlayerData data = dataManager.getPlayer(uuid);
         if (data == null || (data.passwordHash() != null && !data.passwordHash().isEmpty())) {
+            if (Debug.on()) {
+                Debug.log("auth", "add password %s: failed (no account or already has password)", player.getName());
+            }
             done.accept(false);
             return;
         }
@@ -849,6 +1015,9 @@ public final class AuthManager {
             String newHash = PasswordHash.hashPassword(newPassword, configManager.passwordHashAlgorithm(), configManager.bcryptCost());
             player.getScheduler().run(plugin, task2 -> {
                 dataManager.updatePassword(uuid, newHash);
+                if (Debug.on()) {
+                    Debug.log("auth", "add password %s: success", player.getName());
+                }
                 done.accept(true);
             }, null);
         });
@@ -888,7 +1057,12 @@ public final class AuthManager {
 
     // Unregister
     public boolean unregister(UUID uuid) {
-        if (!dataManager.hasAccount(uuid)) return false;
+        if (!dataManager.hasAccount(uuid)) {
+            if (Debug.on()) {
+                Debug.log("auth", "unregister %s: failed (no account)", uuid.toString().substring(0, 8));
+            }
+            return false;
+        }
         dataManager.removePlayer(uuid);
         loggedIn.remove(uuid);
         pending2fa.remove(uuid);
@@ -910,13 +1084,26 @@ public final class AuthManager {
             recentUnregister.put(uuid, System.currentTimeMillis());
             if (Bukkit.getPlayer(uuid) != null) {
                 // 玩家在线：标记后由 PlayerQuitEvent 删除（避免文件锁冲突）
+                if (Debug.on()) {
+                    Debug.log("auth", "unregister %s: account removed, vanilla data delete deferred to quit",
+                            uuid.toString().substring(0, 8));
+                }
                 pendingDatDelete.add(uuid);
             } else {
                 // 玩家离线：无文件锁，直接删除
+                if (Debug.on()) {
+                    Debug.log("auth", "unregister %s: account removed, vanilla data deleted immediately",
+                            uuid.toString().substring(0, 8));
+                }
                 deletePlayerDataWithRetry(uuid);
             }
             // 顺手清理已过期的踢出记录、失败计数和注销拒绝重连记录，防止批量注销时累积
             cleanupExpiredStates();
+        } else {
+            if (Debug.on()) {
+                Debug.log("auth", "unregister %s: account removed, vanilla data kept (real-unreg off)",
+                        uuid.toString().substring(0, 8));
+            }
         }
         fireEvent(new HSAuthUnregisterEvent(uuid, Bukkit.getPlayer(uuid)));
         return true;
@@ -949,6 +1136,9 @@ public final class AuthManager {
      */
     public void tryDeletePlayerDataOnQuit(UUID uuid) {
         if (!pendingDatDelete.remove(uuid)) return;
+        if (Debug.on()) {
+            Debug.log("db", "delete vanilla data on quit: %s queued", uuid.toString().substring(0, 8));
+        }
         Bukkit.getAsyncScheduler().runNow(plugin, task -> deletePlayerDataWithRetry(uuid));
     }
 
@@ -977,6 +1167,9 @@ public final class AuthManager {
             if (deletePlayerData(uuid)) return;
             if (elapsed >= 5000) {
                 plugin.getLogger().warning(I18n.get("log.delete_player_data_failed", uuid));
+                if (Debug.on()) {
+                    Debug.log("db", "delete vanilla data for %s: failed after retries", uuid.toString().substring(0, 8));
+                }
                 return;
             }
         }
@@ -1089,6 +1282,9 @@ public final class AuthManager {
     private void markLoggedIn(UUID uuid) {
         loggedIn.add(uuid);
         authenticatedThisConnection.add(uuid);
+        if (Debug.on()) {
+            Debug.log("auth", "authenticated: %s (live login state + connection flag set)", uuid);
+        }
         pending2fa.remove(uuid);
         failedAttempts.remove(uuid);
         kickUntil.remove(uuid);
@@ -1100,6 +1296,10 @@ public final class AuthManager {
      */
     public void clearSession(Player player) {
         UUID uuid = player.getUniqueId();
+        if (Debug.on()) {
+            Debug.log("auth", "clear session: %s (authenticatedThisConnection was %s)", uuid,
+                    authenticatedThisConnection.contains(uuid));
+        }
         invalidateUnregisterConfirm(uuid);
         loggedIn.remove(uuid);
         // 本次连接认证标记随连接结束失效（晚于加入/退出消息与退出位置保存的判定）
@@ -1199,6 +1399,8 @@ public final class AuthManager {
      */
     public void cleanupExpiredStates() {
         long now = System.currentTimeMillis();
+        int before = kickUntil.size() + failedAttempts.size() + twoFaSessions.size()
+                + loginSessions.size() + recentUnregister.size();
         kickUntil.values().removeIf(until -> until <= now);
         evictStaleFailures(now);
         twoFaSessions.entrySet().removeIf(e -> now > e.getValue().expiresAt());
@@ -1207,6 +1409,11 @@ public final class AuthManager {
         loginSessions.entrySet().removeIf(e -> now - e.getValue().establishedAt() >= sessionMs);
         // 清理已过期的注销拒绝重连记录
         recentUnregister.entrySet().removeIf(entry -> now - entry.getValue() >= UNREGISTER_RECONNECT_DELAY);
+        int removed = before - (kickUntil.size() + failedAttempts.size() + twoFaSessions.size()
+                + loginSessions.size() + recentUnregister.size());
+        if (removed > 0 && Debug.on()) {
+            Debug.log("session", "cleanup expired states: %s entries removed", removed);
+        }
     }
 
     /** 清理可安全移除的失败计数：超过过期时长未再失败（玩家可能已离线/已放弃尝试）。
@@ -1246,9 +1453,51 @@ public final class AuthManager {
      *  登录过渡期（传送或游戏模式恢复尚未落地）跳过：此时读到的是保护出生点与临时旁观模式，写入会覆盖真实值 */
     private void captureLogoutLocation(PlayerData data, Player player) {
         UUID uuid = player.getUniqueId();
-        if (invulnerablePending.contains(uuid) || spectatorPending.contains(uuid)) return;
+        if (invulnerablePending.contains(uuid) || spectatorPending.contains(uuid)) {
+            if (Debug.on()) {
+                Debug.log("flow", "skip logout location for %s: login transition pending (teleport/gamemode not settled)", player.getName());
+            }
+            return;
+        }
         data.logoutLocation(PlayerDataManager.serializeLocation(player.getLocation()));
         data.gameMode(player.getGameMode().name());
+    }
+
+    /**
+     * 生成认证状态快照（/hsauth debug dump），供排查工单使用：只读内存状态与开关摘要，
+     * 不含密码、密钥与完整 IP 等敏感值
+     */
+    public List<String> diagnostics() {
+        List<String> lines = new ArrayList<>(8 + Bukkit.getOnlinePlayers().size());
+        lines.add("HowSAuth diagnostics: online=" + Bukkit.getOnlinePlayers().size()
+                + " dbLoadFailed=" + dataManager.isLoadFailed()
+                + " debug=" + configManager.debug()
+                + " session=" + configManager.sessionEnabled()
+                + " 2fa=" + configManager.twoFaEnabled()
+                + " failProtection=" + configManager.failProtectionEnabled()
+                + " spectatorProtection=" + configManager.protectionGamemodeEnabled());
+        lines.add("  caches: loginSessions=" + loginSessions.size() + " twoFaSessions=" + twoFaSessions.size()
+                + " pending2fa=" + pending2fa.size() + " pending2faSecret=" + pending2faSecret.size()
+                + " verifying=" + verifying.size() + " used2faCounters=" + used2faCounters.size()
+                + " premiumFallback=" + premiumFallback.size() + " recentUnregister=" + recentUnregister.size()
+                + " pendingDatDelete=" + pendingDatDelete.size() + " failedAttempts=" + failedAttempts.size());
+        lines.add("  pending markers: invulnerable=" + invulnerablePending.size()
+                + " spectator=" + spectatorPending.size() + " loginTimeout=" + loginTimeoutStartedAt.size());
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            UUID uuid = player.getUniqueId();
+            lines.add("  " + player.getName() + "(" + uuid.toString().substring(0, 8) + ")"
+                    + " loggedIn=" + loggedIn.contains(uuid)
+                    + " authenticatedConnection=" + authenticatedThisConnection.contains(uuid)
+                    + " pending2fa=" + pending2fa.contains(uuid)
+                    + " verifying=" + verifying.contains(uuid)
+                    + " loginSession=" + loginSessions.containsKey(uuid)
+                    + " twoFaSession=" + twoFaSessions.containsKey(uuid)
+                    + " invulnerable=" + invulnerablePending.contains(uuid)
+                    + " spectator=" + spectatorPending.contains(uuid)
+                    + " failed=" + failedAttempts.containsKey(uuid)
+                    + " kicked=" + isKicked(uuid));
+        }
+        return lines;
     }
 
     /**

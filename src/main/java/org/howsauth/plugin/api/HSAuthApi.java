@@ -3,6 +3,7 @@ package org.howsauth.plugin.api;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
+import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.PasswordHash;
@@ -160,10 +161,28 @@ public final class HSAuthApi {
      * @return 玩家不在线或已登录时返回 false
      */
     public boolean forceLogin(@NotNull Player player) {
-        if (!player.isOnline()) return false;
-        if (!tryAcquire(player.getUniqueId())) return false;
-        if (!player.isOnline() || authManager.isLoggedIn(player)) return false;
+        if (!player.isOnline()) {
+            if (Debug.on()) {
+                Debug.log("api", "force login %s: rejected (offline)", player.getName());
+            }
+            return false;
+        }
+        if (!tryAcquire(player.getUniqueId())) {
+            if (Debug.on()) {
+                Debug.log("api", "force login %s: rejected (rate limit)", player.getName());
+            }
+            return false;
+        }
+        if (!player.isOnline() || authManager.isLoggedIn(player)) {
+            if (Debug.on()) {
+                Debug.log("api", "force login %s: skipped (offline or already logged in)", player.getName());
+            }
+            return false;
+        }
         authManager.forceLogin(player);
+        if (Debug.on()) {
+            Debug.log("api", "force login %s: success", player.getName());
+        }
         return true;
     }
 
@@ -173,8 +192,17 @@ public final class HSAuthApi {
      * @return 玩家未登录时返回 false
      */
     public boolean forceLogout(@NotNull UUID uuid) {
-        if (!tryAcquire(uuid)) return false;
-        return authManager.forceLogout(uuid);
+        if (!tryAcquire(uuid)) {
+            if (Debug.on()) {
+                Debug.log("api", "force logout %s: rejected (rate limit)", uuid.toString().substring(0, 8));
+            }
+            return false;
+        }
+        boolean result = authManager.forceLogout(uuid);
+        if (Debug.on()) {
+            Debug.log("api", "force logout %s: %s", uuid.toString().substring(0, 8), result ? "success" : "not logged in");
+        }
+        return result;
     }
 
     /**
@@ -183,10 +211,28 @@ public final class HSAuthApi {
      * @return 玩家已有账号或同名账号（含正版）已存在时返回 false
      */
     public boolean forceRegister(@NotNull Player player, @NotNull String password) {
-        if (!player.isOnline()) return false;
-        if (!tryAcquire(player.getUniqueId())) return false;
-        if (!authManager.forceRegister(player.getUniqueId(), player.getName(), password)) return false;
+        if (!player.isOnline()) {
+            if (Debug.on()) {
+                Debug.log("api", "force register %s: rejected (offline)", player.getName());
+            }
+            return false;
+        }
+        if (!tryAcquire(player.getUniqueId())) {
+            if (Debug.on()) {
+                Debug.log("api", "force register %s: rejected (rate limit)", player.getName());
+            }
+            return false;
+        }
+        if (!authManager.forceRegister(player.getUniqueId(), player.getName(), password)) {
+            if (Debug.on()) {
+                Debug.log("api", "force register %s: failed (account already exists)", player.getName());
+            }
+            return false;
+        }
         authManager.forceLogin(player);
+        if (Debug.on()) {
+            Debug.log("api", "force register %s: success", player.getName());
+        }
         return true;
     }
 
@@ -196,9 +242,19 @@ public final class HSAuthApi {
      * @return 玩家已有账号或同名账号（含正版）已存在时返回 false
      */
     public boolean forceRegister(@NotNull UUID uuid, @NotNull String password) {
-        if (!tryAcquire(uuid)) return false;
+        if (!tryAcquire(uuid)) {
+            if (Debug.on()) {
+                Debug.log("api", "force register %s: rejected (rate limit)", uuid.toString().substring(0, 8));
+            }
+            return false;
+        }
         // UUID 反推名字：上过服务器的离线玩家有名字记录，从未上过则返回 null（跳过同名检查）
-        return authManager.forceRegister(uuid, Bukkit.getOfflinePlayer(uuid).getName(), password);
+        boolean result = authManager.forceRegister(uuid, Bukkit.getOfflinePlayer(uuid).getName(), password);
+        if (Debug.on()) {
+            Debug.log("api", "force register %s: %s", uuid.toString().substring(0, 8),
+                    result ? "success" : "failed (account already exists)");
+        }
+        return result;
     }
 
     /**
@@ -207,8 +263,17 @@ public final class HSAuthApi {
      * @return 玩家无账号时返回 false
      */
     public boolean unregister(@NotNull UUID uuid) {
-        if (!tryAcquire(uuid)) return false;
-        return authManager.unregister(uuid);
+        if (!tryAcquire(uuid)) {
+            if (Debug.on()) {
+                Debug.log("api", "unregister %s: rejected (rate limit)", uuid.toString().substring(0, 8));
+            }
+            return false;
+        }
+        boolean result = authManager.unregister(uuid);
+        if (Debug.on()) {
+            Debug.log("api", "unregister %s: %s", uuid.toString().substring(0, 8), result ? "success" : "no account");
+        }
+        return result;
     }
 
     // ===== 玩家信息 =====
@@ -262,7 +327,16 @@ public final class HSAuthApi {
      * @return 玩家无账号时返回 false
      */
     public boolean changePassword(@NotNull UUID uuid, @NotNull String newPassword) {
-        if (!tryAcquire(uuid)) return false;
-        return authManager.forceChangePassword(uuid, newPassword);
+        if (!tryAcquire(uuid)) {
+            if (Debug.on()) {
+                Debug.log("api", "change password %s: rejected (rate limit)", uuid.toString().substring(0, 8));
+            }
+            return false;
+        }
+        boolean result = authManager.forceChangePassword(uuid, newPassword);
+        if (Debug.on()) {
+            Debug.log("api", "change password %s: %s", uuid.toString().substring(0, 8), result ? "success" : "no account");
+        }
+        return result;
     }
 }

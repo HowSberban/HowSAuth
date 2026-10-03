@@ -13,6 +13,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import org.howsauth.plugin.HowSAuth;
+import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.config.ConfigManager;
@@ -121,6 +122,12 @@ public final class ConnectionHandler extends PacketListenerAbstract {
             upgradeAttempt = true;
         }
 
+        if (Debug.on()) {
+            UUID displayId = profile.exists() ? profile.uuid() : DataService.offlineUuid(username);
+            Debug.log("premium", "login start %s (%s) upgrade=%s", username,
+                    displayId.toString().substring(0, 8), upgradeAttempt);
+        }
+
         // 降级中：正版玩家已提交降级请求 → 迁移账号数据到离线 UUID 后放行，走服务端原生
         // 离线登录（离线 UUID 进入，密码或 2FA 登录）。LoginStart 阶段即可算出离线 UUID，
         // 此时迁移确保后续配置阶段认证读到离线账号
@@ -134,7 +141,12 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         //    已注册玩家（含 premium=1）不受离线标记影响，防止同名离线玩家抢占正版账号
         if (!profile.exists()) {
             if (!config.premiumEnabled() || !config.premiumAutoVerify()) return;
-            if (dataService.isOfflineConfirmed(ip, username)) return;
+            if (dataService.isOfflineConfirmed(ip, username)) {
+                if (Debug.on()) {
+                    Debug.log("premium", "offline confirmed (cached) for %s: pass to server", username);
+                }
+                return;
+            }
         }
 
         // 4. 已注册正版玩家且回退标记有效（上次验证失败/离线启动器断开）：
@@ -211,6 +223,9 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         });
 
         session.advance(SessionContext.Stage.START, SessionContext.Stage.WAITING_ENCRYPTION_RESPONSE);
+        if (Debug.on()) {
+            Debug.log("premium", "handshake %s: stage START -> WAITING_ENCRYPTION_RESPONSE", username);
+        }
 
         // 7. 调度超时清理：预防恶意客户端收到 EncryptionRequest 后既不回传也不断开，
         // 导致会话永久滞留 sessions Map 造成内存泄漏（断开检测器只在 channelInactive 时触发）
@@ -272,6 +287,10 @@ public final class ConnectionHandler extends PacketListenerAbstract {
             // 9. 启用 AES-CFB8 双向加密
             CryptoHandler.enableEncryption(channel, sharedSecret);
             session.advance(SessionContext.Stage.WAITING_ENCRYPTION_RESPONSE, SessionContext.Stage.ENCRYPTED);
+            if (Debug.on()) {
+                Debug.log("premium", "key exchange complete for %s: encryption enabled", session.username());
+                Debug.log("premium", "handshake %s: stage WAITING_ENCRYPTION_RESPONSE -> ENCRYPTED", session.username());
+            }
 
             // 10. 移除断开检测器（已收到响应，确认为正版客户端）
             removeDetector(channel);
@@ -282,10 +301,16 @@ public final class ConnectionHandler extends PacketListenerAbstract {
 
             mojangClient.hasJoined(serverHash, username).thenAccept(premiumProfile -> {
                 try {
+                    if (Debug.on()) {
+                        Debug.log("premium", "hasJoined %s: %s", username, premiumProfile.isPresent() ? "verified" : "not premium");
+                    }
                     if (premiumProfile.isEmpty()) {
                         // 验证失败
                         if (session.isUpgradeAttempt()) {
                             // 升级尝试回退为离线账号，清除升级标记，玩家重进后按离线登录
+                            if (Debug.on()) {
+                                Debug.log("premium", "upgrade failed for %s: reverting to offline", username);
+                            }
                             authManager.clearUpgradePending(session.offlineUuid());
                         }
                         // 正版验证失败回退：数据库正版账号且允许回退时，放行以正版 UUID 进入，
@@ -293,11 +318,17 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                         // 无密码账户是否回退由 premiumFallbackAllowed（含 reject-no-auth-account 开关）决定
                         PlayerData premiumData = premiumAccountByName(session, username);
                         if (premiumData != null && premiumFallbackAllowed(premiumData.uuid())) {
+                            if (Debug.on()) {
+                                Debug.log("premium", "fallback login for %s (verification failed, password path)", username);
+                            }
                             authManager.markPremiumFallback(premiumData.uuid());
                             proceedWithLogin(channel, user, session, premiumData.uuid(), username, premiumData.properties());
                             return;
                         }
                         // 否则踢出（发送 Disconnect 并兜底关闭连接）
+                        if (Debug.on()) {
+                            Debug.log("premium", "kick %s: premium verification failed", username);
+                        }
                         channel.eventLoop().execute(() -> {
                             if (channel.isActive()) {
                                 kick(channel, user, HowSAuth.legacy(I18n.get("listener.premium_unavailable")));
@@ -317,6 +348,10 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                         dataService.migrateToPremium(session.offlineUuid(), uuid, username, session.ip(), properties);
                         authManager.migratePlayerDataAsync(session.offlineUuid(), uuid);
                         authManager.clearUpgradePending(session.offlineUuid());
+                        if (Debug.on()) {
+                            Debug.log("premium", "upgrade success for %s: migrated offline account to premium uuid %s",
+                                    username, uuid.toString().substring(0, 8));
+                        }
                     } else {
                         // /premium 强制标记的账号首次正版验证进服：存量记录仍是离线 UUID（仅 premium=1），
                         // 同样迁移到正版 UUID 并保留退出位置等数据，避免与新建记录并存
@@ -334,6 +369,11 @@ public final class ConnectionHandler extends PacketListenerAbstract {
 
                     // 清除 ip+名 回退标记，确保下次优先走正常正版验证
                     dataService.clearPremiumFallbackConfirmed(session.ip(), session.username());
+
+                    if (Debug.on()) {
+                        Debug.log("premium", "premium verified for %s: entering as premium uuid %s (upgrade=%s)",
+                                username, uuid.toString().substring(0, 8), session.isUpgradeAttempt());
+                    }
 
                     // 13. 进入游戏（异步触发 AsyncPlayerPreLoginEvent + 推进 state）
                     proceedWithLogin(channel, user, session, uuid, username, properties);
@@ -480,6 +520,9 @@ public final class ConnectionHandler extends PacketListenerAbstract {
     // EventLoop 为 channel 长生命周期资源，不应关闭；借用其调度延迟关闭任务
     @SuppressWarnings("resource")
     private void kick(Channel channel, User user, net.kyori.adventure.text.Component message) {
+        if (Debug.on()) {
+            Debug.log("premium", "kick %s: disconnect sent, closing channel in 5s", user.getName());
+        }
         sendDisconnect(user, message);
         channel.eventLoop().schedule(() -> { channel.close(); }, 5, TimeUnit.SECONDS);
         cleanupSession(channel);

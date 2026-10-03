@@ -1,5 +1,6 @@
 package org.howsauth.plugin.premium;
 
+import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
 import org.howsauth.plugin.data.PlayerDataManager.PlayerData;
@@ -47,16 +48,25 @@ public final class DataService {
         UUID offlineUuid = offlineUuid(name);
         PlayerData offlineData = dataManager.getPlayer(offlineUuid);
         if (offlineData != null) {
+            if (Debug.on()) {
+                Debug.log("db", "profile %s: offline account hit", name);
+            }
             return new ProfileResult(true, offlineData.premium(), offlineUuid, offlineData.properties());
         }
 
         // 2. 按名查询正版玩家（premium=1 且 name 匹配）
         PlayerData premiumData = dataManager.getByName(name);
         if (premiumData != null) {
+            if (Debug.on()) {
+                Debug.log("db", "profile %s: premium account hit", name);
+            }
             return new ProfileResult(true, true, premiumData.uuid(), premiumData.properties());
         }
 
         // 3. 无记录
+        if (Debug.on()) {
+            Debug.log("db", "profile %s: no record", name);
+        }
         return new ProfileResult(false, false, null, null);
     }
 
