@@ -292,10 +292,9 @@ public final class HSAuthCommand {
                 return;
             }
             sender.sendMessage(I18n.msg("hsauth.forceregister_success", sender, targetName));
-            // 在线玩家：切换为待登录状态，重启登录提醒和超时任务（注册提醒会因 hasAccount=true 自动取消）
+            // 在线玩家：挂起等待登录并重启提醒/超时任务（注册提醒会因 hasAccount=true 自动取消）
             Player online = Bukkit.getPlayerExact(targetName);
             if (online != null) {
-                plugin.getAuthManager().addPendingLogin(online);
                 // 复用通用挂起：补旁观者保护（登录成功后按存储模式恢复游戏模式）
                 plugin.getPlayerListener().suspend(online, "listener.please_login", true);
             }

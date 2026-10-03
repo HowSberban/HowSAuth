@@ -357,7 +357,6 @@ class LongRunStabilityTest {
         // 内存收敛
         data.flushDirty();
         assertEquals(0, collectionSize(data, "dirty"), "dirty set must be empty after flush");
-        assertEquals(0, collectionSize(auth, "pendingLogin"), "pending login states must be empty");
         assertEquals(0, collectionSize(auth, "loggedIn"), "logged-in states must be empty");
         assertEquals(0, mapSize(auth, "loginSessions"), "login sessions must be cleared");
     }

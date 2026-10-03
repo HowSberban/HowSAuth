@@ -51,7 +51,6 @@ public final class AuthManager {
     // 强制登出/注销会立即失效它；本标记只记录"本次连接是否认证过"，不随提前失效而清除，
     // 仅在退出清理（clearSession）时移除
     private final Set<UUID> authenticatedThisConnection = ConcurrentHashMap.newKeySet();
-    private final Set<UUID> pendingLogin = ConcurrentHashMap.newKeySet();
     // 标记密码异步校验进行中的玩家：防止快速重复提交 /login 触发重复校验、重复登录事件与消息
     private final Set<UUID> verifying = ConcurrentHashMap.newKeySet();
     // 双因素认证：密码已通过但尚未完成 TOTP 验证的玩家（未完成前不算已登录）
@@ -199,6 +198,7 @@ public final class AuthManager {
                     done.accept(false);
                     return;
                 }
+                markLoginSession(uuid, ip);
                 markLoggedIn(uuid);
                 onLoginSuccess(player);
                 fireEvent(new HSAuthRegisterEvent(uuid, player));
@@ -377,7 +377,7 @@ public final class AuthManager {
     /** 登录会话：验证通过时的来源 IP 与建立时间戳（固定窗口不滑动） */
     private record LoginSession(String ip, long establishedAt) {}
 
-    /** 记录登录会话：验证通过后同 IP 且未过期免输密码（固定窗口，命中登录不刷新） */
+    /** 记录登录会话：登录/注册成功后同 IP 且未过期免输密码（固定窗口，命中不刷新） */
     private void markLoginSession(UUID uuid, String ip) {
         if (!configManager.sessionEnabled() || ip == null) return;
         loginSessions.put(uuid, new LoginSession(ip, System.currentTimeMillis()));
@@ -699,7 +699,6 @@ public final class AuthManager {
     /** 强制登出玩家（无需玩家在线，清除登录状态，并使登录会话与 2FA 会话失效） */
     public boolean forceLogout(UUID uuid) {
         if (!loggedIn.remove(uuid)) return false;
-        pendingLogin.add(uuid);
         invalidateLoginSessions(uuid);
         fireEvent(new HSAuthLogoutEvent(uuid, Bukkit.getPlayer(uuid)));
         return true;
@@ -792,11 +791,12 @@ public final class AuthManager {
 
     /**
      * Pre-join 注册完成后玩家进入世界时的收尾：与 register() 的登录后处理一致
-     * （标记登录、恢复物品状态、触发注册事件；不更新登录时间/IP——createPlayer 已记录）。
+     * （建立免密会话、标记登录、恢复物品状态、触发注册事件；不更新登录时间/IP——createPlayer 已记录）。
      * @return false 表示账号数据已不存在（被注销的竞态），调用方应回退正常登录流程
      */
     public boolean finishPreJoinRegister(Player player) {
         if (!dataManager.hasAccount(player.getUniqueId())) return false;
+        markLoginSession(player.getUniqueId(), clientIp(player));
         markLoggedIn(player.getUniqueId());
         onLoginSuccess(player);
         Bukkit.getPluginManager().callEvent(new HSAuthRegisterEvent(player.getUniqueId(), player));
@@ -891,7 +891,6 @@ public final class AuthManager {
         if (!dataManager.hasAccount(uuid)) return false;
         dataManager.removePlayer(uuid);
         loggedIn.remove(uuid);
-        pendingLogin.remove(uuid);
         pending2fa.remove(uuid);
         clearPending2faSecret(uuid);
         // 防重放计数一并清理：残留计数会误拒重绑定新密钥后的正确验证码（counter 单调消费）
@@ -1086,11 +1085,10 @@ public final class AuthManager {
         return file.delete();
     }
 
-    /** 标记玩家为已登录：置位实时登录态与本次连接认证标记，清理待登录、双因素待验证、失败计数、踢出记录 */
+    /** 标记玩家为已登录：置位实时登录态与本次连接认证标记，清理双因素待验证、失败计数、踢出记录 */
     private void markLoggedIn(UUID uuid) {
         loggedIn.add(uuid);
         authenticatedThisConnection.add(uuid);
-        pendingLogin.remove(uuid);
         pending2fa.remove(uuid);
         failedAttempts.remove(uuid);
         kickUntil.remove(uuid);
@@ -1106,7 +1104,6 @@ public final class AuthManager {
         loggedIn.remove(uuid);
         // 本次连接认证标记随连接结束失效（晚于加入/退出消息与退出位置保存的判定）
         authenticatedThisConnection.remove(uuid);
-        pendingLogin.remove(uuid);
         // 清除密码校验进行中标记（玩家在校验完成前退出时，异步回调的 player 调度不会执行，需在此兜底清理）
         verifying.remove(uuid);
         // 清除双因素认证会话状态（未完成验证即退出）
@@ -1152,10 +1149,6 @@ public final class AuthManager {
 
     public boolean hasAccount(UUID uuid) {
         return dataManager.hasAccount(uuid);
-    }
-
-    public void addPendingLogin(Player player) {
-        pendingLogin.add(player.getUniqueId());
     }
 
     /** 记录登录超时任务启动时间，返回当前时间戳（用于触发时判断是否为最新任务） */
@@ -1249,8 +1242,11 @@ public final class AuthManager {
         }
     }
 
-    /** 把当前位置与游戏模式写入内存数据（不落库），供退出保存与关服兜底共用 */
-    private static void captureLogoutLocation(PlayerData data, Player player) {
+    /** 把当前位置与游戏模式写入内存数据（不落库），供退出保存与关服兜底共用。
+     *  登录过渡期（传送或游戏模式恢复尚未落地）跳过：此时读到的是保护出生点与临时旁观模式，写入会覆盖真实值 */
+    private void captureLogoutLocation(PlayerData data, Player player) {
+        UUID uuid = player.getUniqueId();
+        if (invulnerablePending.contains(uuid) || spectatorPending.contains(uuid)) return;
         data.logoutLocation(PlayerDataManager.serializeLocation(player.getLocation()));
         data.gameMode(player.getGameMode().name());
     }
@@ -1269,8 +1265,9 @@ public final class AuthManager {
         }
         // 标记传送过渡期，保持无敌
         invulnerablePending.add(player.getUniqueId());
-        // 直接异步传送，传送完成后移除无敌状态
-        player.teleportAsync(loc).thenAccept(success ->
+        // 异步传送；完成与异常都要移除无敌标记——thenAccept 在 future 异常完成时不执行，
+        // 标记一旦残留会让该玩家本次会话永久免伤（onDamage 依据该标记取消伤害）
+        player.teleportAsync(loc).whenComplete((success, error) ->
                 invulnerablePending.remove(player.getUniqueId()));
     }
 

@@ -338,20 +338,13 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                     // 13. 进入游戏（异步触发 AsyncPlayerPreLoginEvent + 推进 state）
                     proceedWithLogin(channel, user, session, uuid, username, properties);
                 } catch (Exception e) {
-                    // 异步链兜底：savePremium 等同步操作异常时也要清理会话，避免泄漏
-                    // 升级尝试异常时回退离线，清除升级标记
-                    if (session.isUpgradeAttempt()) {
-                        authManager.clearUpgradePending(session.offlineUuid());
-                    }
-                    plugin.getLogger().severe(I18n.get("log.premium_async_failed", e.getMessage()));
-                    channel.eventLoop().execute(() -> {
-                        if (channel.isActive()) {
-                            kick(channel, user, HowSAuth.legacy(I18n.get("listener.premium_unavailable")));
-                        } else {
-                            cleanupSession(channel);
-                        }
-                    });
+                    // 同步操作异常：与非异常失败走同一兜底
+                    failAsyncLogin(channel, user, session, e.getMessage());
                 }
+            }).exceptionally(error -> {
+                // future 异常完成（Error 不经上面的 Exception 分支）：同样兜底，避免会话残留与连接悬挂
+                failAsyncLogin(channel, user, session, error.toString());
+                return null;
             });
         } catch (Exception e) {
             plugin.getLogger().severe(I18n.get("log.premium_cipher_init_failed", e.getMessage()));
@@ -361,6 +354,24 @@ public final class ConnectionHandler extends PacketListenerAbstract {
     }
 
     // ===== 辅助方法 =====
+
+    /** 异步验证失败兜底：回退升级标记、记日志、踢出连接（连接已断则仅清会话）。
+     *  同步异常与 future 异常完成（Error）两条路径共用，避免会话残留或连接悬挂 */
+    // EventLoop 为长生命周期资源，不应关闭；此处仅借用其事件循环调度
+    @SuppressWarnings("resource")
+    private void failAsyncLogin(Channel channel, User user, SessionContext session, String reason) {
+        if (session.isUpgradeAttempt()) {
+            authManager.clearUpgradePending(session.offlineUuid());
+        }
+        plugin.getLogger().severe(I18n.get("log.premium_async_failed", reason));
+        channel.eventLoop().execute(() -> {
+            if (channel.isActive()) {
+                kick(channel, user, HowSAuth.legacy(I18n.get("listener.premium_unavailable")));
+            } else {
+                cleanupSession(channel);
+            }
+        });
+    }
 
     /** 从 channel 提取玩家真实 IP。
      *  服务器开启 proxies.proxy-protocol（frp/nginx 内网穿透）时 channel.remoteAddress 是隧道入口地址，

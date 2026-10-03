@@ -230,9 +230,6 @@ public final class PlayerListener implements Listener {
         UUID uuid = player.getUniqueId();
         // 无密码账户：密码不是登录因素，已绑定验证器时验证码成为唯一登录方式
         boolean passwordless = hasAccount && authManager.isPasswordless(uuid);
-        if (hasAccount) {
-            authManager.addPendingLogin(player);
-        }
         if (passwordless) {
             String ip = AuthManager.clientIp(player);
             // 仅 2FA 会话命中（同 IP 且未过期）时免验证码登录：无密钥账户否则会因
@@ -450,11 +447,13 @@ public final class PlayerListener implements Listener {
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
         // 本次连接已认证的玩家退出时保存退出位置（用于下次登录后传送回来）
-        // 未认证玩家退出不更新位置：其位置是登录前的保护/出生点，写入会覆盖真实退出位置
+        // 未认证玩家不保存：其位置是登录前的保护/出生点，写入会覆盖真实退出位置
         if (authManager.hasAuthenticatedThisConnection(player.getUniqueId())) {
             authManager.saveLogoutLocation(player);
-        } else {
-            // 未认证退出：移除登录失明，避免效果随 .dat 保存到下次会话
+        }
+        // 退出时不在登录态（从未认证，或登录态被强制登出/注销提前失效）：清理可能残留的登录失明，
+        // 避免效果随 .dat 存档到下次会话（与位置保存是两个独立判定，不共用条件）
+        if (!authManager.isLoggedIn(player)) {
             clearLoginBlindness(player);
         }
         // 立即清理提醒 BossBar：玩家调度器随退出 retired，任务内的清理分支不再执行
