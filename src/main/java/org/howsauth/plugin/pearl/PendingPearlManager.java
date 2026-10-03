@@ -18,6 +18,7 @@ import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Vector;
 import org.howsauth.plugin.HowSAuth;
+import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 
 import java.io.File;
@@ -80,8 +81,12 @@ public final class PendingPearlManager implements Listener {
         lastPearlEnabled = enabled;
         pearlStateInitialized = true;
         if (!enabled && (!initialized || wasEnabled)) {
+            int cleared = pending.size();
             pending.clear();
             saveSync();
+            if (Debug.on()) {
+                Debug.log("pearl", "pearl storage disabled: cleared %s pending records", cleared);
+            }
         }
     }
 
@@ -162,10 +167,16 @@ public final class PendingPearlManager implements Listener {
         List<PearlSnapshot> snapshots = pending.remove(player.getUniqueId());
         if (snapshots == null || snapshots.isEmpty()) {
             if (absorbed) saveSync();
+            if (absorbed && Debug.on()) {
+                Debug.log("pearl", "return pearls to %s: only absorbed flying pearls", player.getName());
+            }
             return;
         }
         saveSync();
         if (!plugin.getConfigManager().pearlReturnEntity()) {
+            if (Debug.on()) {
+                Debug.log("pearl", "return %s pearls to %s as items", snapshots.size(), player.getName());
+            }
             giveItems(player, snapshots.size());
             return;
         }
@@ -194,6 +205,10 @@ public final class PendingPearlManager implements Listener {
             });
         }
         if (fallbackItems > 0) giveItems(player, fallbackItems);
+        if (Debug.on()) {
+            Debug.log("pearl", "return %s pearls to %s as entities (item fallback %s)",
+                    snapshots.size(), player.getName(), fallbackItems);
+        }
     }
 
     private void absorb(EnderPearl pearl, UUID owner) {
@@ -223,6 +238,11 @@ public final class PendingPearlManager implements Listener {
             return List.copyOf(updated);
         });
         removePearl(pearl);
+        if (Debug.on()) {
+            List<PearlSnapshot> stored = pending.get(owner);
+            Debug.log("pearl", "absorb pearl for %s (stored %s)", owner.toString().substring(0, 8),
+                    stored == null ? 0 : stored.size());
+        }
     }
 
     private UUID resolveOwner(EnderPearl pearl) {

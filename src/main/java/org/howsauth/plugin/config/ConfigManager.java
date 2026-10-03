@@ -122,6 +122,8 @@ public final class ConfigManager {
     private boolean realUnreg;
     // 玩家自助注销开关
     private boolean allowSelfUnregister;
+    // 调试模式：认证流程详细日志（面向排查的英文硬编码输出）
+    private boolean debug;
     // 清理不活跃账号
     private boolean purgeEnabled;
     private int purgeDays;
@@ -204,6 +206,8 @@ public final class ConfigManager {
         // 通用设置
         this.realUnreg = config.getBoolean("settings.real-unreg", true);
         this.allowSelfUnregister = config.getBoolean("settings.allow-self-unregister", true);
+        // 高级设置（config.yml 的 advanced 段：仅高级用户使用的开关）
+        this.debug = config.getBoolean("advanced.debug", false);
         this.purgeEnabled = config.getBoolean("settings.purge.enabled", false);
         this.purgeDays = clampInt("settings.purge.days", config.getInt("settings.purge.days", 90), 1);
 
@@ -665,6 +669,7 @@ public final class ConfigManager {
     // 通用设置
     public boolean realUnreg() { return realUnreg; }
     public boolean allowSelfUnregister() { return allowSelfUnregister; }
+    public boolean debug() { return debug; }
     public boolean purgeEnabled() { return purgeEnabled; }
     public int purgeDays() { return purgeDays; }
 

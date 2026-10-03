@@ -59,6 +59,8 @@ public class HowSAuth extends JavaPlugin {
             return;
         }
         this.configManager = new ConfigManager(this);
+        // 调试开关需在配置就绪后同步，并按每次开服轮转旧调试日志（/hsauth reload 会再次刷新）
+        Debug.init(this);
         this.playerDataManager = new PlayerDataManager(this);
         this.authManager = new AuthManager(this, playerDataManager, configManager);
         // Dialog 登录界面：开关开启且服务端支持（1.21.6+）且版本满足（1.21.11+）时启用
@@ -101,6 +103,8 @@ public class HowSAuth extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        // 调试日志句柄先关闭：后续不再产生调试输出
+        Debug.close();
         // 先清理 API 单例：后续将关闭 dataManager，避免第三方插件在关服过程中读到失效实例
         HSAuthApi.shutdown();
         // 关服前保存所有在线已登录玩家的当前位置

@@ -5,6 +5,7 @@ import io.papermc.paper.event.player.AsyncPlayerSpawnLocationEvent;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.Bukkit;
 import org.howsauth.plugin.HowSAuth;
+import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.api.event.HSAuthLoginEvent;
@@ -56,6 +57,9 @@ public final class PlayerListener implements Listener {
 
         // 数据库加载失败（fail-closed）：缓存为空会把所有玩家误判为未注册，拒绝进入直至恢复
         if (plugin.getPlayerDataManager().isLoadFailed()) {
+            if (Debug.on()) {
+                Debug.log("flow", "prelogin reject %s: database load failed", event.getName());
+            }
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER,
                     I18n.msg("login.db_unavailable"));
             return;
@@ -64,6 +68,9 @@ public final class PlayerListener implements Listener {
         // 踢出期内拒绝进入
         if (authManager.isKicked(uuid)) {
             long remaining = authManager.getKickRemaining(uuid);
+            if (Debug.on()) {
+                Debug.log("flow", "prelogin reject %s: kick period active (%s ms left)", event.getName(), remaining);
+            }
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED,
                     I18n.msg("login.kicked", remaining));
             return;
@@ -73,6 +80,9 @@ public final class PlayerListener implements Listener {
         // 配置开启时在连接阶段直接拦截；关闭时放行，由 beginAuthFlow 挂起（永远无法通过，超时踢出）
         if (plugin.getConfigManager().rejectNoAuthAccount()
                 && authManager.hasNoUsableLoginMethod(uuid)) {
+            if (Debug.on()) {
+                Debug.log("flow", "prelogin reject %s: no usable login method", event.getName());
+            }
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER,
                     I18n.msg("prelogin.account_locked"));
             return;
@@ -81,6 +91,9 @@ public final class PlayerListener implements Listener {
         // 注销后 5 秒内拒绝重连，确保 .dat 删除完成
         if (authManager.isRecentlyUnregistered(uuid)) {
             long remaining = authManager.getRecentUnregisterRemaining(uuid);
+            if (Debug.on()) {
+                Debug.log("flow", "prelogin reject %s: recently unregistered (%s ms left)", event.getName(), remaining);
+            }
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER,
                     I18n.msg("unregister.recently_deleted", remaining));
             return;
@@ -92,6 +105,10 @@ public final class PlayerListener implements Listener {
         if (plugin.getConfigManager().ipLimitRejectJoin()
                 && !authManager.hasAccount(uuid)
                 && authManager.isIpAccountLimitReached(event.getAddress().getHostAddress())) {
+            if (Debug.on()) {
+                Debug.log("flow", "prelogin reject %s: ip account limit reached (max %s)",
+                        event.getName(), plugin.getConfigManager().maxAccountsPerIp());
+            }
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER,
                     I18n.msg("register.ip_limit",
                             plugin.getConfigManager().maxAccountsPerIp()));
@@ -135,6 +152,9 @@ public final class PlayerListener implements Listener {
             // 命中时 onSpawnLocation 已将出生点设为退出位置，无需传送
             // 未命中时需传送到退出位置
             boolean sessionHit = authManager.hasSession(player);
+            if (Debug.on()) {
+                Debug.log("flow", "join %s: premium branch (sessionHit=%s)", player.getName(), sessionHit);
+            }
             authManager.autoLogin(player);
             // 已绑定 2FA（pre-join 弹窗未覆盖时的回退）：等待验证码，登录收尾与传送延迟到 /2fa 验证完成
             boolean pending2fa = authManager.isPending2fa(player.getUniqueId());
@@ -153,6 +173,9 @@ public final class PlayerListener implements Listener {
         if (authManager.hasAccount(player)) {
             // 会话命中：上次登录 IP 与当前一致且未过期，免输密码直接登录
             if (authManager.hasSession(player)) {
+                if (Debug.on()) {
+                    Debug.log("flow", "join %s: account branch, login session hit", player.getName());
+                }
                 authManager.autoLogin(player);
                 if (authManager.isPending2fa(player.getUniqueId())) {
                     // 已绑定 2FA（pre-join 弹窗未覆盖时的回退）：等待验证码，传送由 /2fa 验证完成流程处理
@@ -174,6 +197,10 @@ public final class PlayerListener implements Listener {
      * @param needsLogin true = 登录流程提示（含 2FA），false = 注册流程提示
      */
     public void suspend(Player player, String messageKey, boolean needsLogin) {
+        if (Debug.on()) {
+            Debug.log("flow", "suspend %s: %s (needsLogin=%s, spectatorProtection=%s)", player.getName(), messageKey,
+                    needsLogin, plugin.getConfigManager().protectionGamemodeEnabled());
+        }
         authManager.setSpectator(player);
         applyLoginBlindness(player);
         player.sendMessage(I18n.msg(messageKey, player));
@@ -188,6 +215,9 @@ public final class PlayerListener implements Listener {
      */
     private void applyLoginBlindness(Player player) {
         if (plugin.getConfigManager().protectionBlindnessEnabled()) {
+            if (Debug.on()) {
+                Debug.log("flow", "apply login blindness for %s", player.getName());
+            }
             player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS,
                     PotionEffect.INFINITE_DURATION, 0, false, false, false));
         } else {
@@ -200,6 +230,9 @@ public final class PlayerListener implements Listener {
      * 未登录退出四个场景共用此出口，效果类型改动只需修改一处。
      */
     private void clearLoginBlindness(Player player) {
+        if (Debug.on()) {
+            Debug.log("flow", "clear login blindness for %s", player.getName());
+        }
         player.removePotionEffect(PotionEffectType.BLINDNESS);
     }
 
@@ -209,12 +242,20 @@ public final class PlayerListener implements Listener {
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onLoginSuccess(HSAuthLoginEvent event) {
+        if (Debug.on()) {
+            Debug.log("flow", "login success for %s: finishing (clear blindness)", event.getPlayer().getName());
+        }
         clearLoginBlindness(event.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onRegisterSuccess(HSAuthRegisterEvent event) {
         // 强制注册离线玩家时 getPlayer() 为 null，此时也无可移除的失明
+        if (Debug.on()) {
+            Debug.log("flow", "register success for %s: finishing (clear blindness)",
+                    event.getPlayer() != null ? event.getPlayer().getName()
+                            : event.getUuid().toString().substring(0, 8));
+        }
         if (event.getPlayer() != null) {
             clearLoginBlindness(event.getPlayer());
         }
@@ -236,6 +277,9 @@ public final class PlayerListener implements Listener {
             // requires2faAtLogin 判空短路被 autoLogin 免密直入（认证绕过），必须显式判定
             if (authManager.has2faSession(uuid, ip)) {
                 // 走到这里说明 login.session 未命中，出生点在保护位置，登录后须传送回退出位置
+                if (Debug.on()) {
+                    Debug.log("flow", "auth flow %s: passwordless 2FA session hit, auto login", player.getName());
+                }
                 authManager.autoLogin(player);
                 player.sendMessage(I18n.msg("login.success", player));
                 authManager.returnToLogoutLocation(player);
@@ -250,8 +294,15 @@ public final class PlayerListener implements Listener {
         // 无可用登录方式（reject-no-auth-account=false 放行进入的兜底场景，无凭据永远验不过）：
         // WARN 记录供管理员排查，提示玩家联系管理员而非空输验证码（hasNoUsableLoginMethod 已含无密码判定）
         if (authManager.hasNoUsableLoginMethod(uuid)) {
+            if (Debug.on()) {
+                Debug.log("flow", "auth flow %s: no usable login method (suspend to timeout)", player.getName());
+            }
             plugin.getLogger().warning(I18n.get("log.passwordless_no_auth_account",
                     player.getName(), AuthManager.clientIp(player)));
+        }
+        if (Debug.on()) {
+            Debug.log("flow", "auth flow %s: suspend with prompt %s (hasAccount=%s)",
+                    player.getName(), authPromptKey(uuid, hasAccount), hasAccount);
         }
         suspend(player, authPromptKey(uuid, hasAccount), hasAccount);
     }
@@ -361,9 +412,14 @@ public final class PlayerListener implements Listener {
      */
     public void refreshPendingPlayers() {
         clearReminderBars();
+        int suspended = 0;
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (authManager.isLoggedIn(player)) continue;
+            suspended++;
             player.getScheduler().run(plugin, task -> beginAuthFlow(player), null);
+        }
+        if (Debug.on()) {
+            Debug.log("flow", "refresh pending: %s players re-suspended", suspended);
         }
     }
 
@@ -391,6 +447,9 @@ public final class PlayerListener implements Listener {
         if (uuid != null && authManager.hasSession(uuid, ip) && !authManager.requires2faAtLogin(uuid, ip)) {
             Location logoutLoc = authManager.getLogoutLocation(uuid);
             if (logoutLoc != null) {
+                if (Debug.on()) {
+                    Debug.log("flow", "spawn %s: logout location (login session hit)", uuid.toString().substring(0, 8));
+                }
                 event.setSpawnLocation(logoutLoc);
                 return;
             }
@@ -401,7 +460,13 @@ public final class PlayerListener implements Listener {
         if (uuid != null && preJoin != null && preJoin.hasCompleted(uuid)) {
             Location logoutLoc = authManager.getLogoutLocation(uuid);
             if (logoutLoc != null) {
+                if (Debug.on()) {
+                    Debug.log("flow", "spawn %s: logout location (pre-join completed)", uuid.toString().substring(0, 8));
+                }
                 event.setSpawnLocation(logoutLoc);
+            } else if (Debug.on()) {
+                Debug.log("flow", "spawn %s: pre-join completed, no logout location (default spawn)",
+                        uuid.toString().substring(0, 8));
             }
             // 已认证：登录前未接收任何世界信息，无需坐标保护
             return;
@@ -412,6 +477,13 @@ public final class PlayerListener implements Listener {
             org.bukkit.World world = org.bukkit.Bukkit.getWorlds().getFirst();
             Location safeSpawn = authManager.findSafeAuthSpawn(world);
             event.setSpawnLocation(safeSpawn);
+            if (Debug.on()) {
+                Debug.log("flow", "spawn %s: coordinate protection location",
+                        uuid == null ? "unknown" : uuid.toString().substring(0, 8));
+            }
+        } else if (Debug.on()) {
+            Debug.log("flow", "spawn %s: default spawn (no intervention)",
+                    uuid == null ? "unknown" : uuid.toString().substring(0, 8));
         }
     }
 
@@ -446,9 +518,15 @@ public final class PlayerListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
+        UUID uuid = player.getUniqueId();
+        boolean authenticated = authManager.hasAuthenticatedThisConnection(uuid);
+        if (Debug.on()) {
+            Debug.log("flow", "quit %s: authenticatedThisConnection=%s loggedIn=%s", player.getName(),
+                    authenticated, authManager.isLoggedIn(player));
+        }
         // 本次连接已认证的玩家退出时保存退出位置（用于下次登录后传送回来）
         // 未认证玩家不保存：其位置是登录前的保护/出生点，写入会覆盖真实退出位置
-        if (authManager.hasAuthenticatedThisConnection(player.getUniqueId())) {
+        if (authenticated) {
             authManager.saveLogoutLocation(player);
         }
         // 退出时不在登录态（从未认证，或登录态被强制登出/注销提前失效）：清理可能残留的登录失明，
@@ -472,6 +550,9 @@ public final class PlayerListener implements Listener {
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuitCleanup(PlayerQuitEvent event) {
+        if (Debug.on()) {
+            Debug.log("flow", "quit cleanup for %s: clearing session state (MONITOR, after message decision)", event.getPlayer().getName());
+        }
         authManager.clearSession(event.getPlayer());
     }
 
@@ -517,6 +598,9 @@ public final class PlayerListener implements Listener {
 
         Player player = event.getPlayer();
         if (!authManager.isLoggedIn(player)) {
+            if (Debug.on()) {
+                Debug.log("flow", "blocked chat for %s (not logged in)", player.getName());
+            }
             event.setCancelled(true);
             player.sendMessage(I18n.msg("listener.must_login", player));
         }
@@ -543,6 +627,9 @@ public final class PlayerListener implements Listener {
             return;
         }
 
+        if (Debug.on()) {
+            Debug.log("cmd", "blocked command for %s: /%s", player.getName(), commandName);
+        }
         event.setCancelled(true);
         player.sendMessage(I18n.msg("listener.must_login", player));
     }

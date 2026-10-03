@@ -3,6 +3,7 @@ package org.howsauth.plugin.data;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.howsauth.plugin.HowSAuth;
+import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -112,7 +113,11 @@ public final class PlayerDataManager implements AutoCloseable {
             config.setMaximumPoolSize(1);
         }
 
-        return new HikariDataSource(config);
+        HikariDataSource ds = new HikariDataSource(config);
+        if (Debug.on()) {
+            Debug.log("db", "datasource init: type=%s poolSize=%s", cm.databaseType(), config.getMaximumPoolSize());
+        }
+        return ds;
     }
 
     /** 建表（如果不存在）+ 迁移新列 */
@@ -138,6 +143,9 @@ public final class PlayerDataManager implements AutoCloseable {
             addColumnIfMissing(stmt, conn, "game_mode", "VARCHAR(16)");
             addColumnIfMissing(stmt, conn, "totp_secret", "VARCHAR(64)");
             addColumnIfMissing(stmt, conn, "last_active", "BIGINT NOT NULL DEFAULT 0");
+            if (Debug.on()) {
+                Debug.log("db", "schema migration: %s add-column steps applied", 6);
+            }
         } catch (SQLException e) {
             plugin.getLogger().severe(I18n.get("log.init_table_failed", e.getMessage()));
         }
@@ -183,6 +191,9 @@ public final class PlayerDataManager implements AutoCloseable {
                 }
             }
             loadFailed = false;
+            if (Debug.on()) {
+                Debug.log("db", "load complete: %s accounts loaded", players.size());
+            }
         } catch (SQLException e) {
             loadFailed = true;
             plugin.getLogger().severe(I18n.get("log.load_players_failed", e.getMessage()));
@@ -223,7 +234,12 @@ public final class PlayerDataManager implements AutoCloseable {
      */
     public void saveNow(UUID uuid) {
         PlayerData data = players.get(uuid);
-        if (data != null) saveNow(data);
+        if (data != null) {
+            if (Debug.on()) {
+                Debug.log("db", "save now: %s", uuid.toString().substring(0, 8));
+            }
+            saveNow(data);
+        }
     }
 
     /** 周期任务调用（已在异步调度线程）：将脏标记的玩家数据批量落库，失败按上限重试 */
@@ -237,6 +253,9 @@ public final class PlayerDataManager implements AutoCloseable {
             if (data != null) toSave.add(data);
         }
         if (toSave.isEmpty()) return;
+        if (Debug.on()) {
+            Debug.log("db", "flush dirty: %s records queued", toSave.size());
+        }
         // 落库经串行写队列执行：与注销/迁移的删除任务按入队顺序落库
         submitDbWrite(() -> {
             // 执行时复检内存状态：快照后被移除或替换的记录跳过（已注销/迁移的账号不得被 upsert 复活）
@@ -324,6 +343,9 @@ public final class PlayerDataManager implements AutoCloseable {
             return true;
         } catch (SQLException e) {
             plugin.getLogger().severe(I18n.get("log.save_all_failed", e.getMessage()));
+            if (Debug.on()) {
+                Debug.log("db", "upsert batch failed: %s", e.getMessage());
+            }
             return false;
         }
     }
@@ -390,7 +412,12 @@ public final class PlayerDataManager implements AutoCloseable {
         synchronized (ipLimitLock) {
             if (maxAccounts > 0 && ip != null) {
                 long count = players.values().stream().filter(d -> ip.equals(d.ip())).count();
-                if (count >= maxAccounts) return null;
+                if (count >= maxAccounts) {
+                    if (Debug.on()) {
+                        Debug.log("db", "create player %s rejected: ip account limit reached", uuid.toString().substring(0, 8));
+                    }
+                    return null;
+                }
             }
             PlayerData data = new PlayerData(uuid, null, passwordHash, ip, nowEpochSeconds(), null, false, null, null, null, 0);
             players.put(uuid, data);
@@ -480,6 +507,9 @@ public final class PlayerDataManager implements AutoCloseable {
     public boolean migrateToPremium(UUID offlineUuid, UUID premiumUuid, String name, String ip, String properties) {
         PlayerData offline = players.get(offlineUuid);
         if (offline == null) return false;
+        if (Debug.on()) {
+            Debug.log("db", "migrate offline->premium: %s", name);
+        }
         // 目标已有正版记录：保留原账号数据，仅换绑名字与皮肤，离线号作废（返回 false 让调用方跳过原版数据迁移）
         PlayerData existing = players.get(premiumUuid);
         if (existing != null && existing.premium()) {
@@ -520,6 +550,9 @@ public final class PlayerDataManager implements AutoCloseable {
                 }
             } catch (SQLException e) {
                 plugin.getLogger().severe(I18n.get("log.migrate_failed", offlineUuid + ": " + e.getMessage()));
+                if (Debug.on()) {
+                    Debug.log("db", "migrate offline->premium failed (transaction): %s", e.getMessage());
+                }
             }
         });
         return true;
@@ -571,6 +604,9 @@ public final class PlayerDataManager implements AutoCloseable {
                 }
             } catch (SQLException e) {
                 plugin.getLogger().severe(I18n.get("log.migrate_failed", offlineUuid + ": " + e.getMessage()));
+                if (Debug.on()) {
+                    Debug.log("db", "merge into existing premium failed: %s", e.getMessage());
+                }
             }
         });
     }
@@ -585,6 +621,10 @@ public final class PlayerDataManager implements AutoCloseable {
     public boolean migrateToOffline(UUID premiumUuid, UUID offlineUuid) {
         PlayerData premium = players.remove(premiumUuid);
         if (premium == null) return false;
+        if (Debug.on()) {
+            Debug.log("db", "migrate premium->offline: %s",
+                    premium.name() != null ? premium.name() : premiumUuid.toString().substring(0, 8));
+        }
         if (premium.name() != null) {
             premiumNameIndex.remove(premium.name().toLowerCase());
         }
@@ -616,6 +656,9 @@ public final class PlayerDataManager implements AutoCloseable {
                 }
             } catch (SQLException e) {
                 plugin.getLogger().severe(I18n.get("log.migrate_failed", premiumUuid + ": " + e.getMessage()));
+                if (Debug.on()) {
+                    Debug.log("db", "migrate premium->offline failed: %s", e.getMessage());
+                }
             }
         });
         return true;
@@ -665,6 +708,9 @@ public final class PlayerDataManager implements AutoCloseable {
     }
 
     public void removePlayer(UUID uuid) {
+        if (Debug.on()) {
+            Debug.log("db", "remove player: %s", uuid.toString().substring(0, 8));
+        }
         PlayerData data = players.remove(uuid);
         if (data != null && data.name() != null) {
             premiumNameIndex.remove(data.name().toLowerCase());
@@ -680,6 +726,9 @@ public final class PlayerDataManager implements AutoCloseable {
                 ps.executeUpdate();
             } catch (SQLException e) {
                 plugin.getLogger().severe(I18n.get("log.delete_player_failed", uuid, e.getMessage()));
+                if (Debug.on()) {
+                    Debug.log("db", "delete player failed: %s", e.getMessage());
+                }
             }
         });
     }
@@ -704,6 +753,9 @@ public final class PlayerDataManager implements AutoCloseable {
         }
         for (UUID uuid : toDelete) {
             removePlayer(uuid);
+        }
+        if (!toDelete.isEmpty() && Debug.on()) {
+            Debug.log("db", "purge inactive: %s accounts removed", toDelete.size());
         }
         return toDelete.size();
     }
