@@ -72,6 +72,8 @@ public class JoinQuitMessageService implements Listener {
     /**
      * 退出消息处理：先移除待补发项（未登录退出即丢弃补发，同时防 map 泄漏），
      * 再按配置隐藏未登录退出消息或应用退出模板。
+     * 依赖登录态读取：会话清理在 MONITOR（PlayerListener#onQuitCleanup）执行，
+     * 本监听器（HIGH）先于清理运行，读到的是退出前的真实登录状态
      */
     @EventHandler(priority = EventPriority.HIGH)
     public void onQuitMessage(PlayerQuitEvent event) {

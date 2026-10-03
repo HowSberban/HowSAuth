@@ -441,6 +441,10 @@ public final class PlayerListener implements Listener {
         }, null, delayTicks);
     }
 
+    /**
+     * 玩家退出阶段一（LOWEST，最先执行）：处理依赖登录态的业务并保存退出数据。
+     * 会话状态不在此清理（见 onQuitCleanup）：登录态失效须晚于所有读取它的退出处理
+     */
     @EventHandler(priority = EventPriority.LOWEST)
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
@@ -458,7 +462,17 @@ public final class PlayerListener implements Listener {
         reminderTasks.remove(player.getUniqueId());
         // 注销玩家退出时删除原版 .dat（服务器已保存并释放文件锁）
         authManager.tryDeletePlayerDataOnQuit(player.getUniqueId());
-        authManager.clearSession(player);
+    }
+
+    /**
+     * 玩家退出阶段二（MONITOR，最后执行）：清理会话状态。
+     * 退出监听按「保存数据（LOWEST）→ 消息决策（HIGH）→ 状态清理（MONITOR）」分层，
+     * 本阶段须保持在最后：JoinQuitMessageService 在 HIGH 依据登录态决定是否隐藏退出消息，
+     * 提前清理会让已登录玩家被误判为未登录
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onQuitCleanup(PlayerQuitEvent event) {
+        authManager.clearSession(event.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.LOWEST)

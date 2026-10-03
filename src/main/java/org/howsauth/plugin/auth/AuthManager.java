@@ -1098,7 +1098,10 @@ public final class AuthManager {
         kickUntil.remove(uuid);
     }
 
-    // 玩家退出时调用 — 清理会话状态
+    /**
+     * 玩家退出时调用（PlayerListener#onQuitCleanup，MONITOR）— 清理会话状态
+     * 调用点固定在退出流程的最后阶段：登录态失效须晚于依赖它的退出处理（如退出消息决策），不可提前
+     */
     public void clearSession(Player player) {
         UUID uuid = player.getUniqueId();
         invalidateUnregisterConfirm(uuid);
