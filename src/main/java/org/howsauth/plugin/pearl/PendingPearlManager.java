@@ -297,6 +297,7 @@ public final class PendingPearlManager implements Listener {
         try {
             return List.copyOf(player.getEnderPearls());
         } catch (Exception e) {
+            // 读取失败按无珍珠处理：该接口在部分实现/环境下不可用，而珍珠恢复属辅助功能，不得打断退出与登录流程
             return List.of();
         }
     }

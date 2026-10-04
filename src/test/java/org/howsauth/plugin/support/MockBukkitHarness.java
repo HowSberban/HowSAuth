@@ -1,9 +1,14 @@
 package org.howsauth.plugin.support;
 
+import io.papermc.paper.threadedregions.scheduler.AsyncScheduler;
 import io.papermc.paper.threadedregions.scheduler.EntityScheduler;
 import io.papermc.paper.threadedregions.scheduler.GlobalRegionScheduler;
+import io.papermc.paper.threadedregions.scheduler.RegionScheduler;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import org.bukkit.Location;
+import org.bukkit.World;
 import org.bukkit.WorldCreator;
+import org.bukkit.entity.EnderPearl;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.howsauth.plugin.HowSAuth;
@@ -16,6 +21,7 @@ import org.howsauth.plugin.data.PlayerDataManager;
 import org.jetbrains.annotations.NotNull;
 import org.mockbukkit.mockbukkit.MockBukkit;
 import org.mockbukkit.mockbukkit.ServerMock;
+import org.mockbukkit.mockbukkit.entity.EnderPearlMock;
 import org.mockbukkit.mockbukkit.entity.PlayerMock;
 import org.mockbukkit.mockbukkit.world.WorldMock;
 
@@ -24,8 +30,10 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -238,17 +246,114 @@ public final class MockBukkitHarness implements AutoCloseable {
     }
 
     /**
-     * 补 GlobalRegionScheduler：生产代码在异步线程触发同步事件时经它转调度，MockBukkit 默认未实现。
+     * 补 GlobalRegionScheduler / RegionScheduler / isOwnedByCurrentRegion：
+     * 生产代码在异步线程触发同步事件时经 GlobalRegionScheduler 转调度，
+     * 末影珍珠返还走 RegionScheduler 延迟生成实体，吸收珍珠时经 isOwnedByCurrentRegion 决定是否直接移除；
+     * 三者 MockBukkit 默认均抛 UnimplementedOperationException。
      * 抑制项来自 MockBukkit 的 ServerMock#getBanList 原始类型签名。
      */
     @SuppressWarnings({"unchecked", "RedundantSuppression"})
     private static final class TestServerMock extends ServerMock {
         private final TestGlobalScheduler globalScheduler = new TestGlobalScheduler();
+        private final TestRegionScheduler regionScheduler = new TestRegionScheduler();
+        private final TestAsyncScheduler asyncScheduler = new TestAsyncScheduler(super.getAsyncScheduler());
 
         @Override
         @NotNull
         public GlobalRegionScheduler getGlobalRegionScheduler() {
             return globalScheduler;
+        }
+
+        @Override
+        @NotNull
+        public RegionScheduler getRegionScheduler() {
+            return regionScheduler;
+        }
+
+        @Override
+        @NotNull
+        public AsyncScheduler getAsyncScheduler() {
+            return asyncScheduler;
+        }
+
+        @Override
+        public boolean isOwnedByCurrentRegion(@NotNull Location location) {
+            // 测试在单一主线程环境下运行：所有区域都归属当前线程，让 removePearl 走直接移除分支
+            return true;
+        }
+    }
+
+    /**
+     * 补 AsyncScheduler#cancel：真实 MockBukkit 的 PaperScheduledTask.cancel 抛 UnimplementedOperationException，
+     * 使守卫任务的 cancel（PendingPearlManager.shutdown 取消清理/落盘任务）失败而连带 shutdown 崩掉；
+     * 这里委托真实调度器执行任务体，仅把返回的取消句柄替换为安全实现，保留原有调度时序。
+     */
+    private static final class TestAsyncScheduler implements AsyncScheduler {
+        private final AsyncScheduler delegate;
+
+        private TestAsyncScheduler(AsyncScheduler delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        @NotNull
+        public ScheduledTask runNow(@NotNull Plugin plugin, @NotNull Consumer<ScheduledTask> task) {
+            return new CancelSafeTask(delegate.runNow(plugin, task));
+        }
+
+        @Override
+        @NotNull
+        public ScheduledTask runDelayed(@NotNull Plugin plugin, @NotNull Consumer<ScheduledTask> task,
+                                        long delay, @NotNull TimeUnit unit) {
+            return new CancelSafeTask(delegate.runDelayed(plugin, task, delay, unit));
+        }
+
+        @Override
+        @NotNull
+        public ScheduledTask runAtFixedRate(@NotNull Plugin plugin, @NotNull Consumer<ScheduledTask> task,
+                                            long initialDelay, long period, @NotNull TimeUnit unit) {
+            return new CancelSafeTask(delegate.runAtFixedRate(plugin, task, initialDelay, period, unit));
+        }
+
+        @Override
+        public void cancelTasks(@NotNull Plugin plugin) {
+            delegate.cancelTasks(plugin);
+        }
+    }
+
+    /** 包装真实任务句柄：取消退化为安全空操作（MockBukkit 未实现 cancel），其余状态透传 */
+    private static final class CancelSafeTask implements ScheduledTask {
+        private final ScheduledTask delegate;
+
+        private CancelSafeTask(ScheduledTask delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        @NotNull
+        public Plugin getOwningPlugin() {
+            return delegate.getOwningPlugin();
+        }
+
+        @Override
+        public boolean isRepeatingTask() {
+            return delegate.isRepeatingTask();
+        }
+
+        @Override
+        @NotNull
+        public CancelledState cancel() {
+            try {
+                return delegate.cancel();
+            } catch (RuntimeException e) {
+                return CancelledState.CANCELLED_ALREADY;
+            }
+        }
+
+        @Override
+        @NotNull
+        public ExecutionState getExecutionState() {
+            return delegate.getExecutionState();
         }
     }
 
@@ -283,6 +388,41 @@ public final class MockBukkitHarness implements AutoCloseable {
 
         @Override
         public void cancelTasks(@NotNull Plugin plugin) {
+        }
+    }
+
+    /**
+     * 同步执行的区域调度器：末影珍珠返还经 Bukkit.getRegionScheduler().run 延迟生成实体，
+     * MockBukkit 默认未实现；测试下立即执行任务体（含离线回填 pending 与在线 spawn 两条分支）。
+     */
+    private static final class TestRegionScheduler implements RegionScheduler {
+        @Override
+        public void execute(@NotNull Plugin plugin, @NotNull World world, int chunkX, int chunkZ, @NotNull Runnable runnable) {
+            runnable.run();
+        }
+
+        @Override
+        @NotNull
+        public ScheduledTask run(@NotNull Plugin plugin, @NotNull World world, int chunkX, int chunkZ, @NotNull Consumer<ScheduledTask> task) {
+            task.accept(TestScheduledTask.INSTANCE);
+            return TestScheduledTask.INSTANCE;
+        }
+
+        @Override
+        @NotNull
+        public ScheduledTask runDelayed(@NotNull Plugin plugin, @NotNull World world, int chunkX, int chunkZ,
+                                        @NotNull Consumer<ScheduledTask> task, long delayTicks) {
+            task.accept(TestScheduledTask.INSTANCE);
+            return TestScheduledTask.INSTANCE;
+        }
+
+        @Override
+        @NotNull
+        public ScheduledTask runAtFixedRate(@NotNull Plugin plugin, @NotNull World world, int chunkX, int chunkZ,
+                                            @NotNull Consumer<ScheduledTask> task, long initialDelayTicks, long periodTicks) {
+            // 周期任务仅首次执行：测试不依赖后续 tick
+            task.accept(TestScheduledTask.INSTANCE);
+            return TestScheduledTask.INSTANCE;
         }
     }
 
@@ -342,12 +482,40 @@ public final class MockBukkitHarness implements AutoCloseable {
         }
     }
 
-    /** 补 getScheduler：账号密码操作依赖实体调度器，MockBukkit 的 PlayerMock 未实现 */
+    /** 补 getScheduler / getEnderPearls：账号操作依赖实体调度器，珍珠模块依赖在飞珍珠列表，MockBukkit 的 PlayerMock 均未实现 */
     public static final class TestPlayerMock extends PlayerMock {
         private final TestEntityScheduler scheduler = new TestEntityScheduler();
+        private final List<EnderPearl> enderPearls = new ArrayList<>();
 
         public TestPlayerMock(ServerMock server, String name) {
             super(server, name);
+        }
+
+        @Override
+        @NotNull
+        public EntityScheduler getScheduler() {
+            return scheduler;
+        }
+
+        /** 测试登记一颗"在飞"的末影珍珠（生产代码只读 getEnderPearls，不会自行登记） */
+        public void trackEnderPearl(EnderPearl pearl) {
+            enderPearls.add(pearl);
+        }
+
+        @Override
+        @NotNull
+        public Collection<EnderPearl> getEnderPearls() {
+            // 返回副本：生产代码用 List.copyOf 包装，避免外部修改内部跟踪列表
+            return List.copyOf(enderPearls);
+        }
+    }
+
+    /** 补 getScheduler：EnderPearlMock 继承的 EntityMock#getScheduler 抛异常，而吸收珍珠时会用它清理 handled 标记 */
+    public static final class TestEnderPearlMock extends EnderPearlMock {
+        private final TestEntityScheduler scheduler = new TestEntityScheduler();
+
+        public TestEnderPearlMock(ServerMock server, UUID uuid) {
+            super(server, uuid);
         }
 
         @Override
