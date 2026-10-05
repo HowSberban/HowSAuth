@@ -1680,6 +1680,32 @@ public final class AuthManager {
     }
 
     /**
+     * 异步预载玩家退出位置所在区块（fire-and-forget，绝不阻塞、绝不抛异常）。
+     * <p>
+     * 供 pre-login 异步阶段调用：目的是让加入时的悬空判定直接命中已加载区块，
+     * 避免在 tick 关键路径（区域线程/主线程）上等待区块加载。
+     * 只触发加载、不等待结果，异常一律吞掉，pre-login 路径不得因此出错。
+     */
+    public void preloadLogoutChunk(UUID uuid) {
+        try {
+            // 坐标保护 / 旁观强制开启时 setSpectator 不做悬空判定，无需预载
+            if (configManager.protectionGamemodeEnabled() || configManager.protectionPosEnabled()) return;
+            Location logoutLoc = getLogoutLocation(uuid);
+            if (logoutLoc == null) return;
+            World world = logoutLoc.getWorld();
+            if (world == null) return;
+            int cx = logoutLoc.getBlockX() >> 4;
+            int cz = logoutLoc.getBlockZ() >> 4;
+            // 区块已加载则无需再触发加载票据
+            if (world.isChunkLoaded(cx, cz)) return;
+            // 只预载不等结果：不 join、不消费结果，异步异常仅吞掉
+            world.getChunkAtAsyncUrgently(cx, cz).exceptionally(error -> null);
+        } catch (Exception ignored) {
+            // 预载是尽力而为：任何异常都不影响加入流程
+        }
+    }
+
+    /**
      * 未登录期间切换为旁观模式。
      * 标记玩家为 spectatorPending，onLoginSuccess 时据此恢复游戏模式。
      * <p>
@@ -1706,6 +1732,10 @@ public final class AuthManager {
         World world = loc.getWorld();
         int y = loc.getBlockY() - 1;
         if (y <= world.getMinHeight() || y >= world.getMaxHeight()) return false;
+        // 区块未加载时不等待（pre-login 预载通常已命中），按"悬空"保守处理：
+        // 强制旁观，登录成功后 onLoginSuccess 照常恢复原游戏模式；
+        // 等待期玩家移动被 onMove 拦下、伤害被 onDamage 拦下，无风险
+        if (!world.isChunkLoaded(loc.getBlockX() >> 4, loc.getBlockZ() >> 4)) return false;
         org.bukkit.ChunkSnapshot snap = world.getChunkAtAsyncUrgently(
                 loc.getBlockX() >> 4, loc.getBlockZ() >> 4).join().getChunkSnapshot();
         return snap.getBlockData(loc.getBlockX() & 15, y, loc.getBlockZ() & 15).getMaterial().isSolid();

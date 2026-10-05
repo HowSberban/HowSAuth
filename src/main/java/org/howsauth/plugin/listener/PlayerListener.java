@@ -113,6 +113,11 @@ public final class PlayerListener implements Listener {
                     I18n.msg("register.ip_limit",
                             plugin.getConfigManager().maxAccountsPerIp()));
         }
+
+        // 放行玩家异步预载退出位置区块：fire-and-forget，不阻塞、不影响放行判定
+        if (event.getLoginResult() == AsyncPlayerPreLoginEvent.Result.ALLOWED) {
+            authManager.preloadLogoutChunk(uuid);
+        }
     }
 
     @EventHandler(priority = EventPriority.LOWEST)

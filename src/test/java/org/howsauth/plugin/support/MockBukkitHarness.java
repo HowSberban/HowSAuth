@@ -5,6 +5,7 @@ import io.papermc.paper.threadedregions.scheduler.EntityScheduler;
 import io.papermc.paper.threadedregions.scheduler.GlobalRegionScheduler;
 import io.papermc.paper.threadedregions.scheduler.RegionScheduler;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
@@ -538,6 +539,18 @@ public final class MockBukkitHarness implements AutoCloseable {
         @NotNull
         public File getWorldFolder() {
             return worldFolder;
+        }
+
+        /**
+         * 补 getChunkAtAsync：MockBukkit 默认抛 UnimplementedOperationException。
+         * {@code World#getChunkAtAsyncUrgently(int,int)} 的默认实现会委托到此方法，
+         * 生产代码的异步预载据此真正把区块标记为已加载（getChunkAt 写入 loadedChunks），
+         * 使 isChunkLoaded 由 false 翻为 true，从而可观测"预载不是空操作"。
+         */
+        @Override
+        @NotNull
+        public CompletableFuture<Chunk> getChunkAtAsync(int x, int z, boolean gen, boolean urgent) {
+            return CompletableFuture.completedFuture(getChunkAt(x, z));
         }
     }
 }
