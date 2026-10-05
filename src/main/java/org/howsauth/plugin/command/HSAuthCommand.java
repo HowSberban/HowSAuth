@@ -377,7 +377,7 @@ public final class HSAuthCommand {
         }
         if (PasswordValidator.invalidPattern(plugin, sender, password)) return Command.SINGLE_SUCCESS;
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            if (!plugin.getAuthManager().forceRegister(resolveTargetUuid(targetName), targetName, password)) {
+            if (!plugin.accounts().forceRegister(resolveTargetUuid(targetName), targetName, password)) {
                 if (Debug.on()) {
                     Debug.log("cmd", "forceregister by %s for %s: already exists", sender.getName(), targetName);
                 }
@@ -433,7 +433,7 @@ public final class HSAuthCommand {
             // 以数据库记录解析账号：getOfflinePlayer 走 usercache，同名可能缓存到与账号无关的 UUID
             // （玩家改名或正版/离线缓存混杂时），导致删错或漏删账号
             UUID targetUuid = plugin.getPlayerDataManager().findUuidByName(targetName);
-            if (targetUuid == null || !plugin.getAuthManager().unregister(targetUuid)) {
+            if (targetUuid == null || !plugin.accounts().unregister(targetUuid)) {
                 if (Debug.on()) {
                     Debug.log("cmd", "unreg by %s for %s: not found", sender.getName(), targetName);
                 }

@@ -4,6 +4,7 @@ import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.AccountLifecycle;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.TwoFactorAuth;
 import org.bukkit.command.CommandSender;
@@ -20,11 +21,13 @@ public final class RemovePasswordCommand implements BasicCommand {
     private final AuthManager authManager;
     private final SessionStore sessions;
     private final TwoFactorAuth twoFactor;
+    private final AccountLifecycle accounts;
 
-    public RemovePasswordCommand(AuthManager authManager, SessionStore sessions, TwoFactorAuth twoFactor) {
+    public RemovePasswordCommand(AuthManager authManager, SessionStore sessions, TwoFactorAuth twoFactor, AccountLifecycle accounts) {
         this.authManager = authManager;
         this.sessions = sessions;
         this.twoFactor = twoFactor;
+        this.accounts = accounts;
     }
 
     @Override
@@ -40,21 +43,21 @@ public final class RemovePasswordCommand implements BasicCommand {
             return;
         }
 
-        if (authManager.isPasswordless(player.getUniqueId())) {
+        if (accounts.isPasswordless(player.getUniqueId())) {
             player.sendMessage(I18n.msg("removepassword.already", player));
             return;
         }
 
         // 离线账户必须已绑定 2FA，否则移除密码后账号无任何验证因素
         boolean bound2fa = twoFactor.hasTotpSecret(player.getUniqueId());
-        if (!bound2fa && !authManager.isPremium(player)) {
+        if (!bound2fa && !accounts.isPremium(player)) {
             player.sendMessage(I18n.msg("removepassword.need_2fa", player));
             return;
         }
 
         String code = args.length > 0 ? args[0] : null;
         // 仅离线账户已绑定 2FA 时需要验证码确认（验证码成为唯一登录因素）；正版玩家凭正版验证直接放行
-        boolean needCode = bound2fa && !authManager.isPremium(player);
+        boolean needCode = bound2fa && !accounts.isPremium(player);
         if (needCode && (code == null || code.isEmpty())) {
             player.sendMessage(I18n.msg("removepassword.usage", player));
             return;

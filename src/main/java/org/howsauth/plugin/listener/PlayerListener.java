@@ -8,6 +8,7 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.AccountLifecycle;
 import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.LogoutLocation;
 import org.howsauth.plugin.auth.SessionStore;
@@ -47,19 +48,21 @@ public final class PlayerListener implements Listener {
     private final FailProtection failProtection;
     private final TwoFactorAuth twoFactor;
     private final LogoutLocation locations;
+    private final AccountLifecycle accounts;
     // 活跃的提醒 BossBar：登录成功/玩家退出时立即隐藏（不等下一个任务周期）
     private final Map<UUID, net.kyori.adventure.bossbar.BossBar> reminderBars = new ConcurrentHashMap<>();
     // 活跃的提醒任务：重新挂起（reload）时取消旧任务，避免新旧任务并行重复提醒
     private final Map<UUID, ScheduledTask> reminderTasks = new ConcurrentHashMap<>();
 
     public PlayerListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions,
-                          FailProtection failProtection, TwoFactorAuth twoFactor, LogoutLocation locations) {
+                          FailProtection failProtection, TwoFactorAuth twoFactor, LogoutLocation locations, AccountLifecycle accounts) {
         this.plugin = plugin;
         this.authManager = authManager;
         this.sessions = sessions;
         this.failProtection = failProtection;
         this.twoFactor = twoFactor;
         this.locations = locations;
+        this.accounts = accounts;
     }
 
     // 在玩家加入世界前拦截：踢出期玩家、同一 IP 账号数量超限
@@ -92,7 +95,7 @@ public final class PlayerListener implements Listener {
         // 有账号但无任何可用登录方式（无密码/未绑 2FA/非正版）。
         // 配置开启时在连接阶段直接拦截；关闭时放行，由 beginAuthFlow 挂起（永远无法通过，超时踢出）
         if (plugin.getConfigManager().rejectNoAuthAccount()
-                && authManager.hasNoUsableLoginMethod(uuid)) {
+                && accounts.hasNoUsableLoginMethod(uuid)) {
             if (Debug.on()) {
                 Debug.log("flow", "prelogin reject %s: no usable login method", event.getName());
             }
@@ -116,8 +119,8 @@ public final class PlayerListener implements Listener {
         // max-accounts-per-ip.reject-join 关闭时放行进服，由注册动作精确判定（共享 IP 环境友好）
         // 已达上限判定内部已处理 max<=0，无需在此重复判断
         if (plugin.getConfigManager().ipLimitRejectJoin()
-                && !authManager.hasAccount(uuid)
-                && authManager.isIpAccountLimitReached(event.getAddress().getHostAddress())) {
+                && !accounts.hasAccount(uuid)
+                && accounts.isIpAccountLimitReached(event.getAddress().getHostAddress())) {
             if (Debug.on()) {
                 Debug.log("flow", "prelogin reject %s: ip account limit reached (max %s)",
                         event.getName(), plugin.getConfigManager().maxAccountsPerIp());
@@ -160,16 +163,16 @@ public final class PlayerListener implements Listener {
         }
 
         // 正版玩家免密登录：跳过密码验证，直接标记为已登录
-        if (authManager.isPremium(player)) {
+        if (accounts.isPremium(player)) {
             // 正版验证失败回退进入的玩家：本次需密码登录，不自动免密
-            if (authManager.isPremiumFallback(player.getUniqueId())) {
+            if (accounts.isPremiumFallback(player.getUniqueId())) {
                 beginAuthFlow(player);
                 return;
             }
             // 先检查会话是否命中（决定是否需要传送）
             // 命中时 onSpawnLocation 已将出生点设为退出位置，无需传送
             // 未命中时需传送到退出位置
-            boolean sessionHit = authManager.hasSession(player);
+            boolean sessionHit = sessions.hasSession(player);
             if (Debug.on()) {
                 Debug.log("flow", "join %s: premium branch (sessionHit=%s)", player.getName(), sessionHit);
             }
@@ -188,9 +191,9 @@ public final class PlayerListener implements Listener {
             return;
         }
 
-        if (authManager.hasAccount(player)) {
+        if (accounts.hasAccount(player)) {
             // 会话命中：上次登录 IP 与当前一致且未过期，免输密码直接登录
-            if (authManager.hasSession(player)) {
+            if (sessions.hasSession(player)) {
                 if (Debug.on()) {
                     Debug.log("flow", "join %s: account branch, login session hit", player.getName());
                 }
@@ -285,10 +288,10 @@ public final class PlayerListener implements Listener {
      * 配置阶段 Dialog（pre-join）未能覆盖的玩家（旧客户端/旧服务端/超时放行）在此以聊天栏提示挂起。
      */
     public void beginAuthFlow(Player player) {
-        boolean hasAccount = authManager.hasAccount(player);
+        boolean hasAccount = accounts.hasAccount(player);
         UUID uuid = player.getUniqueId();
         // 无密码账户：密码不是登录因素，已绑定验证器时验证码成为唯一登录方式
-        boolean passwordless = hasAccount && authManager.isPasswordless(uuid);
+        boolean passwordless = hasAccount && accounts.isPasswordless(uuid);
         if (passwordless) {
             String ip = AuthManager.clientIp(player);
             // 仅 2FA 会话命中（同 IP 且未过期）时免验证码登录：无密钥账户否则会因
@@ -311,7 +314,7 @@ public final class PlayerListener implements Listener {
         }
         // 无可用登录方式（reject-no-auth-account=false 放行进入的兜底场景，无凭据永远验不过）：
         // WARN 记录供管理员排查，提示玩家联系管理员而非空输验证码（hasNoUsableLoginMethod 已含无密码判定）
-        if (authManager.hasNoUsableLoginMethod(uuid)) {
+        if (accounts.hasNoUsableLoginMethod(uuid)) {
             if (Debug.on()) {
                 Debug.log("flow", "auth flow %s: no usable login method (suspend to timeout)", player.getName());
             }
@@ -332,8 +335,8 @@ public final class PlayerListener implements Listener {
     private String authPromptKey(UUID uuid, boolean needsLogin) {
         if (!needsLogin) return "listener.please_register";
         if (twoFactor.isPending(uuid)) return "login.need_2fa";
-        return authManager.isPasswordless(uuid)
-                ? (authManager.hasNoUsableLoginMethod(uuid)
+        return accounts.isPasswordless(uuid)
+                ? (accounts.hasNoUsableLoginMethod(uuid)
                         ? "login.passwordless_no_auth" : "login.passwordless_prompt")
                 : "listener.please_login";
     }
@@ -361,7 +364,7 @@ public final class PlayerListener implements Listener {
                 scheduledTask.cancel();
                 return;
             }
-            boolean done = needsLogin ? sessions.isLoggedIn(player) : authManager.hasAccount(player);
+            boolean done = needsLogin ? sessions.isLoggedIn(player) : accounts.hasAccount(player);
             if (done) {
                 reminderTasks.remove(uuid);
                 hideReminderBar(player);
@@ -462,7 +465,7 @@ public final class PlayerListener implements Listener {
         // 会话命中（免输密码）的玩家直接在退出位置出生，避免后续传送
         // 登录需 2FA 的除外：验证完成前不放行到退出位置（/2fa 验证后再传送）；
         // 2FA 会话命中（同 IP 且未过期）视同已完成验证
-        if (uuid != null && authManager.hasSession(uuid, ip) && !twoFactor.requiresAtLogin(uuid, ip)) {
+        if (uuid != null && sessions.hasSession(uuid, ip) && !twoFactor.requiresAtLogin(uuid, ip)) {
             Location logoutLoc = locations.get(uuid);
             if (logoutLoc != null) {
                 if (Debug.on()) {
@@ -557,7 +560,7 @@ public final class PlayerListener implements Listener {
         // 清理提醒任务引用（任务随玩家调度器 retired 不再执行，防止 Map 残留）
         reminderTasks.remove(player.getUniqueId());
         // 注销玩家退出时删除原版 .dat（服务器已保存并释放文件锁）
-        authManager.tryDeletePlayerDataOnQuit(player.getUniqueId());
+        accounts.tryDeletePlayerDataOnQuit(player.getUniqueId());
     }
 
     /**

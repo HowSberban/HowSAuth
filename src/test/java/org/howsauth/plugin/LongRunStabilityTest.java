@@ -112,7 +112,7 @@ class LongRunStabilityTest {
                 UUID uuid = UUID.randomUUID();
                 String name = "ipu" + i;
                 String password = "pw" + i;
-                tasks.add(() -> auth.registerConfig(uuid, name, password, ip));
+                tasks.add(() -> env.accounts().registerConfig(uuid, name, password, ip));
             }
             int ok = 0;
             for (Future<Boolean> f : pool.invokeAll(tasks)) {
@@ -144,7 +144,7 @@ class LongRunStabilityTest {
                         String ip = "10.1." + tid + "." + (i % 250);
                         UUID uuid = UUID.randomUUID();
                         try {
-                            if (!auth.registerConfig(uuid, name, password, ip)) {
+                            if (!env.accounts().registerConfig(uuid, name, password, ip)) {
                                 continue; // 名额/重名等拒绝，不视为异常
                             }
                             registered.incrementAndGet();
@@ -192,7 +192,7 @@ class LongRunStabilityTest {
         assertEquals(0, collectionSize(sessions, "loggedIn"), "logged-in states must be empty (this scenario never involves a Player)");
         assertEquals(0, mapSize(env.twoFactor(), "pending2faSecret"), "pending 2FA secrets must be cleared");
         assertEquals(0, mapSize(env.twoFactor(), "pending2faSecretCreatedAt"), "pending 2FA secret timestamps must be cleared");
-        assertEquals(0, mapSize(auth, "loginSessions"), "login sessions must be cleared");
+        assertEquals(0, mapSize(env.sessions(), "loginSessions"), "login sessions must be cleared");
         assertEquals(0, mapSize(env.twoFactor(), "twoFaSessions"), "2FA sessions must be cleared");
     }
 
@@ -202,8 +202,8 @@ class LongRunStabilityTest {
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void unregisterThenRestartNoResurrect() {
         UUID uuid = UUID.randomUUID();
-        assertTrue(auth.registerConfig(uuid, "ghost1", "pw1", "10.9.9.9"), "registration must succeed");
-        assertTrue(auth.unregister(uuid), "unregister must succeed");
+        assertTrue(env.accounts().registerConfig(uuid, "ghost1", "pw1", "10.9.9.9"), "registration must succeed");
+        assertTrue(env.accounts().unregister(uuid), "unregister must succeed");
         // 注销的删除任务先入队，随后刷盘并排空写队列：确保 DELETE 落库后再重读
         env.flushAndAwaitDbWrites();
         assertFalse(data.hasAccount(uuid), "account must not exist in memory after unregister");
@@ -222,7 +222,7 @@ class LongRunStabilityTest {
         UUID uuid = player.getUniqueId();
         String ip = "10.8.8.8";
         String password = "pw";
-        assertTrue(auth.registerConfig(uuid, "faUser", password, ip), "registration must succeed");
+        assertTrue(env.accounts().registerConfig(uuid, "faUser", password, ip), "registration must succeed");
 
         // 绑定：错误验证码被拒，正确验证码生效
         String secret = env.twoFactor().setup(player);
@@ -246,7 +246,7 @@ class LongRunStabilityTest {
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void criticalOperationsSurviveReload() throws Exception {
         UUID uuid = UUID.randomUUID();
-        assertTrue(auth.registerConfig(uuid, "crit1", "pw1", "10.7.7.7"), "registration must succeed");
+        assertTrue(env.accounts().registerConfig(uuid, "crit1", "pw1", "10.7.7.7"), "registration must succeed");
         assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, "pw1", "10.7.7.7"), "login must succeed");
         // 注册为关键操作已经 saveNow 立即落库，排空写队列后重载验证（幂等覆盖：saveNow 直接入队）
         data.awaitPendingWrites();
@@ -272,7 +272,7 @@ class LongRunStabilityTest {
                 final int idx = i;
                 futures.add(pool.submit(() -> {
                     gate.await(); // 齐发：所有注册任务同时起跑
-                    return auth.registerConfig(uuids[idx], "sync" + idx, "spw" + idx, "10.20.0." + idx);
+                    return env.accounts().registerConfig(uuids[idx], "sync" + idx, "spw" + idx, "10.20.0." + idx);
                 }));
             }
             gate.countDown();
@@ -317,7 +317,7 @@ class LongRunStabilityTest {
                 final int idx = i;
                 merged.add(() -> {
                     gate.await();
-                    return auth.registerConfig(regUuids.get(idx), "bulk" + idx, "bpw" + idx, "10.30.0." + idx);
+                    return env.accounts().registerConfig(regUuids.get(idx), "bulk" + idx, "bpw" + idx, "10.30.0." + idx);
                 });
                 if ((i & 1) == 1 && ghostUsed < ghost) { // 注册间隙穿插未注册玩家的反复重进
                     final UUID ghostUuid = ghostUuids.get(ghostUsed);
@@ -361,7 +361,7 @@ class LongRunStabilityTest {
         data.flushDirty();
         assertEquals(0, collectionSize(data, "dirty"), "dirty set must be empty after flush");
         assertEquals(0, collectionSize(sessions, "loggedIn"), "logged-in states must be empty");
-        assertEquals(0, mapSize(auth, "loginSessions"), "login sessions must be cleared");
+        assertEquals(0, mapSize(env.sessions(), "loginSessions"), "login sessions must be cleared");
     }
 
     /** 场景 3：addpw / rmpw / 2FA 生命周期状态机稳定——绑定、移除密码、恢复密码、解绑按序交替两轮后无残留 */
@@ -374,7 +374,7 @@ class LongRunStabilityTest {
         UUID uuid = player.getUniqueId();
         String ip = "10.40.0.1";
         String password = "start-pw";
-        assertTrue(auth.registerConfig(uuid, "pwd2fa", password, ip), "registration must succeed");
+        assertTrue(env.accounts().registerConfig(uuid, "pwd2fa", password, ip), "registration must succeed");
         assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, password, ip), "initial password must log in");
 
         // 绑定 2FA：错误码被拒，正确码生效
@@ -396,7 +396,7 @@ class LongRunStabilityTest {
         // rmpw：错误码拒、正确码转无密码账户；旧密码随之失效
         assertFalse(auth.removePassword(player, "000000"), "removePassword with a wrong code must fail");
         assertTrue(auth.removePassword(player, env.totpCode(secret)), "removePassword with a correct code must succeed");
-        assertTrue(auth.isPasswordless(uuid), "account must be passwordless after removal");
+        assertTrue(env.accounts().isPasswordless(uuid), "account must be passwordless after removal");
         assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, password, ip), "old password must be rejected after removal");
 
         // 无密码账户 2FA 为唯一登录因素：免密直入仍需验证码且可通过。
@@ -410,7 +410,7 @@ class LongRunStabilityTest {
         CompletableFuture<Boolean> setFuture = new CompletableFuture<>();
         auth.addPasswordAsync(player, "set-pw", setFuture::complete);
         assertTrue(setFuture.get(30, TimeUnit.SECONDS), "passwordless account must accept a new password");
-        assertFalse(auth.isPasswordless(uuid), "account must have a password after set");
+        assertFalse(env.accounts().isPasswordless(uuid), "account must have a password after set");
         assertTrue(env.twoFactor().has2fa(uuid), "2FA must stay active after setting a password");
         CompletableFuture<Boolean> again = new CompletableFuture<>();
         auth.addPasswordAsync(player, "another-pw", again::complete);
@@ -433,11 +433,11 @@ class LongRunStabilityTest {
             assertTrue(env.twoFactor().has2fa(uuid), "round " + round + " 2FA must be active after binding");
             assertEquals(LoginResult.NEED_2FA, env.loginBlocking(uuid, lastPw, ip), "round " + round + " login must require 2FA");
             assertTrue(auth.removePassword(player, env.totpCode(s)), "round " + round + " removePassword must succeed");
-            assertTrue(auth.isPasswordless(uuid), "round " + round + " account must be passwordless");
+            assertTrue(env.accounts().isPasswordless(uuid), "round " + round + " account must be passwordless");
             CompletableFuture<Boolean> set = new CompletableFuture<>();
             auth.addPasswordAsync(player, "cycle-pw" + round, set::complete);
             assertTrue(set.get(30, TimeUnit.SECONDS), "round " + round + " addpw must succeed");
-            assertFalse(auth.isPasswordless(uuid), "round " + round + " account must have a password");
+            assertFalse(env.accounts().isPasswordless(uuid), "round " + round + " account must have a password");
             lastPw = "cycle-pw" + round;
             // 解绑（凭本轮密钥验证码）后直接登录，为下一轮绑定腾出状态
             assertTrue(env.twoFactor().disable(player, env.totpCode(s)), "round " + round + " disable2fa must succeed");

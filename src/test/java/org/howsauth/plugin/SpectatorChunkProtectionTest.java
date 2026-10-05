@@ -93,7 +93,7 @@ class SpectatorChunkProtectionTest {
     /** 建号并写入位于测试世界内、指定区块的退出位置，返回该位置 */
     private Location registerAtUnloadedChunk(TestPlayerMock player, int chunkX, int chunkZ, int y) {
         UUID uuid = player.getUniqueId();
-        assertTrue(env.auth().forceRegister(uuid, player.getName(), "test-pw"),
+        assertTrue(env.accounts().forceRegister(uuid, player.getName(), "test-pw"),
                 "force register must create the account");
         Location logout = new Location(world, chunkX * 16 + 8, y, chunkZ * 16 + 8);
         env.data().getPlayer(uuid).logoutLocation(PlayerDataManager.serializeLocation(logout));

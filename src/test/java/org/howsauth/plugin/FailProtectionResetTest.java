@@ -59,7 +59,7 @@ class FailProtectionResetTest {
         UUID uuid = UUID.randomUUID();
         String ip = "10.51.0.1";
         String password = "pw";
-        assertTrue(auth.registerConfig(uuid, "reset1", password, ip), "registration must succeed");
+        assertTrue(env.accounts().registerConfig(uuid, "reset1", password, ip), "registration must succeed");
 
         // 窗口内失败 2 次：未达阈值
         for (int attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {

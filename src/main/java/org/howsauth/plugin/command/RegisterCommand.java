@@ -33,7 +33,7 @@ public final class RegisterCommand implements BasicCommand {
             return;
         }
 
-        if (authManager.hasAccount(player)) {
+        if (plugin.accounts().hasAccount(player)) {
             player.sendMessage(I18n.msg("register.already_registered", player));
             return;
         }
@@ -50,7 +50,7 @@ public final class RegisterCommand implements BasicCommand {
 
         // 同 IP 注册数量上限：此处拦截并精确提示；registerAsync 内仍有兜底判定（并发场景）
         var playerIp = AuthManager.clientIp(player);
-        if (authManager.isIpAccountLimitReached(playerIp)) {
+        if (plugin.accounts().isIpAccountLimitReached(playerIp)) {
             player.sendMessage(I18n.msg("register.ip_limit", player, plugin.getConfigManager().maxAccountsPerIp()));
             return;
         }

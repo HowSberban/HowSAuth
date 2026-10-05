@@ -61,7 +61,7 @@ class FailProtectionTest {
         UUID uuid = UUID.randomUUID();
         String ip = "10.50.0.1";
         String password = "pw";
-        assertTrue(auth.registerConfig(uuid, "kick1", password, ip), "registration must succeed");
+        assertTrue(env.accounts().registerConfig(uuid, "kick1", password, ip), "registration must succeed");
 
         // 前 MAX_ATTEMPTS-1 次失败：累计但不应踢出
         for (int attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {
@@ -89,7 +89,7 @@ class FailProtectionTest {
         UUID uuid = UUID.randomUUID();
         String ip = "10.50.0.2";
         String password = "pw";
-        assertTrue(auth.registerConfig(uuid, "kick2", password, ip), "registration must succeed");
+        assertTrue(env.accounts().registerConfig(uuid, "kick2", password, ip), "registration must succeed");
 
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, "wrong", ip), "wrong password must fail login");
@@ -108,7 +108,7 @@ class FailProtectionTest {
         TestPlayerMock player = env.addScheduledPlayer("kick3");
         UUID uuid = player.getUniqueId();
         String ip = "10.50.0.3";
-        assertTrue(auth.registerConfig(uuid, "kick3", "pw", ip), "registration must succeed");
+        assertTrue(env.accounts().registerConfig(uuid, "kick3", "pw", ip), "registration must succeed");
 
         for (int attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {
             assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, "wrong", ip), "wrong password must fail login");

@@ -4,6 +4,7 @@ import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.AccountLifecycle;
 import org.howsauth.plugin.auth.LogoutLocation;
 import org.howsauth.plugin.auth.SessionStore;
 import org.bukkit.command.CommandSender;
@@ -15,11 +16,13 @@ public final class LoginCommand implements BasicCommand {
     private final AuthManager authManager;
     private final SessionStore sessions;
     private final LogoutLocation locations;
+    private final AccountLifecycle accounts;
 
-    public LoginCommand(AuthManager authManager, SessionStore sessions, LogoutLocation locations) {
+    public LoginCommand(AuthManager authManager, SessionStore sessions, LogoutLocation locations, AccountLifecycle accounts) {
         this.authManager = authManager;
         this.sessions = sessions;
         this.locations = locations;
+        this.accounts = accounts;
     }
 
     @Override
@@ -35,13 +38,13 @@ public final class LoginCommand implements BasicCommand {
             return;
         }
 
-        if (!authManager.hasAccount(player)) {
+        if (!accounts.hasAccount(player)) {
             player.sendMessage(I18n.msg("login.no_account", player));
             return;
         }
 
         // 无密码账户不走密码登录，验证码是唯一登录因素
-        if (authManager.isPasswordless(player.getUniqueId())) {
+        if (accounts.isPasswordless(player.getUniqueId())) {
             player.sendMessage(I18n.msg("login.passwordless_no_password", player));
             return;
         }

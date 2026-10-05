@@ -34,7 +34,7 @@ public final class ChangePasswordCommand implements BasicCommand {
         }
 
         // 无密码账户没有旧密码，设置密码走 /addpassword
-        if (authManager.isPasswordless(player.getUniqueId())) {
+        if (plugin.accounts().isPasswordless(player.getUniqueId())) {
             player.sendMessage(I18n.msg("changepw.use_addpassword", player));
             return;
         }

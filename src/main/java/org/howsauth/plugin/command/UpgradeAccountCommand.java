@@ -37,7 +37,7 @@ public final class UpgradeAccountCommand implements BasicCommand {
             player.sendMessage(I18n.msg("listener.must_login", player));
             return;
         }
-        if (authManager.isPremium(player)) {
+        if (plugin.accounts().isPremium(player)) {
             player.sendMessage(I18n.msg("upgrade.already_premium", player));
             return;
         }
@@ -48,13 +48,13 @@ public final class UpgradeAccountCommand implements BasicCommand {
         }
 
         UUID offlineUuid = player.getUniqueId();
-        if (!authManager.hasAccount(offlineUuid)) {
+        if (!plugin.accounts().hasAccount(offlineUuid)) {
             player.sendMessage(I18n.msg("upgrade.no_account", player));
             return;
         }
 
         // 重复执行即取消已提交的升级请求
-        if (authManager.toggleUpgrade(offlineUuid)) {
+        if (plugin.accounts().toggleUpgrade(offlineUuid)) {
             player.sendMessage(I18n.msg("upgrade.marked_success", player));
         } else {
             player.sendMessage(I18n.msg("upgrade.cancelled", player));

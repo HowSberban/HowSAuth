@@ -44,7 +44,7 @@ class QuitFlowRegressionTest {
         auth = env.auth();
         sessions = env.sessions();
         // 监听器与登录收尾依赖的插件字段由 onEnable 装配，测试不触发 onEnable 需按同样次序注入
-        PlayerListener playerListener = new PlayerListener(plugin, auth, sessions, env.failProtection(), env.twoFactor(), env.locations());
+        PlayerListener playerListener = new PlayerListener(plugin, auth, sessions, env.failProtection(), env.twoFactor(), env.locations(), env.accounts());
         MockBukkitHarness.inject(HowSAuth.class, "playerListener", plugin, playerListener);
         MockBukkitHarness.inject(HowSAuth.class, "pendingPearlManager", plugin, new PendingPearlManager(plugin));
         // MockBukkit 分发时会跳过未启用插件的监听器：只置启用标记，不触发 onEnable
@@ -65,7 +65,7 @@ class QuitFlowRegressionTest {
     void sessionAuthFlagSurvivesForcedInvalidation() {
         TestPlayerMock player = newPlayer("flaguser");
         UUID uuid = player.getUniqueId();
-        assertTrue(auth.forceRegister(uuid, player.getName(), "test-pw"), "force register must create the account");
+        assertTrue(env.accounts().forceRegister(uuid, player.getName(), "test-pw"), "force register must create the account");
 
         auth.forceLogin(player);
         assertTrue(sessions.isLoggedIn(uuid), "force login must set the live login state");
@@ -75,7 +75,7 @@ class QuitFlowRegressionTest {
         assertFalse(sessions.isLoggedIn(uuid), "force logout must clear the live login state");
         assertTrue(sessions.hasAuthenticatedThisConnection(uuid), "force logout must keep the session authentication flag");
 
-        assertTrue(auth.unregister(uuid), "unregister must remove the account");
+        assertTrue(env.accounts().unregister(uuid), "unregister must remove the account");
         assertTrue(sessions.hasAuthenticatedThisConnection(uuid), "unregister must keep the session authentication flag");
 
         auth.clearSession(player);
@@ -88,7 +88,7 @@ class QuitFlowRegressionTest {
     void quitMessageFollowsSessionAuthentication() {
         TestPlayerMock player = newPlayer("quituser");
         UUID uuid = player.getUniqueId();
-        assertTrue(auth.forceRegister(uuid, player.getName(), "test-pw"), "force register must create the account");
+        assertTrue(env.accounts().forceRegister(uuid, player.getName(), "test-pw"), "force register must create the account");
 
         // 未认证退出：消息隐藏（不暴露卡在登录界面的玩家）
         assertNull(fireQuit(player).quitMessage(), "an unauthenticated quit must have its message hidden");
@@ -108,7 +108,7 @@ class QuitFlowRegressionTest {
     void logoutLocationIsSavedForForcedLogoutQuit() {
         TestPlayerMock player = newPlayer("kickeduser");
         UUID uuid = player.getUniqueId();
-        assertTrue(auth.forceRegister(uuid, player.getName(), "test-pw"), "force register must create the account");
+        assertTrue(env.accounts().forceRegister(uuid, player.getName(), "test-pw"), "force register must create the account");
         auth.forceLogin(player);
         assertTrue(auth.forceLogout(uuid), "force logout must invalidate the live login state");
 

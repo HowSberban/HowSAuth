@@ -66,7 +66,7 @@ public final class UnregisterCommand implements BasicCommand {
                 return;
             }
             // 账号在验证后被他人删除等竞态：无账号可删
-            if (!authManager.unregister(uuid)) {
+            if (!plugin.accounts().unregister(uuid)) {
                 player.sendMessage(I18n.msg("hsauth.accounts_not_found", player));
                 return;
             }
@@ -76,8 +76,8 @@ public final class UnregisterCommand implements BasicCommand {
         }
 
         // 第一步：凭据验证（按账户持有情况组合参数，正版免验）
-        boolean premium = authManager.isPremium(uuid);
-        boolean passwordless = authManager.isPasswordless(uuid);
+        boolean premium = plugin.accounts().isPremium(uuid);
+        boolean passwordless = plugin.accounts().isPasswordless(uuid);
         boolean has2fa = plugin.twoFactor().hasTotpSecret(uuid);
 
         if (!premium) {
@@ -104,7 +104,7 @@ public final class UnregisterCommand implements BasicCommand {
 
         String pw = password;
         String totp = code;
-        authManager.verifyUnregisterCredentialsAsync(player, pw, totp, ok -> {
+        plugin.accounts().verifyUnregisterCredentialsAsync(player, pw, totp, ok -> {
             if (!ok) {
                 player.sendMessage(I18n.msg("unregister.incorrect_credentials", player));
                 return;

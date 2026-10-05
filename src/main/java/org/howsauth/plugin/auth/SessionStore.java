@@ -1,18 +1,22 @@
 package org.howsauth.plugin.auth;
 
 import org.howsauth.plugin.Debug;
+import org.howsauth.plugin.config.ConfigManager;
+import org.howsauth.plugin.data.PlayerDataManager;
+import org.howsauth.plugin.data.PlayerDataManager.PlayerData;
 import org.bukkit.entity.Player;
 
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
- * 会话状态中心：实时登录态、本次连接认证标记与各类会话级待处理标记。
+ * 会话状态中心：实时登录态、本次连接认证标记、登录会话保持与各类会话级待处理标记。
  * <p>
  * 本类只持有"随连接生命周期失效"的状态，不含任何业务编排：失败保护计数、2FA 临时密钥、
- * 正版回退标记等有各自归属的状态仍在 {@link AuthManager}。
+ * 正版回退标记等有各自归属的状态仍在各自服务。
  * <p>
  * <b>线程契约</b>：全部集合为并发集合（Folia 多线程区域化调度下跨线程读写）。
  * {@link #clear(UUID)} 的调用点固定在退出流程的最后阶段（PlayerListener#onQuitCleanup，MONITOR），
@@ -29,6 +33,9 @@ public final class SessionStore {
     private final Set<UUID> authenticatedThisConnection = ConcurrentHashMap.newKeySet();
     // 标记密码异步校验进行中的玩家：防止快速重复提交 /login 触发重复校验、重复登录事件与消息
     private final Set<UUID> verifying = ConcurrentHashMap.newKeySet();
+    // 登录会话保持：密码/2FA 验证通过后记录 (ip, 建立时间戳)，同 IP 且未过期免输密码
+    // 固定窗口不滑动（命中登录不刷新建立时间），避免活跃账号会话永不过期
+    private final Map<UUID, LoginSession> loginSessions = new ConcurrentHashMap<>();
     // 登录后传送过渡期：玩家已登录但还在传送到退出位置，期间保持无敌
     private final Set<UUID> invulnerablePending = ConcurrentHashMap.newKeySet();
     // 标记当前会话被设为旁观的玩家：onLoginSuccess 仅对这些玩家恢复游戏模式，
@@ -40,6 +47,26 @@ public final class SessionStore {
     private final Map<UUID, Long> recentUnregister = new ConcurrentHashMap<>();
     // 登录超时任务启动时间戳：用于判断超时任务是否为最新（重启时旧任务自动失效）
     private final Map<UUID, Long> loginTimeoutStartedAt = new ConcurrentHashMap<>();
+
+    private final ConfigManager configManager;
+    private final PlayerDataManager dataManager;
+
+    SessionStore(ConfigManager configManager, PlayerDataManager dataManager) {
+        this.configManager = configManager;
+        this.dataManager = dataManager;
+    }
+
+    /** 登录会话：验证通过时的来源 IP 与建立时间戳（固定窗口不滑动） */
+    private record LoginSession(String ip, long establishedAt) {}
+
+    /** 提取玩家客户端 IP（getAddress 可能为 null，如代理协议未解析完成时） */
+    public static String clientIp(Player player) {
+        if (player == null) return null;
+        var socketAddress = player.getAddress();
+        if (socketAddress == null) return null;
+        var address = socketAddress.getAddress();
+        return address != null ? address.getHostAddress() : null;
+    }
 
     // ===== 实时登录态 =====
 
@@ -72,6 +99,65 @@ public final class SessionStore {
      */
     public boolean hasAuthenticatedThisConnection(UUID uuid) {
         return authenticatedThisConnection.contains(uuid);
+    }
+
+    // ===== 登录会话保持 =====
+
+    /** 记录登录会话：登录/注册成功后同 IP 且未过期免输密码（固定窗口，命中不刷新） */
+    void markLoginSession(UUID uuid, String ip) {
+        if (!configManager.sessionEnabled() || ip == null) return;
+        loginSessions.put(uuid, new LoginSession(ip, System.currentTimeMillis()));
+        if (Debug.on()) {
+            Debug.log("session", "login session established for %s (ttl %s min)",
+                    uuid.toString().substring(0, 8), configManager.sessionExpireMinutes());
+        }
+    }
+
+    /** 清除登录会话（登出/强制操作/注销时调用：安全事件后不保留免密码信任） */
+    void clearLoginSession(UUID uuid) {
+        loginSessions.remove(uuid);
+    }
+
+    /** 登录会话是否命中（免输密码）：上次验证 IP 与当前一致，且未超过失效时间 */
+    public boolean hasSession(Player player) {
+        if (player.getAddress() == null) return false;
+        return hasSession(player.getUniqueId(), clientIp(player));
+    }
+
+    /** 登录会话是否命中（无需 Player 对象，用于 AsyncPlayerSpawnLocationEvent） */
+    public boolean hasSession(UUID uuid, String ip) {
+        if (!configManager.sessionEnabled()) {
+            if (Debug.on()) {
+                Debug.log("session", "login session miss for %s: session disabled", uuid.toString().substring(0, 8));
+            }
+            return false;
+        }
+        PlayerData data = dataManager.getPlayer(uuid);
+        if (data == null) return false;
+        if (ip == null) return false;
+        LoginSession s = loginSessions.get(uuid);
+        if (s == null) return false;
+        if (!s.ip().equals(ip)) {
+            if (Debug.on()) {
+                Debug.log("session", "login session miss for %s: ip mismatch", uuid.toString().substring(0, 8));
+            }
+            return false;
+        }
+        // 固定窗口不滑动：命中登录不刷新建立时间，到期后需重新验证
+        long expireMillis = TimeUnit.MINUTES.toMillis(configManager.sessionExpireMinutes());
+        if (Debug.on()) {
+            Debug.log("session", "login session for %s: %s", uuid.toString().substring(0, 8),
+                    System.currentTimeMillis() - s.establishedAt() < expireMillis ? "hit" : "expired");
+        }
+        return System.currentTimeMillis() - s.establishedAt() < expireMillis;
+    }
+
+    /** 周期清理已过期的登录会话（固定窗口，命中不续期），返回移除条数 */
+    int cleanupExpiredSessions(long now) {
+        long sessionMs = TimeUnit.MINUTES.toMillis(configManager.sessionExpireMinutes());
+        int before = loginSessions.size();
+        loginSessions.entrySet().removeIf(e -> now - e.getValue().establishedAt() >= sessionMs);
+        return before - loginSessions.size();
     }
 
     // ===== 密码校验重入保护 =====
@@ -224,6 +310,14 @@ public final class SessionStore {
 
     int loginTimeoutStartedCount() {
         return loginTimeoutStartedAt.size();
+    }
+
+    int loginSessionCount() {
+        return loginSessions.size();
+    }
+
+    boolean hasLoginSessionRecord(UUID uuid) {
+        return loginSessions.containsKey(uuid);
     }
 
     /** 诊断：该玩家的会话状态摘要（供 /hsauth diag 输出，逐行拼接） */

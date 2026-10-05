@@ -15,6 +15,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.AccountLifecycle;
 import org.howsauth.plugin.auth.AuthManager.LoginResult;
 import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.LogoutLocation;
@@ -170,6 +171,11 @@ public final class MockBukkitHarness implements AutoCloseable {
     /** 退出位置与坐标保护：AuthManager 拆分后位置/旁观切换由该服务持有 */
     public LogoutLocation locations() {
         return auth.locations();
+    }
+
+    /** 账号生命周期：AuthManager 拆分后注册/注销/数据删除由该服务持有 */
+    public AccountLifecycle accounts() {
+        return auth.accounts();
     }
 
     /** 注册一个使用同步实体调度器的玩家（addPasswordAsync 等依赖 player.getScheduler()） */

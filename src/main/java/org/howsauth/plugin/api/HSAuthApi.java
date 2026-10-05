@@ -223,7 +223,7 @@ public final class HSAuthApi {
             }
             return false;
         }
-        if (!authManager.forceRegister(player.getUniqueId(), player.getName(), password)) {
+        if (!authManager.accounts().forceRegister(player.getUniqueId(), player.getName(), password)) {
             if (Debug.on()) {
                 Debug.log("api", "force register %s: failed (account already exists)", player.getName());
             }
@@ -249,7 +249,7 @@ public final class HSAuthApi {
             return false;
         }
         // UUID 反推名字：上过服务器的离线玩家有名字记录，从未上过则返回 null（跳过同名检查）
-        boolean result = authManager.forceRegister(uuid, Bukkit.getOfflinePlayer(uuid).getName(), password);
+        boolean result = authManager.accounts().forceRegister(uuid, Bukkit.getOfflinePlayer(uuid).getName(), password);
         if (Debug.on()) {
             Debug.log("api", "force register %s: %s", uuid.toString().substring(0, 8),
                     result ? "success" : "failed (account already exists)");
@@ -269,7 +269,7 @@ public final class HSAuthApi {
             }
             return false;
         }
-        boolean result = authManager.unregister(uuid);
+        boolean result = authManager.accounts().unregister(uuid);
         if (Debug.on()) {
             Debug.log("api", "unregister %s: %s", uuid.toString().substring(0, 8), result ? "success" : "no account");
         }

@@ -34,7 +34,7 @@ public final class AddPasswordCommand implements BasicCommand {
             return;
         }
 
-        if (!authManager.isPasswordless(player.getUniqueId())) {
+        if (!plugin.accounts().isPasswordless(player.getUniqueId())) {
             player.sendMessage(I18n.msg("addpassword.has_password", player));
             return;
         }

@@ -42,7 +42,7 @@ public final class HSAuthExpansion extends PlaceholderExpansion {
         if (player == null) return "";
         return switch (params.toLowerCase(Locale.ROOT)) {
             case "is_logged_in" -> plugin.sessions().isLoggedIn(player) ? "yes" : "no";
-            case "is_registered", "has_account" -> plugin.getAuthManager().hasAccount(player) ? "yes" : "no";
+            case "is_registered", "has_account" -> plugin.accounts().hasAccount(player) ? "yes" : "no";
             default -> null;
         };
     }

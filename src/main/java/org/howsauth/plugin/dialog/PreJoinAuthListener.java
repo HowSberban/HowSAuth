@@ -14,6 +14,7 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.AccountLifecycle;
 import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.PasswordValidator;
 import org.howsauth.plugin.auth.SessionStore;
@@ -50,6 +51,7 @@ public final class PreJoinAuthListener implements Listener {
     private final SessionStore sessions;
     private final FailProtection failProtection;
     private final TwoFactorAuth twoFactor;
+    private final AccountLifecycle accounts;
     private final DialogManager dialogManager;
     // 配置阶段认证结果：UUID → 结果（进入世界时移除）
     private final Map<UUID, AuthOutcome> outcomes = new ConcurrentHashMap<>();
@@ -79,12 +81,13 @@ public final class PreJoinAuthListener implements Listener {
 
     public PreJoinAuthListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions,
                                FailProtection failProtection, TwoFactorAuth twoFactor,
-                               DialogManager dialogManager) {
+                               AccountLifecycle accounts, DialogManager dialogManager) {
         this.plugin = plugin;
         this.authManager = authManager;
         this.sessions = sessions;
         this.failProtection = failProtection;
         this.twoFactor = twoFactor;
+        this.accounts = accounts;
         this.dialogManager = dialogManager;
     }
 
@@ -117,8 +120,8 @@ public final class PreJoinAuthListener implements Listener {
         // 无凭据账号（无密码、未绑 2FA、非正版）：配置阶段先行处理。
         // AsyncPlayerConnectionConfigureEvent 早于 onPreLogin 的 AsyncPlayerPreLoginEvent，
         // 弹窗验证会卡死到超时（reject 开关在 dialog 场景轮不到），此处与连接层拦截口径一致：
-        if (uuid != null && authManager.hasAccount(uuid)
-                && authManager.hasNoUsableLoginMethod(uuid)) {
+        if (uuid != null && accounts.hasAccount(uuid)
+                && accounts.hasNoUsableLoginMethod(uuid)) {
             if (plugin.getConfigManager().rejectNoAuthAccount()) {
                 if (Debug.on()) {
                     Debug.log("dialog", "pre-join %s: no usable login method, disconnect",
@@ -167,7 +170,7 @@ public final class PreJoinAuthListener implements Listener {
             }
             // 无密码账户：仅 2FA 会话命中时免验证码直接登录。无密钥账户不能满足 has2faSession，
             // 不会放行，进入下方验证码窗口等待（永远无法通过，超时断连）
-            if (authManager.isPasswordless(uuid) && twoFactor.hasSession(uuid, ip)) {
+            if (accounts.isPasswordless(uuid) && twoFactor.hasSession(uuid, ip)) {
                 if (Debug.on()) {
                     Debug.log("dialog", "pre-join %s: passwordless 2FA session, mark login",
                             uuid.toString().substring(0, 8));
@@ -190,14 +193,14 @@ public final class PreJoinAuthListener implements Listener {
         // 提为方法作用域：超时断连时仍需玩家语言
         String locale = resolveLocale(conn);
         try {
-            boolean isLogin = authManager.hasAccount(uuid);
+            boolean isLogin = accounts.hasAccount(uuid);
             if (Debug.on()) {
-                String type = (autoLogin || (isLogin && authManager.isPasswordless(uuid))) ? "2fa"
+                String type = (autoLogin || (isLogin && accounts.isPasswordless(uuid))) ? "2fa"
                         : isLogin ? "login" : "register";
                 Debug.log("dialog", "pre-join %s: show %s dialog", uuid.toString().substring(0, 8), type);
             }
             // 免密（正版/IP）或无密码账户：跳过密码窗口，直接验证验证码
-            if (autoLogin || (isLogin && authManager.isPasswordless(uuid))) {
+            if (autoLogin || (isLogin && accounts.isPasswordless(uuid))) {
                 session.passwordless2fa = true;
                 twoFactor.markPending(uuid);
                 show2fa(session, uuid, locale, null);
@@ -240,8 +243,8 @@ public final class PreJoinAuthListener implements Listener {
 
     /** 正版（非回退）或会话命中：免密登录路径（是否仍需 2FA 窗口由调用方按绑定状态决定） */
     private boolean skipAutoLogin(UUID uuid, String ip) {
-        if (authManager.isPremium(uuid) && !authManager.isPremiumFallback(uuid)) return true;
-        return ip != null && authManager.hasSession(uuid, ip);
+        if (accounts.isPremium(uuid) && !accounts.isPremiumFallback(uuid)) return true;
+        return ip != null && sessions.hasSession(uuid, ip);
     }
 
     // ViaVersion 反射惰性缓存：每个连接都会查询客户端协议版本，反射解析一次后复用
@@ -390,7 +393,7 @@ public final class PreJoinAuthListener implements Listener {
     private DialogActionCallback registerConfirm(Session session, UUID uuid, String locale) {
         return (response, audience) -> {
             if (configSessions.get(uuid) != session) return;
-            if (authManager.hasAccount(uuid)) {
+            if (accounts.hasAccount(uuid)) {
                 showLogin(session, uuid, locale, DialogManager.text(locale, "register.already_registered"));
                 return;
             }
@@ -415,14 +418,14 @@ public final class PreJoinAuthListener implements Listener {
             // 回调仅做线程安全操作：会话校验/重弹窗口/闭锁
             Bukkit.getAsyncScheduler().runNow(plugin, task -> {
                 if (configSessions.get(uuid) != session) return;
-                if (authManager.registerConfig(uuid, name, password, ip)) {
+                if (accounts.registerConfig(uuid, name, password, ip)) {
                     if (Debug.on()) {
                         Debug.log("dialog", "register dialog confirm for %s: success", uuid.toString().substring(0, 8));
                     }
                     session.registered = true;
                     session.success = true;
                     session.latch.countDown();
-                } else if (authManager.isIpAccountLimitReached(ip)) {
+                } else if (accounts.isIpAccountLimitReached(ip)) {
                     // 同 IP 注册数量已达上限：精确提示（连接层已拦已满 IP，此处兜底并发/延迟场景）
                     if (Debug.on()) {
                         Debug.log("dialog", "register dialog confirm for %s: failed (ip limit)",

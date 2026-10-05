@@ -234,7 +234,7 @@ public final class TwoFactorCommand {
         Player player = (Player) ctx.getSource().getSender();
         // 无密码离线账户关闭 2FA 会失去唯一验证因素，须先恢复密码（正版账户有正版验证兜底）
         // 此检查须在 blocked() 之前：开关关闭时 blocked 的提示无法给出正确指引
-        if (authManager.isPasswordless(player.getUniqueId()) && !authManager.isPremium(player)) {
+        if (plugin.accounts().isPasswordless(player.getUniqueId()) && !plugin.accounts().isPremium(player)) {
             player.sendMessage(msg(player, "2fa.disable_need_password"));
             return Command.SINGLE_SUCCESS;
         }
@@ -257,7 +257,7 @@ public final class TwoFactorCommand {
         Player player = (Player) ctx.getSource().getSender();
         // 无密码账户不受全局开关影响：验证码是其唯一登录因素
         if (!plugin.getConfigManager().twoFaEnabled()
-                && !authManager.isPasswordless(player.getUniqueId())) {
+                && !plugin.accounts().isPasswordless(player.getUniqueId())) {
             player.sendMessage(msg(player, "2fa.feature_disabled"));
             return Command.SINGLE_SUCCESS;
         }

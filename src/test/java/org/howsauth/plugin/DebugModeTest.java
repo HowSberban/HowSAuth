@@ -61,7 +61,7 @@ class DebugModeTest {
     void diagnosticsContainStateButNoSecrets() {
         String password = "Sup3rSecret-pw";
         TestPlayerMock player = new TestPlayerMock(env.server(), "diaguser");
-        assertTrue(env.auth().forceRegister(player.getUniqueId(), player.getName(), password),
+        assertTrue(env.accounts().forceRegister(player.getUniqueId(), player.getName(), password),
                 "force register must create the account");
 
         List<String> lines = env.auth().diagnostics();

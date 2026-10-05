@@ -116,7 +116,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         if (profile.exists() && !profile.premium()) {
             // 2. 离线玩家：仅当正版验证总开关开启且有升级标记时拦截做正版验证
             //    （升级成功则迁移账号，失败则回退离线），否则不拦截，由服务端原生处理
-            if (!config.premiumEnabled() || !authManager.hasPendingUpgrade(profile.uuid())) {
+            if (!config.premiumEnabled() || !plugin.accounts().hasPendingUpgrade(profile.uuid())) {
                 return;
             }
             upgradeAttempt = true;
@@ -131,8 +131,8 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         // 降级中：正版玩家已提交降级请求 → 迁移账号数据到离线 UUID 后放行，走服务端原生
         // 离线登录（离线 UUID 进入，密码或 2FA 登录）。LoginStart 阶段即可算出离线 UUID，
         // 此时迁移确保后续配置阶段认证读到离线账号
-        if (profile.exists() && profile.premium() && authManager.hasPendingDowngrade(profile.uuid())) {
-            authManager.executeDowngrade(profile.uuid(), DataService.offlineUuid(username), username);
+        if (profile.exists() && profile.premium() && plugin.accounts().hasPendingDowngrade(profile.uuid())) {
+            plugin.accounts().executeDowngrade(profile.uuid(), DataService.offlineUuid(username), username);
             return;
         }
 
@@ -158,7 +158,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
             plugin.getLogger().info(I18n.get("log.premium_fallback_login", username, ip));
             event.setCancelled(true);
             // 标记本次需密码登录，onJoin 时不自动免密
-            authManager.markPremiumFallback(profile.uuid());
+            plugin.accounts().markPremiumFallback(profile.uuid());
             SessionContext session = new SessionContext();
             session.username(username);
             session.ip(ip);
@@ -210,7 +210,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                         dataService.markOfflineConfirmed(s.ip(), s.username());
                     } else if (s.isUpgradeAttempt()) {
                         // 升级尝试在验证前断开 → 回退离线，清除升级标记
-                        authManager.clearUpgradePending(s.offlineUuid());
+                        plugin.accounts().clearUpgradePending(s.offlineUuid());
                     } else if (s.premiumAccount() && config.premiumPasswordFallbackEnabled()) {
                         // 已注册正版玩家使用离线启动器，无法回应 EncryptionRequest 即断开 →
                         // 记录回退标记，下次重连跳过正版验证，以正版 UUID 进入并用密码登录
@@ -311,7 +311,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                             if (Debug.on()) {
                                 Debug.log("premium", "upgrade failed for %s: reverting to offline", username);
                             }
-                            authManager.clearUpgradePending(session.offlineUuid());
+                            plugin.accounts().clearUpgradePending(session.offlineUuid());
                         }
                         // 正版验证失败回退：数据库正版账号且允许回退时，放行以正版 UUID 进入，
                         // 用密码登录（继承正版数据），下次正版验证成功即自动免密。
@@ -321,7 +321,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                             if (Debug.on()) {
                                 Debug.log("premium", "fallback login for %s (verification failed, password path)", username);
                             }
-                            authManager.markPremiumFallback(premiumData.uuid());
+                            plugin.accounts().markPremiumFallback(premiumData.uuid());
                             proceedWithLogin(channel, user, session, premiumData.uuid(), username, premiumData.properties());
                             return;
                         }
@@ -346,8 +346,8 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                     if (session.isUpgradeAttempt()) {
                         // 升级成功：将离线账号迁移到正版 UUID（保留退出位置等数据，密码置空）+ 迁移原版玩家数据（背包/成就/统计），清除升级标记
                         dataService.migrateToPremium(session.offlineUuid(), uuid, username, session.ip(), properties);
-                        authManager.migratePlayerDataAsync(session.offlineUuid(), uuid);
-                        authManager.clearUpgradePending(session.offlineUuid());
+                        plugin.accounts().migratePlayerDataAsync(session.offlineUuid(), uuid);
+                        plugin.accounts().clearUpgradePending(session.offlineUuid());
                         if (Debug.on()) {
                             Debug.log("premium", "upgrade success for %s: migrated offline account to premium uuid %s",
                                     username, uuid.toString().substring(0, 8));
@@ -359,7 +359,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                         if (pending != null && pending.premium()) {
                             // 目标正版 UUID 已有正版记录时保留原记录数据，跳过原版数据迁移（防止离线号文件覆盖正版身份数据）
                             if (dataService.migrateToPremium(pending.uuid(), uuid, username, session.ip(), properties)) {
-                                authManager.migratePlayerDataAsync(pending.uuid(), uuid);
+                                plugin.accounts().migratePlayerDataAsync(pending.uuid(), uuid);
                             }
                         } else {
                             // 首次注册：无密码账户（正版验证即身份凭证，玩家可用 /addpassword 自行设置密码）
@@ -401,7 +401,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
     @SuppressWarnings("resource")
     private void failAsyncLogin(Channel channel, User user, SessionContext session, String reason) {
         if (session.isUpgradeAttempt()) {
-            authManager.clearUpgradePending(session.offlineUuid());
+            plugin.accounts().clearUpgradePending(session.offlineUuid());
         }
         plugin.getLogger().severe(I18n.get("log.premium_async_failed", reason));
         channel.eventLoop().execute(() -> {
@@ -441,7 +441,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
      */
     private boolean premiumFallbackAllowed(UUID uuid) {
         return plugin.getConfigManager().premiumPasswordFallbackEnabled()
-                && (!authManager.isPasswordless(uuid) || !plugin.getConfigManager().rejectNoAuthAccount());
+                && (!plugin.accounts().isPasswordless(uuid) || !plugin.getConfigManager().rejectNoAuthAccount());
     }
 
     /**

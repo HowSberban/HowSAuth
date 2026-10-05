@@ -64,7 +64,7 @@ class HighCostAuthTest {
         String password = "Prod-pw1";
         String changed = "Prod-pw2";
 
-        assertTrue(auth.registerConfig(uuid, "highcost1", password, ip), "registration must succeed");
+        assertTrue(env.accounts().registerConfig(uuid, "highcost1", password, ip), "registration must succeed");
         assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, password, ip), "the correct password must log in");
         assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, "wrong-pw", ip), "wrong password must fail login");
 

@@ -37,7 +37,7 @@ public final class DowngradeAccountCommand implements BasicCommand {
             player.sendMessage(I18n.msg("listener.must_login", player));
             return;
         }
-        if (!authManager.isPremium(player)) {
+        if (!plugin.accounts().isPremium(player)) {
             player.sendMessage(I18n.msg("downgrade.not_premium", player));
             return;
         }
@@ -48,13 +48,13 @@ public final class DowngradeAccountCommand implements BasicCommand {
         }
         UUID premiumUuid = player.getUniqueId();
         // 降级后离线账号须仍有登录手段：密码或 2FA 密钥，否则账号将被锁死
-        if (authManager.isPasswordless(premiumUuid) && !plugin.twoFactor().hasTotpSecret(premiumUuid)) {
+        if (plugin.accounts().isPasswordless(premiumUuid) && !plugin.twoFactor().hasTotpSecret(premiumUuid)) {
             player.sendMessage(I18n.msg("downgrade.need_login_method", player));
             return;
         }
 
         // 重复执行即取消已提交的降级请求
-        if (authManager.toggleDowngrade(premiumUuid)) {
+        if (plugin.accounts().toggleDowngrade(premiumUuid)) {
             player.sendMessage(I18n.msg("downgrade.marked_success", player));
         } else {
             player.sendMessage(I18n.msg("downgrade.cancelled", player));
