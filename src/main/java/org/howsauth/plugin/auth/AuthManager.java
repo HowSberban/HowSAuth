@@ -4,10 +4,7 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.api.event.HSAuthLoginEvent;
-import org.howsauth.plugin.api.event.HSAuthLoginFailEvent;
-import org.howsauth.plugin.api.event.HSAuthLogoutEvent;
 import org.howsauth.plugin.api.event.HSAuthRegisterEvent;
-import org.howsauth.plugin.api.event.HSAuthUnregisterEvent;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
 import org.howsauth.plugin.data.PlayerDataManager.PlayerData;
@@ -16,7 +13,6 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.Player;
-import org.bukkit.event.Event;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -45,6 +41,7 @@ public final class AuthManager {
     private final HowSAuth plugin;
     private final PlayerDataManager dataManager;
     private final ConfigManager configManager;
+    private final AuthEvents events;
     // 线程安全集合，用于 Folia 多线程区域化调度
     private final Set<UUID> loggedIn = ConcurrentHashMap.newKeySet();
     // 本次连接是否完成过认证（登录/注册/免密）：供加入/退出消息、退出位置保存等会话级判定使用。
@@ -105,6 +102,7 @@ public final class AuthManager {
         this.plugin = plugin;
         this.dataManager = dataManager;
         this.configManager = configManager;
+        this.events = new AuthEvents(plugin);
         this.newWorldStructure = detectNewWorldStructure();
         // 周期清理过期的 2FA 临时密钥与登录/2FA 会话等状态（懒清理兜底，随插件关闭统一取消）
         Bukkit.getAsyncScheduler().runAtFixedRate(plugin, task -> {
@@ -141,16 +139,6 @@ public final class AuthManager {
         if (max <= 0) return false;
         if (ip == null) return false;
         return dataManager.findByIp(ip).size() >= max;
-    }
-
-    /** 触发同步 API 事件：tick 线程直接触发，异步线程转全局区域调度器。
-     *  管理命令在异步线程执行（getOfflinePlayer 防阻塞），直接 callEvent 会抛 IllegalStateException */
-    private void fireEvent(Event event) {
-        if (Bukkit.isPrimaryThread()) {
-            Bukkit.getPluginManager().callEvent(event);
-        } else {
-            Bukkit.getGlobalRegionScheduler().run(plugin, task -> Bukkit.getPluginManager().callEvent(event));
-        }
     }
 
     /** 提取玩家客户端 IP（getAddress 可能为 null，如代理协议未解析完成时） */
@@ -211,7 +199,7 @@ public final class AuthManager {
                 markLoginSession(uuid, ip);
                 markLoggedIn(uuid);
                 onLoginSuccess(player);
-                fireEvent(new HSAuthRegisterEvent(uuid, player));
+                events.register(uuid, player);
                 if (Debug.on()) {
                     Debug.log("auth", "register %s: success", player.getName());
                 }
@@ -229,7 +217,7 @@ public final class AuthManager {
         Player online = Bukkit.getPlayer(uuid);
         String ip = online != null ? clientIp(online) : null;
         if (!createAccount(uuid, name, password, ip)) return false;
-        fireEvent(new HSAuthRegisterEvent(uuid, online));
+        events.register(uuid, online);
         return true;
     }
 
@@ -805,13 +793,7 @@ public final class AuthManager {
                 }
             }
         }
-        HSAuthLoginFailEvent event = new HSAuthLoginFailEvent(player, HSAuthLoginFailEvent.Reason.WRONG_PASSWORD);
-        if (player != null) {
-            Bukkit.getPluginManager().callEvent(event);
-        } else {
-            // 配置阶段无 Player：异步线程不能直接触发同步事件，转全局区域调度器
-            Bukkit.getGlobalRegionScheduler().run(plugin, task -> Bukkit.getPluginManager().callEvent(event));
-        }
+        events.loginFail(player);
     }
 
     public void setUnregisterConfirmInvalidator(Consumer<UUID> invalidator) {
@@ -832,7 +814,7 @@ public final class AuthManager {
             Debug.log("auth", "force logout: %s (live login state invalidated, connection flag kept)", uuid);
         }
         invalidateLoginSessions(uuid);
-        fireEvent(new HSAuthLogoutEvent(uuid, Bukkit.getPlayer(uuid)));
+        events.logout(uuid);
         return true;
     }
 
@@ -873,7 +855,7 @@ public final class AuthManager {
         }
         markLoggedIn(uuid);
         onLoginSuccess(player);
-        fireEvent(new HSAuthLoginEvent(player));
+        events.login(player);
     }
 
     /** 登录会话是否命中（免输密码）：上次验证 IP 与当前一致，且未超过失效时间 */
@@ -1105,7 +1087,7 @@ public final class AuthManager {
                         uuid.toString().substring(0, 8));
             }
         }
-        fireEvent(new HSAuthUnregisterEvent(uuid, Bukkit.getPlayer(uuid)));
+        events.unregister(uuid);
         return true;
     }
 
