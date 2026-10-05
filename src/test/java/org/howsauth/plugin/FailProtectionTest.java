@@ -28,7 +28,10 @@ import java.util.concurrent.TimeUnit;
 class FailProtectionTest {
 
     private static final int MAX_ATTEMPTS = 3;
-    private static final int KICK_SECONDS = 1;
+    // 踢出窗口取 3 秒而非 1 秒：getKickRemaining 以整秒返回（毫秒差整除 1000），
+    // 1 秒窗口下只要"失败发生"到"读取剩余时间"跨过 1ms，就会截断为 0 而误报未踢出。
+    // 放大窗口只影响测试时长（kickExpiresAfterDuration 多等 2 秒），断言语义不变。
+    private static final int KICK_SECONDS = 3;
 
     private MockBukkitHarness env;
 
