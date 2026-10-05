@@ -67,14 +67,14 @@ class FailProtectionTest {
         for (int attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {
             assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, "wrong", ip),
                     "wrong password attempt " + attempt + " must fail login");
-            assertFalse(auth.isKicked(uuid), "failure " + attempt + " must stay below the threshold, so no kick");
+            assertFalse(env.failProtection().isKicked(uuid), "failure " + attempt + " must stay below the threshold, so no kick");
         }
 
         // 第 MAX_ATTEMPTS 次失败：达阈值，进入踢出期
         MockBukkitHarness.LoginOutcome threshold = env.login(uuid, "wrong", ip);
         assertEquals(LoginResult.FAILED, threshold.result(), "the threshold-reaching failure must still return FAILED");
-        assertTrue(auth.isKicked(uuid), "reaching the threshold must start the kick window");
-        assertTrue(auth.getKickRemaining(uuid) > 0, "remaining kick time must be greater than 0");
+        assertTrue(env.failProtection().isKicked(uuid), "reaching the threshold must start the kick window");
+        assertTrue(env.failProtection().getKickRemaining(uuid) > 0, "remaining kick time must be greater than 0");
 
         // 踢出期内密码正确也必须被拒（isKicked 是登录入口的第一道判断）
         MockBukkitHarness.LoginOutcome whileKicked = env.login(uuid, password, ip);
@@ -94,10 +94,10 @@ class FailProtectionTest {
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, "wrong", ip), "wrong password must fail login");
         }
-        assertTrue(auth.isKicked(uuid), "reaching the threshold must start the kick window");
+        assertTrue(env.failProtection().isKicked(uuid), "reaching the threshold must start the kick window");
 
         Thread.sleep(KICK_SECONDS * 1000L + 200L);
-        assertFalse(auth.isKicked(uuid), "the kick must be lifted once its duration expires (lazy cleanup of expired records)");
+        assertFalse(env.failProtection().isKicked(uuid), "the kick must be lifted once its duration expires (lazy cleanup of expired records)");
         assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, password, ip), "the correct password must work again after the kick is lifted");
     }
 
@@ -113,11 +113,11 @@ class FailProtectionTest {
         for (int attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {
             assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, "wrong", ip), "wrong password must fail login");
         }
-        assertFalse(auth.isKicked(uuid), "below-threshold failures must not kick");
+        assertFalse(env.failProtection().isKicked(uuid), "below-threshold failures must not kick");
 
         // 模拟玩家退出重连：会话状态清理不应丢弃失败计数
         auth.clearSession(player);
         assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, "wrong", ip), "wrong password must still fail after reconnect");
-        assertTrue(auth.isKicked(uuid), "failure count must survive session clear: threshold reached after reconnect must kick");
+        assertTrue(env.failProtection().isKicked(uuid), "failure count must survive session clear: threshold reached after reconnect must kick");
     }
 }

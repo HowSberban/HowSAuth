@@ -6,6 +6,7 @@ import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import com.github.retrooper.packetevents.PacketEvents;
 import org.howsauth.plugin.api.HSAuthApi;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.command.*;
 import org.howsauth.plugin.config.ConfigManager;
@@ -72,7 +73,7 @@ public class HowSAuth extends JavaPlugin {
                 && DialogManager.isSupported()
                 && (preJoinSupported() || configManager.dialogAllowRiskyVersions())) {
             this.dialogManager = new DialogManager(this);
-            this.preJoinAuthListener = new PreJoinAuthListener(this, authManager, authManager.sessions(), dialogManager);
+            this.preJoinAuthListener = new PreJoinAuthListener(this, authManager, authManager.sessions(), authManager.failProtection(), dialogManager);
             getServer().getPluginManager().registerEvents(preJoinAuthListener, this);
         } else if (configManager.loginDialogEnabled()) {
             getLogger().warning(I18n.get("log.dialog_unsupported"));
@@ -166,7 +167,7 @@ public class HowSAuth extends JavaPlugin {
     }
 
     private void registerListeners() {
-        playerListener = new PlayerListener(this, authManager, authManager.sessions());
+        playerListener = new PlayerListener(this, authManager, authManager.sessions(), authManager.failProtection());
         getServer().getPluginManager().registerEvents(playerListener, this);
         // 末影珍珠保管：独立监听器（接管飞行珍珠，登录后按配置返还）
         pendingPearlManager = new PendingPearlManager(this);
@@ -214,6 +215,11 @@ public class HowSAuth extends JavaPlugin {
     /** 会话状态中心（登录态/认证标记/过渡标记），AuthManager 拆分后的协作服务 */
     public SessionStore sessions() {
         return authManager.sessions();
+    }
+
+    /** 暴力破解防护（失败计数/踢出期），AuthManager 拆分后的协作服务 */
+    public FailProtection failProtection() {
+        return authManager.failProtection();
     }
 
     public PlayerListener getPlayerListener() {

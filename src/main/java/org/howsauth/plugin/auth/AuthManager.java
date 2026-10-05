@@ -43,6 +43,7 @@ public final class AuthManager {
     private final ConfigManager configManager;
     private final AuthEvents events;
     private final SessionStore sessions;
+    private final FailProtection failProtection;
     // 双因素认证：密码已通过但尚未完成 TOTP 验证的玩家（未完成前不算已登录）
     private final Set<UUID> pending2fa = ConcurrentHashMap.newKeySet();
     // 已消费的 2FA 时间片计数器：登录验证通过后记录，拒绝同周期或更旧验证码重放
@@ -58,10 +59,6 @@ public final class AuthManager {
     private final Map<UUID, String> pending2faSecret = new ConcurrentHashMap<>();
     // 临时密钥的创建时间戳：用于按配置时长过期清理（与 pending2faSecret 一一对应）
     private final Map<UUID, Long> pending2faSecretCreatedAt = new ConcurrentHashMap<>();
-    // 暴力破解防护：记录失败次数[0]/最后失败时间[1]和踢出到期时间
-    // failedAttempts 跨连接保留，超过 reset-seconds 未再失败则过期清空
-    private final Map<UUID, long[]> failedAttempts = new ConcurrentHashMap<>();
-    private final Map<UUID, Long> kickUntil = new ConcurrentHashMap<>();
     // 待升级离线账号（离线 UUID）：玩家执行升级指令后标记，下次登录时尝试正版验证
     private final Set<UUID> pendingUpgrade = ConcurrentHashMap.newKeySet();
     // 正版账号降级标记（内存，不持久化）：下次进入时迁移数据到离线 UUID
@@ -73,9 +70,6 @@ public final class AuthManager {
     private volatile Consumer<UUID> unregisterConfirmInvalidator;
     // 缓存世界结构类型：26.1+ 采用新结构（players/data + dimensions/minecraft/overworld）
     private final boolean newWorldStructure;
-    // failedAttempts 容量阈值：超过时清理未达阈值的失败计数，防止攻击者用大量用户名
-    // 各失败未达阈值导致 Map 无界增长（失败计数跨连接保留后不再随退出清理）
-    private static final int FAILED_ATTEMPTS_CAP = 1000;
 
     public AuthManager(HowSAuth plugin, PlayerDataManager dataManager, ConfigManager configManager) {
         this.plugin = plugin;
@@ -83,6 +77,7 @@ public final class AuthManager {
         this.configManager = configManager;
         this.events = new AuthEvents(plugin);
         this.sessions = new SessionStore();
+        this.failProtection = new FailProtection(configManager);
         this.newWorldStructure = detectNewWorldStructure();
         // 周期清理过期的 2FA 临时密钥与登录/2FA 会话等状态（懒清理兜底，随插件关闭统一取消）
         Bukkit.getAsyncScheduler().runAtFixedRate(plugin, task -> {
@@ -97,6 +92,14 @@ public final class AuthManager {
      */
     public SessionStore sessions() {
         return sessions;
+    }
+
+    /**
+     * 暴力破解防护：失败计数、踢出期与过期淘汰。
+     * 拆分后由本类持有组装，调用方直接使用该服务（AuthManager 不再提供转发）。
+     */
+    public FailProtection failProtection() {
+        return failProtection;
     }
 
     /**
@@ -233,8 +236,8 @@ public final class AuthManager {
     public void loginAsync(Player player, String password, BiConsumer<LoginResult, Long> done) {
         UUID uuid = player.getUniqueId();
         // 轻量检查（主线程/调用线程）
-        if (isKicked(player)) {
-            done.accept(LoginResult.FAILED, getKickRemaining(player));
+        if (failProtection.isKicked(player)) {
+            done.accept(LoginResult.FAILED, failProtection.getKickRemaining(player));
             return;
         }
         PlayerData data = dataManager.getPlayer(uuid);
@@ -263,7 +266,7 @@ public final class AuthManager {
                 }
                 if (!ok) {
                     handleLoginFailure(uuid, player);
-                    done.accept(LoginResult.FAILED, isKicked(player) ? getKickRemaining(player) : 0L);
+                    done.accept(LoginResult.FAILED, failProtection.isKicked(player) ? failProtection.getKickRemaining(player) : 0L);
                 } else {
                     // 密码明文仅此处可用，须在进入 2FA 等待前完成对齐
                     if (alignedHash != null) snapshot.passwordHash(alignedHash);
@@ -290,8 +293,8 @@ public final class AuthManager {
      * @param done 回调（异步线程调用）：参数 1 登录结果；参数 2 失败时的剩余踢出秒数
      */
     public void loginConfigAsync(UUID uuid, String password, String ip, BiConsumer<LoginResult, Long> done) {
-        if (isKicked(uuid)) {
-            long remaining = getKickRemaining(uuid);
+        if (failProtection.isKicked(uuid)) {
+            long remaining = failProtection.getKickRemaining(uuid);
             if (Debug.on()) {
                 Debug.log("auth", "login config %s: %s (kick %ss remaining)",
                         uuid.toString().substring(0, 8), LoginResult.FAILED, remaining);
@@ -314,7 +317,7 @@ public final class AuthManager {
             boolean ok = PasswordHash.checkPassword(password, snapshot.passwordHash());
             if (!ok) {
                 handleLoginFailure(uuid, null);
-                long remaining = isKicked(uuid) ? getKickRemaining(uuid) : 0L;
+                long remaining = failProtection.isKicked(uuid) ? failProtection.getKickRemaining(uuid) : 0L;
                 if (Debug.on()) {
                     if (remaining > 0) {
                         Debug.log("auth", "login config %s: %s (wrong password, kick %ss remaining)",
@@ -742,45 +745,7 @@ public final class AuthManager {
 
     /** 登录失败处理：失败计数（可能触发踢出）+ 触发失败事件（须在玩家区域线程调用；配置阶段 player 为 null，事件转全局调度器触发） */
     private void handleLoginFailure(UUID uuid, Player player) {
-        if (Debug.on()) {
-            Debug.log("auth", "login failure for %s", player != null ? player.getName() : uuid);
-        }
-        // 增加计数（仅在启用失败保护时）
-        if (configManager.failProtectionEnabled()) {
-            long now = System.currentTimeMillis();
-            long resetMs = configManager.failProtectionResetSeconds() * 1000L;
-            // 容量守卫：失败计数跨连接保留后不再随退出清理，超限时清理可安全移除的条目
-            if (failedAttempts.size() > FAILED_ATTEMPTS_CAP) {
-                evictStaleFailures(now);
-            }
-            // 原子计数：距上次失败超过过期时长则重置为 1，否则累加（跨连接保留）
-            int[] attempts = new int[1];
-            failedAttempts.compute(uuid, (k, v) -> {
-                if (v == null || (resetMs > 0 && now - v[1] >= resetMs)) {
-                    attempts[0] = 1;
-                    return new long[]{1, now};
-                }
-                v[0]++;
-                v[1] = now;
-                attempts[0] = (int) v[0];
-                return v;
-            });
-            if (attempts[0] >= configManager.failMaxAttempts()) {
-                // 达到阈值，设置踢出期
-                if (Debug.on()) {
-                    Debug.log("auth", "kick %s: %s consecutive failures, banned %ss",
-                            player != null ? player.getName() : uuid.toString().substring(0, 8),
-                            attempts[0], configManager.failKickDuration());
-                }
-                kickUntil.put(uuid, now + configManager.failKickDuration() * 1000L);
-                failedAttempts.remove(uuid);
-                // 容量守卫：攻击者用大量用户名各达阈值后不再重连，踢出记录仅在被读取时懒清理，
-                // 超限时清理已过期项，防止 Map 无界增长（与 failedAttempts 守卫同一威胁模型）
-                if (kickUntil.size() > FAILED_ATTEMPTS_CAP) {
-                    kickUntil.values().removeIf(until -> until <= now);
-                }
-            }
-        }
+        failProtection.recordFailure(uuid, player);
         events.loginFail(player);
     }
 
@@ -1039,8 +1004,7 @@ public final class AuthManager {
         clearPending2faSecret(uuid);
         // 防重放计数一并清理：残留计数会误拒重绑定新密钥后的正确验证码（counter 单调消费）
         used2faCounters.remove(uuid);
-        failedAttempts.remove(uuid);
-        kickUntil.remove(uuid);
+        failProtection.clear(uuid);
         sessions.removeInvulnerablePending(uuid);
         sessions.consumeSpectatorPending(uuid);
         pendingUpgrade.remove(uuid);
@@ -1243,8 +1207,7 @@ public final class AuthManager {
     private void markLoggedIn(UUID uuid) {
         sessions.markLoggedIn(uuid);
         pending2fa.remove(uuid);
-        failedAttempts.remove(uuid);
-        kickUntil.remove(uuid);
+        failProtection.clear(uuid);
     }
 
     /**
@@ -1263,11 +1226,11 @@ public final class AuthManager {
         // 清除正版回退标记（会话级状态：本次连接要求密码登录，退出即失效，
         // 防止残留标记使下次验证成功的连接仍误走密码路径）
         premiumFallback.remove(uuid);
-        // 注意：不清除失败计数与踢出记录（failedAttempts / kickUntil）。
+        // 注意：不清除失败计数与踢出记录（FailProtection 持有的两个 Map）。
         // 玩家被踢出或退出会触发 PlayerQuitEvent → 本方法；若在此清除，
         // 攻击者可通过"失败1-2次→重连"重置连续失败计数、或借被踢重连绕过踢出期，
         // 使 fail-protection 的连续失败阈值与踢出期保护失效。
-        // 两者均为跨连接的暴力破解防护，须保留至达到阈值/登录成功/到期，由对应逻辑清理。
+        // 两者均为跨连接的暴力破解防护，须保留至达到阈值/登录成功/到期，由 FailProtection 清理。
     }
 
     public boolean hasAccount(Player player) {
@@ -1288,65 +1251,24 @@ public final class AuthManager {
         return sessions.isLatestLoginTimeout(uuid, startedAt);
     }
 
-    // 暴力破解防护：检查是否处于踢出期
-    public boolean isKicked(Player player) {
-        return isKicked(player.getUniqueId());
-    }
-
-    public boolean isKicked(UUID uuid) {
-        if (!configManager.failProtectionEnabled()) return false;
-        Long until = kickUntil.get(uuid);
-        if (until == null) return false;
-        if (until <= System.currentTimeMillis()) {
-            // 懒清理已过期的踢出记录（踢出记录不再随 clearSession 清理，需在此避免无界累积）
-            kickUntil.remove(uuid);
-            return false;
-        }
-        return true;
-    }
-
-    // 获取剩余踢出时间（秒）
-    public long getKickRemaining(Player player) {
-        return getKickRemaining(player.getUniqueId());
-    }
-
-    public long getKickRemaining(UUID uuid) {
-        Long until = kickUntil.get(uuid);
-        if (until == null) return 0;
-        long remaining = until - System.currentTimeMillis();
-        return remaining > 0 ? remaining / 1000 : 0;
-    }
-
     /**
      * 清理已过期的踢出记录、失败计数、2FA/登录会话与注销拒绝重连记录（30 秒周期任务 + reload/unregister 时调用）。
      * 登录会话只在读取时判定过期（玩家不再上线则条目无读取机会），须依赖周期清理防止常驻内存
      */
     public void cleanupExpiredStates() {
         long now = System.currentTimeMillis();
-        int before = kickUntil.size() + failedAttempts.size() + twoFaSessions.size()
-                + loginSessions.size() + sessions.recentUnregisterCount();
-        kickUntil.values().removeIf(until -> until <= now);
-        evictStaleFailures(now);
+        int removed = failProtection.cleanupExpired(now);
+        int before = twoFaSessions.size() + loginSessions.size() + sessions.recentUnregisterCount();
         twoFaSessions.entrySet().removeIf(e -> now > e.getValue().expiresAt());
         // 清理已过期的登录会话（固定窗口，命中不续期）
         long sessionMs = TimeUnit.MINUTES.toMillis(configManager.sessionExpireMinutes());
         loginSessions.entrySet().removeIf(e -> now - e.getValue().establishedAt() >= sessionMs);
         // 清理已过期的注销拒绝重连记录
         sessions.cleanupExpired(now);
-        int removed = before - (kickUntil.size() + failedAttempts.size() + twoFaSessions.size()
-                + loginSessions.size() + sessions.recentUnregisterCount());
+        removed += before - (twoFaSessions.size() + loginSessions.size() + sessions.recentUnregisterCount());
         if (removed > 0 && Debug.on()) {
             Debug.log("session", "cleanup expired states: %s entries removed", removed);
         }
-    }
-
-    /** 清理可安全移除的失败计数：超过过期时长未再失败（玩家可能已离线/已放弃尝试）。
-     *  不能按"未达阈值"清理——达阈值的条目在 handleLoginFailure 中已被 remove，Map 中不存在 ≥max 的条目，
-     *  按阈值清理恒真等于全清，攻击者可用大量假名洪水抹掉自己针对目标账号的累计进度 */
-    private void evictStaleFailures(long now) {
-        long resetMs = configManager.failProtectionResetSeconds() * 1000L;
-        if (resetMs <= 0) return;
-        failedAttempts.entrySet().removeIf(entry -> now - entry.getValue()[1] >= resetMs);
     }
 
     // ===== 坐标保护相关 =====
@@ -1404,7 +1326,7 @@ public final class AuthManager {
                 + " pending2fa=" + pending2fa.size() + " pending2faSecret=" + pending2faSecret.size()
                 + " verifying=" + sessions.verifyingCount() + " used2faCounters=" + used2faCounters.size()
                 + " premiumFallback=" + premiumFallback.size() + " recentUnregister=" + sessions.recentUnregisterCount()
-                + " pendingDatDelete=" + sessions.pendingDatDeleteCount() + " failedAttempts=" + failedAttempts.size());
+                + " pendingDatDelete=" + sessions.pendingDatDeleteCount() + " failedAttempts=" + failProtection.failureCount());
         lines.add("  pending markers: invulnerable=" + sessions.invulnerablePendingCount()
                 + " spectator=" + sessions.spectatorPendingCount() + " loginTimeout=" + sessions.loginTimeoutStartedCount());
         for (Player player : Bukkit.getOnlinePlayers()) {
@@ -1414,8 +1336,8 @@ public final class AuthManager {
                     + " pending2fa=" + pending2fa.contains(uuid)
                     + " loginSession=" + loginSessions.containsKey(uuid)
                     + " twoFaSession=" + twoFaSessions.containsKey(uuid)
-                    + " failed=" + failedAttempts.containsKey(uuid)
-                    + " kicked=" + isKicked(uuid));
+                    + " failed=" + failProtection.hasFailureRecord(uuid)
+                    + " kicked=" + failProtection.isKicked(uuid));
         }
         return lines;
     }

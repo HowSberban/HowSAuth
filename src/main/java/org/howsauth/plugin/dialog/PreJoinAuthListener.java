@@ -14,6 +14,7 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.PasswordValidator;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.config.ConfigManager;
@@ -46,6 +47,7 @@ public final class PreJoinAuthListener implements Listener {
     private final HowSAuth plugin;
     private final AuthManager authManager;
     private final SessionStore sessions;
+    private final FailProtection failProtection;
     private final DialogManager dialogManager;
     // 配置阶段认证结果：UUID → 结果（进入世界时移除）
     private final Map<UUID, AuthOutcome> outcomes = new ConcurrentHashMap<>();
@@ -74,10 +76,11 @@ public final class PreJoinAuthListener implements Listener {
     }
 
     public PreJoinAuthListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions,
-                               DialogManager dialogManager) {
+                               FailProtection failProtection, DialogManager dialogManager) {
         this.plugin = plugin;
         this.authManager = authManager;
         this.sessions = sessions;
+        this.failProtection = failProtection;
         this.dialogManager = dialogManager;
     }
 
@@ -437,7 +440,7 @@ public final class PreJoinAuthListener implements Listener {
         return (response, audience) -> {
             if (configSessions.get(uuid) != session) return;
             // 暴力破解踢出期内断连（无密码账户验证码错误达到阈值后进入踢出期，与密码登录失败行为一致）
-            long kickRemaining = authManager.getKickRemaining(uuid);
+            long kickRemaining = failProtection.getKickRemaining(uuid);
             if (kickRemaining > 0) {
                 session.kicked = true;
                 session.connection.disconnect(I18n.msgForLocale("2fa.kicked", locale, kickRemaining));

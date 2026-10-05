@@ -8,6 +8,7 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.api.event.HSAuthLoginEvent;
 import org.howsauth.plugin.api.event.HSAuthRegisterEvent;
@@ -41,15 +42,18 @@ public final class PlayerListener implements Listener {
     private final HowSAuth plugin;
     private final AuthManager authManager;
     private final SessionStore sessions;
+    private final FailProtection failProtection;
     // 活跃的提醒 BossBar：登录成功/玩家退出时立即隐藏（不等下一个任务周期）
     private final Map<UUID, net.kyori.adventure.bossbar.BossBar> reminderBars = new ConcurrentHashMap<>();
     // 活跃的提醒任务：重新挂起（reload）时取消旧任务，避免新旧任务并行重复提醒
     private final Map<UUID, ScheduledTask> reminderTasks = new ConcurrentHashMap<>();
 
-    public PlayerListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions) {
+    public PlayerListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions,
+                          FailProtection failProtection) {
         this.plugin = plugin;
         this.authManager = authManager;
         this.sessions = sessions;
+        this.failProtection = failProtection;
     }
 
     // 在玩家加入世界前拦截：踢出期玩家、同一 IP 账号数量超限
@@ -69,8 +73,8 @@ public final class PlayerListener implements Listener {
         }
 
         // 踢出期内拒绝进入
-        if (authManager.isKicked(uuid)) {
-            long remaining = authManager.getKickRemaining(uuid);
+        if (failProtection.isKicked(uuid)) {
+            long remaining = failProtection.getKickRemaining(uuid);
             if (Debug.on()) {
                 Debug.log("flow", "prelogin reject %s: kick period active (%s ms left)", event.getName(), remaining);
             }

@@ -65,7 +65,7 @@ class FailProtectionResetTest {
         for (int attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {
             assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, "wrong", ip), "wrong password must fail login");
         }
-        assertFalse(auth.isKicked(uuid), "below-threshold failures (" + (MAX_ATTEMPTS - 1) + ") must not kick");
+        assertFalse(env.failProtection().isKicked(uuid), "below-threshold failures (" + (MAX_ATTEMPTS - 1) + ") must not kick");
 
         // 越过过期窗口：计数应清零（这里同时触发一次周期清理，验证清理路径不误删）
         Thread.sleep(RESET_SECONDS * 1000L + 200L);
@@ -73,10 +73,10 @@ class FailProtectionResetTest {
 
         // 关键断言：这是"新窗口的第 1 次失败"。若计数未过期重置，累计值将达到阈值并立即踢出
         assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, "wrong", ip), "wrong password must fail login");
-        assertFalse(auth.isKicked(uuid), "failure count must restart after the reset window, so no kick");
+        assertFalse(env.failProtection().isKicked(uuid), "failure count must restart after the reset window, so no kick");
 
         // 新窗口内再失败一次：累计 2 次，仍未达阈值
         assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, "wrong", ip), "wrong password must fail login");
-        assertFalse(auth.isKicked(uuid), "accumulated failures (" + (MAX_ATTEMPTS - 1) + ") in the new window must still not kick");
+        assertFalse(env.failProtection().isKicked(uuid), "accumulated failures (" + (MAX_ATTEMPTS - 1) + ") in the new window must still not kick");
     }
 }
