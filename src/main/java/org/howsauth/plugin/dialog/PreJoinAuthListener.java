@@ -13,7 +13,6 @@ import org.bukkit.event.Listener;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
-import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.LoginFlow;
 import org.howsauth.plugin.auth.AccountLifecycle;
 import org.howsauth.plugin.auth.FailProtection;
@@ -48,7 +47,6 @@ public final class PreJoinAuthListener implements Listener {
     }
 
     private final HowSAuth plugin;
-    private final AuthManager authManager;
     private final SessionStore sessions;
     private final FailProtection failProtection;
     private final TwoFactorAuth twoFactor;
@@ -81,11 +79,10 @@ public final class PreJoinAuthListener implements Listener {
         }
     }
 
-    public PreJoinAuthListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions,
+    public PreJoinAuthListener(HowSAuth plugin, SessionStore sessions,
                                FailProtection failProtection, TwoFactorAuth twoFactor,
                                AccountLifecycle accounts, LoginFlow loginFlow, DialogManager dialogManager) {
         this.plugin = plugin;
-        this.authManager = authManager;
         this.sessions = sessions;
         this.failProtection = failProtection;
         this.twoFactor = twoFactor;

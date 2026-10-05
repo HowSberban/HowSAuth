@@ -7,7 +7,6 @@ import org.bukkit.Bukkit;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
-import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.LoginFlow;
 import org.howsauth.plugin.auth.AccountLifecycle;
 import org.howsauth.plugin.auth.FailProtection;
@@ -44,7 +43,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class PlayerListener implements Listener {
 
     private final HowSAuth plugin;
-    private final AuthManager authManager;
     private final SessionStore sessions;
     private final FailProtection failProtection;
     private final TwoFactorAuth twoFactor;
@@ -56,10 +54,9 @@ public final class PlayerListener implements Listener {
     // 活跃的提醒任务：重新挂起（reload）时取消旧任务，避免新旧任务并行重复提醒
     private final Map<UUID, ScheduledTask> reminderTasks = new ConcurrentHashMap<>();
 
-    public PlayerListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions,
+    public PlayerListener(HowSAuth plugin, SessionStore sessions,
                           FailProtection failProtection, TwoFactorAuth twoFactor, LogoutLocation locations, AccountLifecycle accounts, LoginFlow loginFlow) {
         this.plugin = plugin;
-        this.authManager = authManager;
         this.sessions = sessions;
         this.failProtection = failProtection;
         this.twoFactor = twoFactor;
@@ -536,7 +533,7 @@ public final class PlayerListener implements Listener {
 
     /**
      * 玩家退出阶段一（LOWEST，最先执行）：处理依赖认证结果的业务并保存退出数据。
-     * 认证判定用 AuthManager#hasAuthenticatedThisConnection（与 isLoggedIn 的差异见该方法注释），
+     * 认证判定用 SessionStore#hasAuthenticatedThisConnection（与 isLoggedIn 的差异见该方法注释），
      * 会话状态清理在阶段二（onQuitCleanup），须晚于本阶段的判定
      */
     @EventHandler(priority = EventPriority.LOWEST)

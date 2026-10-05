@@ -4,7 +4,6 @@ import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
-import org.howsauth.plugin.auth.AuthManager;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
@@ -25,7 +24,6 @@ public final class UnregisterCommand implements BasicCommand {
     private static final long CONFIRM_WINDOW_SECONDS = 60;
 
     private final HowSAuth plugin;
-    private final AuthManager authManager;
     // 待确认的注销请求：UUID → 到期时间戳，凭据验证通过后写入，confirm 时校验
     private final Map<UUID, Long> pendingConfirms = new ConcurrentHashMap<>();
 
@@ -33,9 +31,8 @@ public final class UnregisterCommand implements BasicCommand {
         pendingConfirms.remove(uuid);
     }
 
-    public UnregisterCommand(HowSAuth plugin, AuthManager authManager) {
+    public UnregisterCommand(HowSAuth plugin) {
         this.plugin = plugin;
-        this.authManager = authManager;
     }
 
     @Override

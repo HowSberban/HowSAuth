@@ -11,7 +11,6 @@ import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
-import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.dialog.DialogManager;
 import org.bukkit.entity.Player;
 
@@ -34,15 +33,13 @@ import static io.papermc.paper.command.brigadier.Commands.literal;
 public final class TwoFactorCommand {
 
     private final HowSAuth plugin;
-    private final AuthManager authManager;
     // 游戏内绑定对话框构建器：服务端不支持 Dialog 时为 null，回退文本展示
     private final DialogManager dialogManager;
     // 取消回调：仅关闭窗口（afterAction 为 NONE，手动关闭），无副作用，可复用
     private static final DialogActionCallback CANCEL = (returnValue, audience) -> audience.closeDialog();
 
-    public TwoFactorCommand(HowSAuth plugin, AuthManager authManager, DialogManager dialogManager) {
+    public TwoFactorCommand(HowSAuth plugin, DialogManager dialogManager) {
         this.plugin = plugin;
-        this.authManager = authManager;
         this.dialogManager = dialogManager;
     }
 

@@ -77,7 +77,7 @@ public class HowSAuth extends JavaPlugin {
                 && DialogManager.isSupported()
                 && (preJoinSupported() || configManager.dialogAllowRiskyVersions())) {
             this.dialogManager = new DialogManager(this);
-            this.preJoinAuthListener = new PreJoinAuthListener(this, authManager, authManager.sessions(), authManager.failProtection(), authManager.twoFactor(), authManager.accounts(), authManager.loginFlow(), dialogManager);
+            this.preJoinAuthListener = new PreJoinAuthListener(this, authManager.sessions(), authManager.failProtection(), authManager.twoFactor(), authManager.accounts(), authManager.loginFlow(), dialogManager);
             getServer().getPluginManager().registerEvents(preJoinAuthListener, this);
         } else if (configManager.loginDialogEnabled()) {
             getLogger().warning(I18n.get("log.dialog_unsupported"));
@@ -151,27 +151,27 @@ public class HowSAuth extends JavaPlugin {
         var manager = this.getLifecycleManager();
         manager.registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             Commands commands = event.registrar();
-            commands.register("register", I18n.get("command.desc.register"), List.of("reg"), new RegisterCommand(this, authManager));
+            commands.register("register", I18n.get("command.desc.register"), List.of("reg"), new RegisterCommand(this));
             commands.register("login", I18n.get("command.desc.login"), List.of("l"), new LoginCommand(authManager.loginFlow(), authManager.sessions(), authManager.locations(), authManager.accounts()));
-            commands.register("changepassword", I18n.get("command.desc.changepassword"), List.of("changepw", "cp"), new ChangePasswordCommand(this, authManager));
-            commands.register("addpassword", I18n.get("command.desc.addpassword"), List.of("addpw"), new AddPasswordCommand(this, authManager));
+            commands.register("changepassword", I18n.get("command.desc.changepassword"), List.of("changepw", "cp"), new ChangePasswordCommand(this));
+            commands.register("addpassword", I18n.get("command.desc.addpassword"), List.of("addpw"), new AddPasswordCommand(this));
             commands.register("removepassword", I18n.get("command.desc.removepassword"), List.of("removepw", "rmpw"), new RemovePasswordCommand(authManager.loginFlow(), authManager.sessions(), authManager.twoFactor(), authManager.accounts()));
             commands.register("logout", I18n.get("command.desc.logout"), List.of(), new LogoutCommand(authManager.loginFlow(), authManager.sessions()));
-            commands.register("upgrade", I18n.get("command.desc.upgrade"), List.of(), new UpgradeAccountCommand(this, authManager));
-            commands.register("downgrade", I18n.get("command.desc.downgrade"), List.of(), new DowngradeAccountCommand(this, authManager));
+            commands.register("upgrade", I18n.get("command.desc.upgrade"), List.of(), new UpgradeAccountCommand(this));
+            commands.register("downgrade", I18n.get("command.desc.downgrade"), List.of(), new DowngradeAccountCommand(this));
             UnregisterCommand unregisterCommand;
-            commands.register("unregister", I18n.get("command.desc.unregister"), List.of(), unregisterCommand = new UnregisterCommand(this, authManager));
+            commands.register("unregister", I18n.get("command.desc.unregister"), List.of(), unregisterCommand = new UnregisterCommand(this));
             authManager.accounts().setUnregisterConfirmInvalidator(unregisterCommand::clearPendingConfirm);
-            commands.register(new PremiumCommand(this, authManager).buildNode(), I18n.get("command.desc.premium"), List.of());
+            commands.register(new PremiumCommand(this).buildNode(), I18n.get("command.desc.premium"), List.of());
             // 2fa 与 hsauth 一样使用 brigadier 原生注册，子命令作为 literal 节点，
             // 客户端在输入空格后能自动显示子命令列表
-            commands.register(new TwoFactorCommand(this, authManager, dialogManager).buildNode(), I18n.get("command.desc.2fa"), List.of("totp"));
+            commands.register(new TwoFactorCommand(this, dialogManager).buildNode(), I18n.get("command.desc.2fa"), List.of("totp"));
             commands.register(new HSAuthCommand(this).buildNode(), I18n.get("command.desc.hsauth"), List.of());
         });
     }
 
     private void registerListeners() {
-        playerListener = new PlayerListener(this, authManager, authManager.sessions(), authManager.failProtection(), authManager.twoFactor(), authManager.locations(), authManager.accounts(), authManager.loginFlow());
+        playerListener = new PlayerListener(this, authManager.sessions(), authManager.failProtection(), authManager.twoFactor(), authManager.locations(), authManager.accounts(), authManager.loginFlow());
         getServer().getPluginManager().registerEvents(playerListener, this);
         // 末影珍珠保管：独立监听器（接管飞行珍珠，登录后按配置返还）
         pendingPearlManager = new PendingPearlManager(this);
@@ -197,7 +197,7 @@ public class HowSAuth extends JavaPlugin {
         this.mojangClient = new MojangClient(this);
         this.playerInjector = new PlayerInjector(this);
         PacketEvents.getAPI().getEventManager()
-                .registerListener(new ConnectionHandler(this, dataService, mojangClient, playerInjector, authManager));
+                .registerListener(new ConnectionHandler(this, dataService, mojangClient, playerInjector));
         // 启动时异步探测代理/镜像可用性（不阻塞启动），使用时跳过不可用端点
         if (configManager.premiumEnabled() || playerDataManager.hasPremiumAccount()) {
             mojangClient.probeAll();
@@ -263,7 +263,7 @@ public class HowSAuth extends JavaPlugin {
      * 检测服务端配置阶段 Dialog 是否稳定可用：事件 API 存在（1.21.4+）且服务端版本 >= 1.21.11。
      * 1.21.6–1.21.10 虽能发送配置阶段 Dialog 包，但存在未验证的兼容问题（见 Paper issue #13365/#13708），
      * AuthMe 亦将 pre-join 门槛定为 1.21.11+，故低于此版本回退聊天栏提示更稳妥。
-     * 版本解析与 AuthManager#detectNewWorldStructure 同源（兼容 26.x 新命名）。
+     * 版本解析与 AccountLifecycle#detectNewWorldStructure 同源（兼容 26.x 新命名）。
      */
     private static boolean preJoinSupported() {
         try {

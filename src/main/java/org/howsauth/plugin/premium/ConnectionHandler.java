@@ -15,7 +15,6 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
-import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager.PlayerData;
 
@@ -56,7 +55,6 @@ public final class ConnectionHandler extends PacketListenerAbstract {
     private final DataService dataService;
     private final MojangClient mojangClient;
     private final PlayerInjector playerInjector;
-    private final AuthManager authManager;
     private final KeyPair rsaKeyPair;
     private final byte[] publicKeyEncoded;
 
@@ -70,13 +68,12 @@ public final class ConnectionHandler extends PacketListenerAbstract {
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     public ConnectionHandler(HowSAuth plugin, DataService dataService, MojangClient mojangClient,
-                             PlayerInjector playerInjector, AuthManager authManager) {
+                             PlayerInjector playerInjector) {
         super(PacketListenerPriority.LOWEST);
         this.plugin = plugin;
         this.dataService = dataService;
         this.mojangClient = mojangClient;
         this.playerInjector = playerInjector;
-        this.authManager = authManager;
         this.rsaKeyPair = generateKeyPair();
         this.publicKeyEncoded = rsaKeyPair.getPublic().getEncoded();
     }

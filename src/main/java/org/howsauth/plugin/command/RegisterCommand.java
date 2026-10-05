@@ -4,7 +4,6 @@ import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
-import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.PasswordValidator;
 import org.bukkit.command.CommandSender;
@@ -14,11 +13,9 @@ import org.jetbrains.annotations.NotNull;
 public final class RegisterCommand implements BasicCommand {
 
     private final HowSAuth plugin;
-    private final AuthManager authManager;
 
-    public RegisterCommand(HowSAuth plugin, AuthManager authManager) {
+    public RegisterCommand(HowSAuth plugin) {
         this.plugin = plugin;
-        this.authManager = authManager;
     }
 
     @Override

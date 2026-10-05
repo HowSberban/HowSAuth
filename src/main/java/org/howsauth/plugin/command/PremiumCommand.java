@@ -6,7 +6,6 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
-import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.data.PlayerDataManager.PlayerData;
 import org.howsauth.plugin.premium.DataService;
 import org.bukkit.Bukkit;
@@ -27,11 +26,9 @@ import static io.papermc.paper.command.brigadier.Commands.literal;
 public final class PremiumCommand {
 
     private final HowSAuth plugin;
-    private final AuthManager authManager;
 
-    public PremiumCommand(HowSAuth plugin, AuthManager authManager) {
+    public PremiumCommand(HowSAuth plugin) {
         this.plugin = plugin;
-        this.authManager = authManager;
     }
 
     /** 构建命令树节点（由 HowSAuth 注册时调用） */

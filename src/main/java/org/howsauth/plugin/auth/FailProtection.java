@@ -11,12 +11,12 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 暴力破解防护：连续失败计数、踢出期与过期淘汰。
  * <p>
- * 两个 Map 均为跨连接保留（退出/被踢都不清除，见 {@link AuthManager#clearSession} 的说明）：
+ * 两个 Map 均为跨连接保留（退出/被踢都不清除，见 {@link LoginFlow#clearSession} 的说明）：
  * 只有达到阈值踢出、登录成功或超过重置窗口才失效，否则攻击者可用"失败几次→重连"重置进度。
  * <p>
  * <b>线程契约</b>：并发 Map，可被任意区域线程读写；容量守卫依赖 {@code ConcurrentHashMap} 的
  * 弱一致遍历，不做全局锁。{@link #recordFailure} 须在玩家区域线程调用（与原
- * {@code AuthManager#handleLoginFailure} 一致）。
+ * {@code LoginFlow#handleLoginFailure} 一致）。
  */
 public final class FailProtection {
 
