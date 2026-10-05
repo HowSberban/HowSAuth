@@ -19,6 +19,7 @@ import org.howsauth.plugin.auth.AuthManager.LoginResult;
 import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.Totp;
+import org.howsauth.plugin.auth.TwoFactorAuth;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
 import org.jetbrains.annotations.NotNull;
@@ -158,6 +159,11 @@ public final class MockBukkitHarness implements AutoCloseable {
     /** 暴力破解防护：AuthManager 拆分后失败计数/踢出期由该服务持有 */
     public FailProtection failProtection() {
         return auth.failProtection();
+    }
+
+    /** 双因素认证：AuthManager 拆分后待验证状态/2FA 会话由该服务持有 */
+    public TwoFactorAuth twoFactor() {
+        return auth.twoFactor();
     }
 
     /** 注册一个使用同步实体调度器的玩家（addPasswordAsync 等依赖 player.getScheduler()） */

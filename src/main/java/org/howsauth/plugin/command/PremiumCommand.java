@@ -70,7 +70,7 @@ public final class PremiumCommand {
             // 否则玩家重进时按真实名字换算的离线 UUID 与迁移后的记录对不上）
             // 无密码且无 2FA 时降级后账号将无法登录，仅警告不阻止（管理员强制操作）
             // 须在迁移前判定：executeDowngrade 会把记录移到离线 UUID，之后按旧 UUID 查询必为空
-            boolean noLoginMethod = authManager.isPasswordless(data.uuid()) && !authManager.hasTotpSecret(data.uuid());
+            boolean noLoginMethod = authManager.isPasswordless(data.uuid()) && !plugin.twoFactor().hasTotpSecret(data.uuid());
             authManager.executeDowngrade(data.uuid(), DataService.offlineUuid(data.name()), data.name());
             if (noLoginMethod) {
                 sender.sendMessage(I18n.msg("premium.no_login_method", sender, targetName));

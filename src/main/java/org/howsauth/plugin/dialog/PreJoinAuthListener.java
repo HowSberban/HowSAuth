@@ -17,6 +17,7 @@ import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.PasswordValidator;
 import org.howsauth.plugin.auth.SessionStore;
+import org.howsauth.plugin.auth.TwoFactorAuth;
 import org.howsauth.plugin.config.ConfigManager;
 
 import java.lang.reflect.Method;
@@ -48,6 +49,7 @@ public final class PreJoinAuthListener implements Listener {
     private final AuthManager authManager;
     private final SessionStore sessions;
     private final FailProtection failProtection;
+    private final TwoFactorAuth twoFactor;
     private final DialogManager dialogManager;
     // 配置阶段认证结果：UUID → 结果（进入世界时移除）
     private final Map<UUID, AuthOutcome> outcomes = new ConcurrentHashMap<>();
@@ -76,11 +78,13 @@ public final class PreJoinAuthListener implements Listener {
     }
 
     public PreJoinAuthListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions,
-                               FailProtection failProtection, DialogManager dialogManager) {
+                               FailProtection failProtection, TwoFactorAuth twoFactor,
+                               DialogManager dialogManager) {
         this.plugin = plugin;
         this.authManager = authManager;
         this.sessions = sessions;
         this.failProtection = failProtection;
+        this.twoFactor = twoFactor;
         this.dialogManager = dialogManager;
     }
 
@@ -108,7 +112,7 @@ public final class PreJoinAuthListener implements Listener {
         //  会让下次连接的密码玩家凭旧会话状态直接 /2fa 跳过密码验证）
         if (uuid != null) {
             outcomes.remove(uuid);
-            authManager.clearPending2fa(uuid);
+            twoFactor.clearPending(uuid);
         }
         // 无凭据账号（无密码、未绑 2FA、非正版）：配置阶段先行处理。
         // AsyncPlayerConnectionConfigureEvent 早于 onPreLogin 的 AsyncPlayerPreLoginEvent，
@@ -152,7 +156,7 @@ public final class PreJoinAuthListener implements Listener {
         // 登录无需 2FA 验证码（未绑定/开关关闭/2FA 会话命中）时的免弹窗放行
         String ip = clientIp(conn);
         boolean autoLogin = skipAutoLogin(uuid, ip);
-        if (!authManager.requires2faAtLogin(uuid, ip)) {
+        if (!twoFactor.requiresAtLogin(uuid, ip)) {
             // 免密（正版非回退/IP 会话命中）：放行，由 onJoin 现有免密分支收尾
             if (autoLogin) {
                 if (Debug.on()) {
@@ -163,7 +167,7 @@ public final class PreJoinAuthListener implements Listener {
             }
             // 无密码账户：仅 2FA 会话命中时免验证码直接登录。无密钥账户不能满足 has2faSession，
             // 不会放行，进入下方验证码窗口等待（永远无法通过，超时断连）
-            if (authManager.isPasswordless(uuid) && authManager.has2faSession(uuid, ip)) {
+            if (authManager.isPasswordless(uuid) && twoFactor.hasSession(uuid, ip)) {
                 if (Debug.on()) {
                     Debug.log("dialog", "pre-join %s: passwordless 2FA session, mark login",
                             uuid.toString().substring(0, 8));
@@ -195,7 +199,7 @@ public final class PreJoinAuthListener implements Listener {
             // 免密（正版/IP）或无密码账户：跳过密码窗口，直接验证验证码
             if (autoLogin || (isLogin && authManager.isPasswordless(uuid))) {
                 session.passwordless2fa = true;
-                authManager.addPending2fa(uuid);
+                twoFactor.markPending(uuid);
                 show2fa(session, uuid, locale, null);
             } else if (isLogin) {
                 showLogin(session, uuid, locale, null);
@@ -447,10 +451,10 @@ public final class PreJoinAuthListener implements Listener {
                 session.latch.countDown();
                 return;
             }
-            if (!authManager.isPending2fa(uuid)) {
+            if (!twoFactor.isPending(uuid)) {
                 if (session.passwordless2fa) {
                     // 免密会话验证状态失效：重新标记待验证并重弹验证码窗口（正版玩家未必知晓密码，不能回到密码窗口）
-                    authManager.addPending2fa(uuid);
+                    twoFactor.markPending(uuid);
                     show2fa(session, uuid, locale, null);
                 } else {
                     // 密码验证状态已失效（插件重载等），回到登录窗口重新开始

@@ -188,12 +188,12 @@ class LongRunStabilityTest {
                 () -> "business loop raised " + errors.get() + " error(s), first: " + describe(firstError.get()));
         assertEquals(0, collectionSize(data, "dirty"), "dirty set must be empty after flush");
         assertEquals(0, collectionSize(sessions, "verifying"), "password verification re-entry markers must be empty");
-        assertEquals(0, collectionSize(auth, "pending2fa"), "pending 2FA states must be empty");
+        assertEquals(0, collectionSize(env.twoFactor(), "pending2fa"), "pending 2FA states must be empty");
         assertEquals(0, collectionSize(sessions, "loggedIn"), "logged-in states must be empty (this scenario never involves a Player)");
-        assertEquals(0, mapSize(auth, "pending2faSecret"), "pending 2FA secrets must be cleared");
-        assertEquals(0, mapSize(auth, "pending2faSecretCreatedAt"), "pending 2FA secret timestamps must be cleared");
+        assertEquals(0, mapSize(env.twoFactor(), "pending2faSecret"), "pending 2FA secrets must be cleared");
+        assertEquals(0, mapSize(env.twoFactor(), "pending2faSecretCreatedAt"), "pending 2FA secret timestamps must be cleared");
         assertEquals(0, mapSize(auth, "loginSessions"), "login sessions must be cleared");
-        assertEquals(0, mapSize(auth, "twoFaSessions"), "2FA sessions must be cleared");
+        assertEquals(0, mapSize(env.twoFactor(), "twoFaSessions"), "2FA sessions must be cleared");
     }
 
     /** 注销后重启（同库重新装载）账号不得复活——历史"已删行被并发 upsert 复活"回归测试 */
@@ -225,18 +225,18 @@ class LongRunStabilityTest {
         assertTrue(auth.registerConfig(uuid, "faUser", password, ip), "registration must succeed");
 
         // 绑定：错误验证码被拒，正确验证码生效
-        String secret = auth.setup2fa(player);
+        String secret = env.twoFactor().setup(player);
         assertNotNull(secret, "setup2fa must return a temporary secret");
-        assertFalse(auth.confirm2fa(player, "000000"), "wrong verification code must be rejected");
-        assertTrue(auth.confirm2fa(player, env.totpCode(secret)), "correct verification code must bind 2FA");
-        assertTrue(auth.has2fa(uuid), "has2fa must be true after binding");
+        assertFalse(env.twoFactor().confirm(player, "000000"), "wrong verification code must be rejected");
+        assertTrue(env.twoFactor().confirm(player, env.totpCode(secret)), "correct verification code must bind 2FA");
+        assertTrue(env.twoFactor().has2fa(uuid), "has2fa must be true after binding");
 
         // 绑定后登录必须走 2FA（与密码正确与否无关，requires2faAtLogin 拦截）
         assertEquals(LoginResult.NEED_2FA, env.loginBlocking(uuid, password, ip), "login must require 2FA after binding");
 
         // 管理员强制解除（误删验证器凭证的救济通道）：解除后直接登录
-        assertTrue(auth.reset2fa(uuid), "admin reset2fa must succeed");
-        assertFalse(auth.has2fa(uuid), "has2fa must be false after reset");
+        assertTrue(env.twoFactor().reset(uuid), "admin reset2fa must succeed");
+        assertFalse(env.twoFactor().has2fa(uuid), "has2fa must be false after reset");
         assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, password, ip), "login must succeed directly after reset");
     }
 
@@ -378,19 +378,19 @@ class LongRunStabilityTest {
         assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, password, ip), "initial password must log in");
 
         // 绑定 2FA：错误码被拒，正确码生效
-        String secret = auth.setup2fa(player);
+        String secret = env.twoFactor().setup(player);
         assertNotNull(secret, "setup2fa must return a temporary secret");
-        assertFalse(auth.confirm2fa(player, "000000"), "wrong verification code must be rejected");
-        assertTrue(auth.confirm2fa(player, env.totpCode(secret)), "correct verification code must bind 2FA");
-        assertTrue(auth.has2fa(uuid), "2FA must be active after binding");
+        assertFalse(env.twoFactor().confirm(player, "000000"), "wrong verification code must be rejected");
+        assertTrue(env.twoFactor().confirm(player, env.totpCode(secret)), "correct verification code must bind 2FA");
+        assertTrue(env.twoFactor().has2fa(uuid), "2FA must be active after binding");
 
         // 绑定后登录需 2FA：错误码保持待验证，正确码通过，同周期验证码被防重放拒绝
         assertEquals(LoginResult.NEED_2FA, env.loginBlocking(uuid, password, ip), "login must require 2FA after binding");
         assertFalse(auth.verify2faConfig(uuid, "000000", ip), "wrong 2FA code must be rejected");
-        assertTrue(auth.isPending2fa(uuid), "state must return to pending verification after failure");
+        assertTrue(env.twoFactor().isPending(uuid), "state must return to pending verification after failure");
         String code = env.totpCode(secret);
         assertTrue(auth.verify2faConfig(uuid, code, ip), "correct 2FA code must pass");
-        auth.addPending2fa(uuid);
+        env.twoFactor().markPending(uuid);
         assertFalse(auth.verify2faConfig(uuid, code, ip), "code from the same TOTP period must be rejected by replay protection");
 
         // rmpw：错误码拒、正确码转无密码账户；旧密码随之失效
@@ -403,7 +403,7 @@ class LongRunStabilityTest {
         // verify2faConfig 带防重放（按 30s TOTP 周期推进）：上文已消费当前周期计数，
         // 注入时钟前进一个周期即可（无需真实等待 30 秒）
         env.advanceTotpPeriod();
-        auth.addPending2fa(uuid);
+        env.twoFactor().markPending(uuid);
         assertTrue(auth.verify2faConfig(uuid, env.totpCode(secret), ip), "passwordless account must verify with 2FA only");
 
         // addpw：无密码账户可设密；已有密码再设应被拒绝
@@ -411,26 +411,26 @@ class LongRunStabilityTest {
         auth.addPasswordAsync(player, "set-pw", setFuture::complete);
         assertTrue(setFuture.get(30, TimeUnit.SECONDS), "passwordless account must accept a new password");
         assertFalse(auth.isPasswordless(uuid), "account must have a password after set");
-        assertTrue(auth.has2fa(uuid), "2FA must stay active after setting a password");
+        assertTrue(env.twoFactor().has2fa(uuid), "2FA must stay active after setting a password");
         CompletableFuture<Boolean> again = new CompletableFuture<>();
         auth.addPasswordAsync(player, "another-pw", again::complete);
         assertFalse(again.get(30, TimeUnit.SECONDS), "addpw on an account that already has a password must be rejected");
 
         // 有密 + 2FA：登录仍须验证码（拦截生效）；解绑（错误码拒/正确码过）后直接登录
         assertEquals(LoginResult.NEED_2FA, env.loginBlocking(uuid, "set-pw", ip), "login must still require 2FA after setting a password");
-        assertFalse(auth.disable2fa(player, "000000"), "disable2fa with a wrong code must fail");
-        assertTrue(auth.disable2fa(player, env.totpCode(secret)), "disable2fa with a correct code must succeed");
-        assertFalse(auth.has2fa(uuid), "2FA must be inactive after disable");
+        assertFalse(env.twoFactor().disable(player, "000000"), "disable2fa with a wrong code must fail");
+        assertTrue(env.twoFactor().disable(player, env.totpCode(secret)), "disable2fa with a correct code must succeed");
+        assertFalse(env.twoFactor().has2fa(uuid), "2FA must be inactive after disable");
         assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, "set-pw", ip), "login must succeed directly after disable");
 
         // 再压 2 轮绑定/移除密码/恢复密码/解绑交替（验证状态机可重复使用、无残留泄漏）。
         // 每轮以解绑收尾，下一轮 setup 才能生成新密钥
         String lastPw = "set-pw";
         for (int round = 1; round <= 2; round++) {
-            String s = auth.setup2fa(player);
+            String s = env.twoFactor().setup(player);
             assertNotNull(s, "round " + round + " setup2fa must return a new secret");
-            assertTrue(auth.confirm2fa(player, env.totpCode(s)), "round " + round + " confirm2fa must succeed");
-            assertTrue(auth.has2fa(uuid), "round " + round + " 2FA must be active after binding");
+            assertTrue(env.twoFactor().confirm(player, env.totpCode(s)), "round " + round + " confirm2fa must succeed");
+            assertTrue(env.twoFactor().has2fa(uuid), "round " + round + " 2FA must be active after binding");
             assertEquals(LoginResult.NEED_2FA, env.loginBlocking(uuid, lastPw, ip), "round " + round + " login must require 2FA");
             assertTrue(auth.removePassword(player, env.totpCode(s)), "round " + round + " removePassword must succeed");
             assertTrue(auth.isPasswordless(uuid), "round " + round + " account must be passwordless");
@@ -440,18 +440,18 @@ class LongRunStabilityTest {
             assertFalse(auth.isPasswordless(uuid), "round " + round + " account must have a password");
             lastPw = "cycle-pw" + round;
             // 解绑（凭本轮密钥验证码）后直接登录，为下一轮绑定腾出状态
-            assertTrue(auth.disable2fa(player, env.totpCode(s)), "round " + round + " disable2fa must succeed");
-            assertFalse(auth.has2fa(uuid), "round " + round + " 2FA must be inactive after disable");
+            assertTrue(env.twoFactor().disable(player, env.totpCode(s)), "round " + round + " disable2fa must succeed");
+            assertFalse(env.twoFactor().has2fa(uuid), "round " + round + " 2FA must be inactive after disable");
             assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, lastPw, ip), "round " + round + " login must succeed directly after disable");
         }
         // 终态：无 2FA 绑定、可凭密码直接登录
-        assertFalse(auth.has2fa(uuid), "2FA must not be bound at the end");
+        assertFalse(env.twoFactor().has2fa(uuid), "2FA must not be bound at the end");
         assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, lastPw, ip), "login must succeed with the password at the end");
 
         // 状态收敛：无临时密钥/待验证残留
-        assertEquals(0, collectionSize(auth, "pending2fa"), "pending verification states must be empty");
-        assertEquals(0, mapSize(auth, "pending2faSecret"), "temporary secret must be cleared");
-        assertEquals(0, mapSize(auth, "pending2faSecretCreatedAt"), "temporary secret timestamp must be cleared");
+        assertEquals(0, collectionSize(env.twoFactor(), "pending2fa"), "pending verification states must be empty");
+        assertEquals(0, mapSize(env.twoFactor(), "pending2faSecret"), "temporary secret must be cleared");
+        assertEquals(0, mapSize(env.twoFactor(), "pending2faSecretCreatedAt"), "temporary secret timestamp must be cleared");
 
         // 关键状态落库：注册/密码/2FA 绑定跨重载恢复（confirm 走脏标记，flush 排空后重读）
         env.flushAndAwaitDbWrites();

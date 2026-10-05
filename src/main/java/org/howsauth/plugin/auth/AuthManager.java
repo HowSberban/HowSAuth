@@ -44,21 +44,10 @@ public final class AuthManager {
     private final AuthEvents events;
     private final SessionStore sessions;
     private final FailProtection failProtection;
-    // 双因素认证：密码已通过但尚未完成 TOTP 验证的玩家（未完成前不算已登录）
-    private final Set<UUID> pending2fa = ConcurrentHashMap.newKeySet();
-    // 已消费的 2FA 时间片计数器：登录验证通过后记录，拒绝同周期或更旧验证码重放
-    // （仅内存，重启清零后同一验证码在 ≤90 秒窗口内理论上可重放一次，风险可忽略）
-    private final Map<UUID, Long> used2faCounters = new ConcurrentHashMap<>();
-    // 2FA 会话保持：验证码通过后记录 (ip, 到期时间)，同 IP 短时间内重连免验证码
-    // 固定窗口不滑动（命中不续期）；仅内存，重启即失效
-    private final Map<UUID, TwoFaSession> twoFaSessions = new ConcurrentHashMap<>();
+    private final TwoFactorAuth twoFactor;
     // 登录会话保持：密码/2FA 验证通过后记录 (ip, 建立时间戳)，同 IP 且未过期免输密码
     // 固定窗口不滑动（命中登录不刷新建立时间），避免活跃账号会话永不过期
     private final Map<UUID, LoginSession> loginSessions = new ConcurrentHashMap<>();
-    // 双因素设置中的临时密钥：confirm 验证通过后才持久化
-    private final Map<UUID, String> pending2faSecret = new ConcurrentHashMap<>();
-    // 临时密钥的创建时间戳：用于按配置时长过期清理（与 pending2faSecret 一一对应）
-    private final Map<UUID, Long> pending2faSecretCreatedAt = new ConcurrentHashMap<>();
     // 待升级离线账号（离线 UUID）：玩家执行升级指令后标记，下次登录时尝试正版验证
     private final Set<UUID> pendingUpgrade = ConcurrentHashMap.newKeySet();
     // 正版账号降级标记（内存，不持久化）：下次进入时迁移数据到离线 UUID
@@ -78,10 +67,11 @@ public final class AuthManager {
         this.events = new AuthEvents(plugin);
         this.sessions = new SessionStore();
         this.failProtection = new FailProtection(configManager);
+        this.twoFactor = new TwoFactorAuth(dataManager, configManager, failProtection, events);
         this.newWorldStructure = detectNewWorldStructure();
         // 周期清理过期的 2FA 临时密钥与登录/2FA 会话等状态（懒清理兜底，随插件关闭统一取消）
         Bukkit.getAsyncScheduler().runAtFixedRate(plugin, task -> {
-            cleanupExpired2faSecrets();
+            twoFactor.cleanupExpiredSecrets();
             cleanupExpiredStates();
         }, 1, 30, TimeUnit.SECONDS);
     }
@@ -100,6 +90,14 @@ public final class AuthManager {
      */
     public FailProtection failProtection() {
         return failProtection;
+    }
+
+    /**
+     * 双因素认证（TOTP）：待验证状态、验证码校验、绑定/解绑、2FA 会话。
+     * 拆分后由本类持有组装，调用方直接使用该服务（AuthManager 不再提供转发）。
+     */
+    public TwoFactorAuth twoFactor() {
+        return twoFactor;
     }
 
     /**
@@ -271,10 +269,10 @@ public final class AuthManager {
                     // 密码明文仅此处可用，须在进入 2FA 等待前完成对齐
                     if (alignedHash != null) snapshot.passwordHash(alignedHash);
                     String playerIp = clientIp(player);
-                    if (requires2faAtLogin(uuid, playerIp)) {
+                    if (twoFactor.requiresAtLogin(uuid, playerIp)) {
                         // 密码正确但需双因素认证：进入待验证状态，不算已登录
                         // 开关关闭时跳过验证（密钥保留在数据库，重新开启后恢复）
-                        pending2fa.add(uuid);
+                        twoFactor.markPending(uuid);
                         done.accept(LoginResult.NEED_2FA, 0L);
                     } else {
                         completeLogin(player, snapshot);
@@ -331,8 +329,8 @@ public final class AuthManager {
             } else {
                 String alignedHash = alignedPasswordHash(snapshot, password);
                 if (alignedHash != null) snapshot.passwordHash(alignedHash);
-                if (requires2faAtLogin(uuid, ip)) {
-                    pending2fa.add(uuid);
+                if (twoFactor.requiresAtLogin(uuid, ip)) {
+                    twoFactor.markPending(uuid);
                     if (Debug.on()) {
                         Debug.log("auth", "login config %s: %s", uuid.toString().substring(0, 8), LoginResult.NEED_2FA);
                     }
@@ -387,9 +385,6 @@ public final class AuthManager {
         }
     }
 
-    /** 2FA 会话：验证码通过时的来源 IP 与到期时间戳 */
-    private record TwoFaSession(String ip, long expiresAt) {}
-
     /** 登录会话：验证通过时的来源 IP 与建立时间戳（固定窗口不滑动） */
     private record LoginSession(String ip, long establishedAt) {}
 
@@ -408,59 +403,9 @@ public final class AuthManager {
         loginSessions.remove(uuid);
     }
 
-    /** 记录 2FA 会话：验证码通过后同 IP 短时间内重连免验证码（固定窗口，命中不续期） */
-    private void mark2faSession(UUID uuid, String ip) {
-        if (!configManager.twoFaSessionEnabled() || ip == null) return;
-        twoFaSessions.put(uuid, new TwoFaSession(ip,
-                System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(configManager.twoFaSessionExpireMinutes())));
-    }
-
-    /** 2FA 会话是否命中（免验证码）：开关开启 + 同 IP 且未过期。
-     *  无密码账户同样适用——风险模型与 login.session 一致（同 IP 短窗口信任），窗口内等同零凭证登录 */
-    public boolean has2faSession(UUID uuid, String ip) {
-        if (!configManager.twoFaSessionEnabled() || ip == null) return false;
-        TwoFaSession s = twoFaSessions.get(uuid);
-        if (s == null) return false;
-        if (!s.ip().equals(ip) || System.currentTimeMillis() > s.expiresAt()) {
-            twoFaSessions.remove(uuid);
-            return false;
-        }
-        return true;
-    }
-
-    /** 清除 2FA 会话（登出/强制操作/注销时调用：安全事件后不保留免验证码信任） */
-    private void clear2faSession(UUID uuid) {
-        twoFaSessions.remove(uuid);
-    }
-
     /** IP 变动提醒是否适用于该玩家：离线玩家提醒；正版玩家仅当正版验证回退开启时提醒（fallback 仅约束正版） */
     private boolean notifyIpChangeFor(PlayerData data) {
         return !data.premium() || configManager.premiumPasswordFallbackEnabled();
-    }
-
-    // ===== 双因素认证（TOTP） =====
-
-    /** 账号是否处于双因素认证生效状态（已绑定密钥且全局开关开启） */
-    public boolean has2fa(UUID uuid) {
-        PlayerData data = dataManager.getPlayer(uuid);
-        return data != null && data.totpSecret() != null && configManager.twoFaEnabled();
-    }
-
-    /** 玩家是否处于双因素待验证状态（密码已通过，TOTP 未完成） */
-    // 调用方均为取反使用（!isPending2fa 判断"无需 2FA"），方法语义保持正向便于阅读
-    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
-    public boolean isPending2fa(UUID uuid) {
-        return pending2fa.contains(uuid);
-    }
-
-    /** 免密登录（正版/IP）但已绑定 2FA：配置阶段直弹验证码窗口前标记待验证（verify2faConfig 以此为前置状态） */
-    public void addPending2fa(UUID uuid) {
-        pending2fa.add(uuid);
-    }
-
-    /** 清除 2FA 待验证标记（会话级状态，不跨连接：新连接进入配置阶段时清残留，语义与 clearSession 一致） */
-    public void clearPending2fa(UUID uuid) {
-        pending2fa.remove(uuid);
     }
 
     /** 是否为无密码账户（密码哈希为空，登录依赖验证码或正版验证） */
@@ -469,25 +414,9 @@ public final class AuthManager {
         return data != null && (data.passwordHash() == null || data.passwordHash().isEmpty());
     }
 
-    /** 是否已绑定 2FA 密钥（不看全局开关，移除密码的资格判断用） */
-    public boolean hasTotpSecret(UUID uuid) {
-        PlayerData data = dataManager.getPlayer(uuid);
-        return data != null && data.totpSecret() != null;
-    }
-
     /** 是否无可用登录方式：无密码、未绑验证器且非正版（正版可免密），任何认证路径都不可行 */
     public boolean hasNoUsableLoginMethod(UUID uuid) {
-        return isPasswordless(uuid) && !hasTotpSecret(uuid) && !isPremium(uuid);
-    }
-
-    /** 登录时是否必须完成 2FA 验证：已绑定密钥且（全局开关开启，或无密码账户——验证码是其必要登录因素，不受开关影响）。
-     *  2FA 会话命中（同 IP 且未过期）时返回 false 免验证码 */
-    public boolean requires2faAtLogin(UUID uuid, String ip) {
-        PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null || data.totpSecret() == null) return false;
-        if (has2faSession(uuid, ip)) return false;
-        return configManager.twoFaEnabled()
-                || data.passwordHash() == null || data.passwordHash().isEmpty();
+        return isPasswordless(uuid) && !twoFactor.hasTotpSecret(uuid) && !isPremium(uuid);
     }
 
     /**
@@ -525,7 +454,7 @@ public final class AuthManager {
      * @return true 验证通过且登录完成
      */
     public boolean verify2fa(Player player, String code) {
-        PlayerData data = verify2faCode(player.getUniqueId(), player, code, clientIp(player));
+        PlayerData data = twoFactor.verifyCode(player.getUniqueId(), player, code, clientIp(player));
         if (data == null) return false;
         completeLogin(player, data);
         return true;
@@ -533,203 +462,7 @@ public final class AuthManager {
 
     /** 配置阶段完成双因素验证（Pre-join Dialog）：通过则由调用方放行（登录收尾延迟到进入世界时），失败回到待验证状态 */
     public boolean verify2faConfig(UUID uuid, String code, String ip) {
-        return verify2faCode(uuid, null, code, ip) != null;
-    }
-
-    /**
-     * 2FA 验证核心：校验验证码，通过则记录 2FA 会话（免验证码重连窗口）。
-     * 失败时与密码错误同待遇计入暴力破解防护（无密码账户的验证码即唯一登录因素，更须防护），
-     * 并回到待验证状态允许重试。
-     * @param player 在线验证时的玩家（暴力破解踢出提示用），配置阶段无 Player 传 null
-     * @return 验证通过返回账号数据（供调用方登录收尾），失败返回 null
-     */
-    private PlayerData verify2faCode(UUID uuid, Player player, String code, String ip) {
-        if (!pending2fa.remove(uuid)) {
-            if (Debug.on()) {
-                Debug.log("2fa", "verify %s: rejected (not pending 2fa)",
-                        player != null ? player.getName() : uuid.toString().substring(0, 8));
-            }
-            return null;
-        }
-        PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null || data.totpSecret() == null) {
-            if (Debug.on()) {
-                Debug.log("2fa", "verify %s: rejected (no secret)",
-                        player != null ? player.getName() : uuid.toString().substring(0, 8));
-            }
-            return null;
-        }
-        Long counter = Totp.matchCounter(data.totpSecret(), code);
-        // 防重放：同周期或更旧的验证码视为已消费拒绝（TOTP 无状态，同一码在 ±1 窗口内可重复匹配）
-        // 入口 pending2fa.remove 已保证同一玩家同一时刻仅一个线程进入消费路径，check-then-put 无竞态
-        if (counter == null || counter <= used2faCounters.getOrDefault(uuid, Long.MIN_VALUE)) {
-            if (Debug.on()) {
-                Debug.log("2fa", "verify %s: rejected (%s)",
-                        player != null ? player.getName() : uuid.toString().substring(0, 8),
-                        counter == null ? "invalid code" : "replay");
-            }
-            handleLoginFailure(uuid, player);
-            pending2fa.add(uuid);
-            return null;
-        }
-        used2faCounters.put(uuid, counter);
-        mark2faSession(uuid, ip);
-        if (Debug.on()) {
-            Debug.log("2fa", "verify %s: passed",
-                    player != null ? player.getName() : uuid.toString().substring(0, 8));
-        }
-        return data;
-    }
-
-    /** 开始双因素设置：返回待绑定密钥（confirm 通过后才持久化）
-     *  已有未绑定的临时密钥则复用，避免重复执行 /2fa setup 时密钥被覆盖导致旧密钥失效
-     *  复用前先清理已过期的旧密钥，避免复用过期密钥后无法 confirm */
-    public String setup2fa(Player player) {
-        UUID uuid = player.getUniqueId();
-        if (has2fa(uuid)) return null;
-        removeExpired2faSecret(uuid);
-        return pending2faSecret.computeIfAbsent(uuid, u -> {
-            String secret = Totp.generateSecret();
-            pending2faSecretCreatedAt.put(uuid, System.currentTimeMillis());
-            if (Debug.on()) {
-                Debug.log("2fa", "setup %s: temp secret generated (ttl %ss)",
-                        player.getName(), configManager.twoFaTempSecretExpireSeconds());
-            }
-            return secret;
-        });
-    }
-
-    /** 确认双因素绑定：验证码通过后持久化临时密钥（临时密钥已过期则作废） */
-    public boolean confirm2fa(Player player, String code) {
-        UUID uuid = player.getUniqueId();
-        removeExpired2faSecret(uuid);
-        String secret = pending2faSecret.get(uuid);
-        if (secret == null) {
-            if (Debug.on()) {
-                Debug.log("2fa", "confirm %s: rejected (no pending secret)", player.getName());
-            }
-            return false;
-        }
-        if (!Totp.verifyCode(secret, code)) {
-            if (Debug.on()) {
-                Debug.log("2fa", "confirm %s: rejected (invalid code)", player.getName());
-            }
-            return false;
-        }
-        clearPending2faSecret(uuid);
-        PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null) {
-            if (Debug.on()) {
-                Debug.log("2fa", "confirm %s: failed (no account)", player.getName());
-            }
-            return false;
-        }
-        data.totpSecret(secret);
-        dataManager.save(uuid);
-        if (Debug.on()) {
-            Debug.log("2fa", "confirm %s: enabled", player.getName());
-        }
-        return true;
-    }
-
-    /** 玩家的临时密钥是否已失效：未生成或已过期（供提示"重新 setup"前判断）
-     *  调用方均为取反前的直接判断，方法语义保持"已失效"便于阅读 */
-    public boolean isPending2faSecretExpired(UUID uuid) {
-        removeExpired2faSecret(uuid);
-        return !pending2faSecret.containsKey(uuid);
-    }
-
-    /** 临时密钥是否已超期（配置为 0 时永不过期） */
-    private boolean isExpired2faSecret(long created) {
-        int seconds = configManager.twoFaTempSecretExpireSeconds();
-        return seconds > 0 && System.currentTimeMillis() - created >= seconds * 1000L;
-    }
-
-    /** 移除过期临时密钥（setup/confirm 前调用，懒清理） */
-    private void removeExpired2faSecret(UUID uuid) {
-        Long created = pending2faSecretCreatedAt.get(uuid);
-        if (created != null && isExpired2faSecret(created)) {
-            clearPending2faSecret(uuid);
-        }
-    }
-
-    /** 清理单个玩家的临时密钥及创建时间戳 */
-    private void clearPending2faSecret(UUID uuid) {
-        pending2faSecret.remove(uuid);
-        pending2faSecretCreatedAt.remove(uuid);
-    }
-
-    /** 周期清理所有过期的临时密钥（异步调度器调用） */
-    private void cleanupExpired2faSecrets() {
-        int seconds = configManager.twoFaTempSecretExpireSeconds();
-        if (seconds <= 0) return;
-        long limit = seconds * 1000L;
-        long now = System.currentTimeMillis();
-        List<UUID> expired = new ArrayList<>();
-        pending2faSecretCreatedAt.forEach((uuid, created) -> {
-            if (now - created >= limit) expired.add(uuid);
-        });
-        for (UUID uuid : expired) {
-            clearPending2faSecret(uuid);
-        }
-        if (!expired.isEmpty() && Debug.on()) {
-            Debug.log("2fa", "cleanup expired temp secrets: %s removed", expired.size());
-        }
-    }
-
-    /** 关闭双因素认证：需验证当前 TOTP 验证码（而非密码——2FA 正是防密码泄漏，解绑也须持有验证器） */
-    public boolean disable2fa(Player player, String code) {
-        UUID uuid = player.getUniqueId();
-        PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null || data.totpSecret() == null) {
-            if (Debug.on()) {
-                Debug.log("2fa", "disable %s: failed (not enabled or no account)", player.getName());
-            }
-            return false;
-        }
-        if (!Totp.verifyCode(data.totpSecret(), code)) {
-            if (Debug.on()) {
-                Debug.log("2fa", "disable %s: rejected (invalid code)", player.getName());
-            }
-            return false;
-        }
-        data.totpSecret(null);
-        // 解绑后待验证标记已无意义，清除避免残留（残留会让玩家在密码窗口卡死/状态泄漏至下次退出）
-        pending2fa.remove(uuid);
-        used2faCounters.remove(uuid);
-        // 关键操作立即持久化，防止断电丢失
-        dataManager.saveNow(uuid);
-        if (Debug.on()) {
-            Debug.log("2fa", "disable %s: disabled", player.getName());
-        }
-        return true;
-    }
-
-    /**
-     * 管理员强制解除双因素认证：不校验验证码（玩家可能已丢失验证器密钥导致账号锁死的救济通道），
-     * 仅清除 TOTP 密钥与会话/计数/待确认状态，保留账号其余数据（密码、正版标记、位置等）。
-     * 绑定中返回 true；账号不存在或未绑定时返回 false。
-     */
-    public boolean reset2fa(UUID uuid) {
-        PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null || data.totpSecret() == null) {
-            if (Debug.on()) {
-                Debug.log("2fa", "reset %s: failed (not enabled or no account)", uuid.toString().substring(0, 8));
-            }
-            return false;
-        }
-        data.totpSecret(null);
-        // 管理员解除同样使待验证状态失效，一并清理（语义与 disable2fa 一致）
-        pending2fa.remove(uuid);
-        used2faCounters.remove(uuid);
-        clear2faSession(uuid);
-        clearPending2faSecret(uuid);
-        // 关键操作立即持久化，防止断电丢失
-        dataManager.saveNow(uuid);
-        if (Debug.on()) {
-            Debug.log("2fa", "reset %s: reset by admin", uuid.toString().substring(0, 8));
-        }
-        return true;
+        return twoFactor.verifyCode(uuid, null, code, ip) != null;
     }
 
     /**
@@ -797,7 +530,7 @@ public final class AuthManager {
             dataManager.save(uuid);
         }
         clearLoginSession(uuid);
-        clear2faSession(uuid);
+        twoFactor.clearSession(uuid);
     }
 
     /** 强制登录玩家（不管有没有账号，仅对在线玩家生效） */
@@ -853,10 +586,10 @@ public final class AuthManager {
         if (data == null) return;
         String ip = clientIp(player);
         if (Debug.on()) {
-            Debug.log("session", "auto login for %s (2FA required=%s)", player.getName(), requires2faAtLogin(player.getUniqueId(), ip));
+            Debug.log("session", "auto login for %s (2FA required=%s)", player.getName(), twoFactor.requiresAtLogin(player.getUniqueId(), ip));
         }
-        if (requires2faAtLogin(player.getUniqueId(), ip)) {
-            pending2fa.add(player.getUniqueId());
+        if (twoFactor.requiresAtLogin(player.getUniqueId(), ip)) {
+            twoFactor.markPending(player.getUniqueId());
             return;
         }
         completeLogin(player, data);
@@ -1000,10 +733,10 @@ public final class AuthManager {
         }
         dataManager.removePlayer(uuid);
         sessions.invalidateLoggedIn(uuid);
-        pending2fa.remove(uuid);
-        clearPending2faSecret(uuid);
+        twoFactor.clearPending(uuid);
+        twoFactor.clearPendingSecret(uuid);
         // 防重放计数一并清理：残留计数会误拒重绑定新密钥后的正确验证码（counter 单调消费）
-        used2faCounters.remove(uuid);
+        twoFactor.clearCounter(uuid);
         failProtection.clear(uuid);
         sessions.removeInvulnerablePending(uuid);
         sessions.consumeSpectatorPending(uuid);
@@ -1011,7 +744,7 @@ public final class AuthManager {
         pendingDowngrade.remove(uuid);
         premiumFallback.remove(uuid);
         clearLoginSession(uuid);
-        clear2faSession(uuid);
+        twoFactor.clearSession(uuid);
         // 根据配置决定是否删除 Minecraft 原版玩家数据（player.dat）
         if (configManager.realUnreg()) {
             // 记录注销时间，5 秒内拒绝重连，确保 .dat 删除完成
@@ -1206,7 +939,7 @@ public final class AuthManager {
     /** 标记玩家为已登录：置位实时登录态与本次连接认证标记，清理双因素待验证、失败计数、踢出记录 */
     private void markLoggedIn(UUID uuid) {
         sessions.markLoggedIn(uuid);
-        pending2fa.remove(uuid);
+        twoFactor.clearPending(uuid);
         failProtection.clear(uuid);
     }
 
@@ -1221,8 +954,8 @@ public final class AuthManager {
         // 其中认证标记随连接结束失效，须晚于加入/退出消息与退出位置保存的判定
         sessions.clear(uuid);
         // 清除双因素认证会话状态（未完成验证即退出）
-        pending2fa.remove(uuid);
-        clearPending2faSecret(uuid);
+        twoFactor.clearPending(uuid);
+        twoFactor.clearPendingSecret(uuid);
         // 清除正版回退标记（会话级状态：本次连接要求密码登录，退出即失效，
         // 防止残留标记使下次验证成功的连接仍误走密码路径）
         premiumFallback.remove(uuid);
@@ -1258,14 +991,14 @@ public final class AuthManager {
     public void cleanupExpiredStates() {
         long now = System.currentTimeMillis();
         int removed = failProtection.cleanupExpired(now);
-        int before = twoFaSessions.size() + loginSessions.size() + sessions.recentUnregisterCount();
-        twoFaSessions.entrySet().removeIf(e -> now > e.getValue().expiresAt());
+        removed += twoFactor.cleanupExpiredSessions(now);
+        int before = loginSessions.size() + sessions.recentUnregisterCount();
         // 清理已过期的登录会话（固定窗口，命中不续期）
         long sessionMs = TimeUnit.MINUTES.toMillis(configManager.sessionExpireMinutes());
         loginSessions.entrySet().removeIf(e -> now - e.getValue().establishedAt() >= sessionMs);
         // 清理已过期的注销拒绝重连记录
         sessions.cleanupExpired(now);
-        removed += before - (twoFaSessions.size() + loginSessions.size() + sessions.recentUnregisterCount());
+        removed += before - (loginSessions.size() + sessions.recentUnregisterCount());
         if (removed > 0 && Debug.on()) {
             Debug.log("session", "cleanup expired states: %s entries removed", removed);
         }
@@ -1322,9 +1055,9 @@ public final class AuthManager {
                 + " 2fa=" + configManager.twoFaEnabled()
                 + " failProtection=" + configManager.failProtectionEnabled()
                 + " spectatorProtection=" + configManager.protectionGamemodeEnabled());
-        lines.add("  caches: loginSessions=" + loginSessions.size() + " twoFaSessions=" + twoFaSessions.size()
-                + " pending2fa=" + pending2fa.size() + " pending2faSecret=" + pending2faSecret.size()
-                + " verifying=" + sessions.verifyingCount() + " used2faCounters=" + used2faCounters.size()
+        lines.add("  caches: loginSessions=" + loginSessions.size() + " twoFaSessions=" + twoFactor.sessionCount()
+                + " pending2fa=" + twoFactor.pendingCount() + " pending2faSecret=" + twoFactor.pendingSecretCount()
+                + " verifying=" + sessions.verifyingCount() + " used2faCounters=" + twoFactor.usedCounterCount()
                 + " premiumFallback=" + premiumFallback.size() + " recentUnregister=" + sessions.recentUnregisterCount()
                 + " pendingDatDelete=" + sessions.pendingDatDeleteCount() + " failedAttempts=" + failProtection.failureCount());
         lines.add("  pending markers: invulnerable=" + sessions.invulnerablePendingCount()
@@ -1333,9 +1066,9 @@ public final class AuthManager {
             UUID uuid = player.getUniqueId();
             lines.add("  " + player.getName() + "(" + uuid.toString().substring(0, 8) + ")"
                     + sessions.describe(uuid)
-                    + " pending2fa=" + pending2fa.contains(uuid)
+                    + " pending2fa=" + twoFactor.isPending(uuid)
                     + " loginSession=" + loginSessions.containsKey(uuid)
-                    + " twoFaSession=" + twoFaSessions.containsKey(uuid)
+                    + " twoFaSession=" + twoFactor.hasSessionRecord(uuid)
                     + " failed=" + failProtection.hasFailureRecord(uuid)
                     + " kicked=" + failProtection.isKicked(uuid));
         }

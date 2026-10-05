@@ -5,6 +5,7 @@ import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.SessionStore;
+import org.howsauth.plugin.auth.TwoFactorAuth;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
@@ -18,10 +19,12 @@ public final class RemovePasswordCommand implements BasicCommand {
 
     private final AuthManager authManager;
     private final SessionStore sessions;
+    private final TwoFactorAuth twoFactor;
 
-    public RemovePasswordCommand(AuthManager authManager, SessionStore sessions) {
+    public RemovePasswordCommand(AuthManager authManager, SessionStore sessions, TwoFactorAuth twoFactor) {
         this.authManager = authManager;
         this.sessions = sessions;
+        this.twoFactor = twoFactor;
     }
 
     @Override
@@ -43,7 +46,7 @@ public final class RemovePasswordCommand implements BasicCommand {
         }
 
         // 离线账户必须已绑定 2FA，否则移除密码后账号无任何验证因素
-        boolean bound2fa = authManager.hasTotpSecret(player.getUniqueId());
+        boolean bound2fa = twoFactor.hasTotpSecret(player.getUniqueId());
         if (!bound2fa && !authManager.isPremium(player)) {
             player.sendMessage(I18n.msg("removepassword.need_2fa", player));
             return;

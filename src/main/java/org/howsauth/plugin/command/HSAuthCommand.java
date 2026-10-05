@@ -406,7 +406,7 @@ public final class HSAuthCommand {
             Debug.log("cmd", "reset2fa by %s for %s", sender.getName(), targetName);
         }
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            if (plugin.getAuthManager().reset2fa(resolveTargetUuid(targetName))) {
+            if (plugin.twoFactor().reset(resolveTargetUuid(targetName))) {
                 if (Debug.on()) {
                     Debug.log("cmd", "reset2fa by %s for %s: success", sender.getName(), targetName);
                 }

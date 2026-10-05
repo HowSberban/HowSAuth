@@ -8,6 +8,7 @@ import org.howsauth.plugin.api.HSAuthApi;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.SessionStore;
+import org.howsauth.plugin.auth.TwoFactorAuth;
 import org.howsauth.plugin.command.*;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
@@ -73,7 +74,7 @@ public class HowSAuth extends JavaPlugin {
                 && DialogManager.isSupported()
                 && (preJoinSupported() || configManager.dialogAllowRiskyVersions())) {
             this.dialogManager = new DialogManager(this);
-            this.preJoinAuthListener = new PreJoinAuthListener(this, authManager, authManager.sessions(), authManager.failProtection(), dialogManager);
+            this.preJoinAuthListener = new PreJoinAuthListener(this, authManager, authManager.sessions(), authManager.failProtection(), authManager.twoFactor(), dialogManager);
             getServer().getPluginManager().registerEvents(preJoinAuthListener, this);
         } else if (configManager.loginDialogEnabled()) {
             getLogger().warning(I18n.get("log.dialog_unsupported"));
@@ -151,7 +152,7 @@ public class HowSAuth extends JavaPlugin {
             commands.register("login", I18n.get("command.desc.login"), List.of("l"), new LoginCommand(authManager, authManager.sessions()));
             commands.register("changepassword", I18n.get("command.desc.changepassword"), List.of("changepw", "cp"), new ChangePasswordCommand(this, authManager));
             commands.register("addpassword", I18n.get("command.desc.addpassword"), List.of("addpw"), new AddPasswordCommand(this, authManager));
-            commands.register("removepassword", I18n.get("command.desc.removepassword"), List.of("removepw", "rmpw"), new RemovePasswordCommand(authManager, authManager.sessions()));
+            commands.register("removepassword", I18n.get("command.desc.removepassword"), List.of("removepw", "rmpw"), new RemovePasswordCommand(authManager, authManager.sessions(), authManager.twoFactor()));
             commands.register("logout", I18n.get("command.desc.logout"), List.of(), new LogoutCommand(authManager, authManager.sessions()));
             commands.register("upgrade", I18n.get("command.desc.upgrade"), List.of(), new UpgradeAccountCommand(this, authManager));
             commands.register("downgrade", I18n.get("command.desc.downgrade"), List.of(), new DowngradeAccountCommand(this, authManager));
@@ -167,7 +168,7 @@ public class HowSAuth extends JavaPlugin {
     }
 
     private void registerListeners() {
-        playerListener = new PlayerListener(this, authManager, authManager.sessions(), authManager.failProtection());
+        playerListener = new PlayerListener(this, authManager, authManager.sessions(), authManager.failProtection(), authManager.twoFactor());
         getServer().getPluginManager().registerEvents(playerListener, this);
         // 末影珍珠保管：独立监听器（接管飞行珍珠，登录后按配置返还）
         pendingPearlManager = new PendingPearlManager(this);
@@ -220,6 +221,11 @@ public class HowSAuth extends JavaPlugin {
     /** 暴力破解防护（失败计数/踢出期），AuthManager 拆分后的协作服务 */
     public FailProtection failProtection() {
         return authManager.failProtection();
+    }
+
+    /** 双因素认证（待验证状态/验证码/绑定解绑），AuthManager 拆分后的协作服务 */
+    public TwoFactorAuth twoFactor() {
+        return authManager.twoFactor();
     }
 
     public PlayerListener getPlayerListener() {

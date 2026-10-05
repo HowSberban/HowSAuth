@@ -97,11 +97,11 @@ public final class TwoFactorCommand {
     private int handleSetup(CommandContext<CommandSourceStack> ctx) {
         Player player = (Player) ctx.getSource().getSender();
         if (blocked(player)) return Command.SINGLE_SUCCESS;
-        if (authManager.has2fa(player.getUniqueId())) {
+        if (plugin.twoFactor().has2fa(player.getUniqueId())) {
             player.sendMessage(msg(player, "2fa.already_enabled"));
             return Command.SINGLE_SUCCESS;
         }
-        String secret = authManager.setup2fa(player);
+        String secret = plugin.twoFactor().setup(player);
         // 扫码 URL 只与密钥和配置相关，绑定会话期间不变，算一次复用
         String url = qrUrl(player, secret);
         // Dialog 可用时聊天栏完全静默，两者互斥（扫码入口在对话框按钮上）
@@ -143,13 +143,13 @@ public final class TwoFactorCommand {
     private DialogActionCallback setupOnConfirm(Player player, String secret, String qrUrl) {
         return (returnValue, audience) -> {
             // 绑定已在别处完成（如对话框确认后又跑 /2fa confirm）：直接关闭并提示
-            if (authManager.has2fa(player.getUniqueId())) {
+            if (plugin.twoFactor().has2fa(player.getUniqueId())) {
                 audience.closeDialog();
                 player.sendMessage(msg(player, "2fa.already_enabled"));
                 return;
             }
             // 密钥已过期（等待期间超时）：重弹只会展示作废密钥，关闭并提示重新 setup
-            if (authManager.isPending2faSecretExpired(player.getUniqueId())) {
+            if (plugin.twoFactor().isPendingSecretExpired(player.getUniqueId())) {
                 audience.closeDialog();
                 player.sendMessage(msg(player, "2fa.setup_expired"));
                 return;
@@ -159,7 +159,7 @@ public final class TwoFactorCommand {
                 showSetupDialog(player, secret, qrUrl, msg(player, "dialog.empty_code"));
                 return;
             }
-            if (authManager.confirm2fa(player, code)) {
+            if (plugin.twoFactor().confirm(player, code)) {
                 player.sendMessage(msg(player, "2fa.confirm_success"));
                 // 绑定成功即关闭窗口
                 audience.closeDialog();
@@ -215,12 +215,12 @@ public final class TwoFactorCommand {
         Player player = (Player) ctx.getSource().getSender();
         if (blocked(player)) return Command.SINGLE_SUCCESS;
         String code = StringArgumentType.getString(ctx, "code");
-        if (authManager.confirm2fa(player, code)) {
+        if (plugin.twoFactor().confirm(player, code)) {
             player.sendMessage(msg(player, "2fa.confirm_success"));
-        } else if (authManager.has2fa(player.getUniqueId())) {
+        } else if (plugin.twoFactor().has2fa(player.getUniqueId())) {
             // 已绑定成功（临时密钥已清除），重复确认不提示验证码错误
             player.sendMessage(msg(player, "2fa.already_enabled"));
-        } else if (authManager.isPending2faSecretExpired(player.getUniqueId())) {
+        } else if (plugin.twoFactor().isPendingSecretExpired(player.getUniqueId())) {
             // 临时密钥已不在（过期被清理）：提示重新 setup 而非验证码错误
             player.sendMessage(msg(player, "2fa.setup_expired"));
         } else {
@@ -239,12 +239,12 @@ public final class TwoFactorCommand {
             return Command.SINGLE_SUCCESS;
         }
         if (blocked(player)) return Command.SINGLE_SUCCESS;
-        if (!authManager.has2fa(player.getUniqueId())) {
+        if (!plugin.twoFactor().has2fa(player.getUniqueId())) {
             player.sendMessage(msg(player, "2fa.not_enabled"));
             return Command.SINGLE_SUCCESS;
         }
         String code = StringArgumentType.getString(ctx, "code");
-        if (authManager.disable2fa(player, code)) {
+        if (plugin.twoFactor().disable(player, code)) {
             player.sendMessage(msg(player, "2fa.disabled"));
         } else {
             player.sendMessage(msg(player, "2fa.confirm_incorrect"));
@@ -267,7 +267,7 @@ public final class TwoFactorCommand {
             player.sendMessage(I18n.msg("2fa.kicked", player, plugin.failProtection().getKickRemaining(player)));
             return Command.SINGLE_SUCCESS;
         }
-        if (!authManager.isPending2fa(player.getUniqueId())) {
+        if (!plugin.twoFactor().isPending(player.getUniqueId())) {
             player.sendMessage(msg(player, "2fa.usage"));
             return Command.SINGLE_SUCCESS;
         }

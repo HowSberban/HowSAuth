@@ -78,7 +78,7 @@ public final class UnregisterCommand implements BasicCommand {
         // 第一步：凭据验证（按账户持有情况组合参数，正版免验）
         boolean premium = authManager.isPremium(uuid);
         boolean passwordless = authManager.isPasswordless(uuid);
-        boolean has2fa = authManager.hasTotpSecret(uuid);
+        boolean has2fa = plugin.twoFactor().hasTotpSecret(uuid);
 
         if (!premium) {
             // 所需参数个数 = 密码（非无密码账户）+ 验证码（已绑定）

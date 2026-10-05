@@ -10,6 +10,7 @@ import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.SessionStore;
+import org.howsauth.plugin.auth.TwoFactorAuth;
 import org.howsauth.plugin.api.event.HSAuthLoginEvent;
 import org.howsauth.plugin.api.event.HSAuthRegisterEvent;
 import org.howsauth.plugin.dialog.PreJoinAuthListener;
@@ -43,17 +44,19 @@ public final class PlayerListener implements Listener {
     private final AuthManager authManager;
     private final SessionStore sessions;
     private final FailProtection failProtection;
+    private final TwoFactorAuth twoFactor;
     // 活跃的提醒 BossBar：登录成功/玩家退出时立即隐藏（不等下一个任务周期）
     private final Map<UUID, net.kyori.adventure.bossbar.BossBar> reminderBars = new ConcurrentHashMap<>();
     // 活跃的提醒任务：重新挂起（reload）时取消旧任务，避免新旧任务并行重复提醒
     private final Map<UUID, ScheduledTask> reminderTasks = new ConcurrentHashMap<>();
 
     public PlayerListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions,
-                          FailProtection failProtection) {
+                          FailProtection failProtection, TwoFactorAuth twoFactor) {
         this.plugin = plugin;
         this.authManager = authManager;
         this.sessions = sessions;
         this.failProtection = failProtection;
+        this.twoFactor = twoFactor;
     }
 
     // 在玩家加入世界前拦截：踢出期玩家、同一 IP 账号数量超限
@@ -169,7 +172,7 @@ public final class PlayerListener implements Listener {
             }
             authManager.autoLogin(player);
             // 已绑定 2FA（pre-join 弹窗未覆盖时的回退）：等待验证码，登录收尾与传送延迟到 /2fa 验证完成
-            boolean pending2fa = authManager.isPending2fa(player.getUniqueId());
+            boolean pending2fa = twoFactor.isPending(player.getUniqueId());
             if (pending2fa) {
                 // 未通过 2FA 不算登录成功：与挂起流程一致（旁观保护 + 周期提醒 + 超时）
                 suspend(player, "login.need_2fa", true);
@@ -189,7 +192,7 @@ public final class PlayerListener implements Listener {
                     Debug.log("flow", "join %s: account branch, login session hit", player.getName());
                 }
                 authManager.autoLogin(player);
-                if (authManager.isPending2fa(player.getUniqueId())) {
+                if (twoFactor.isPending(player.getUniqueId())) {
                     // 已绑定 2FA（pre-join 弹窗未覆盖时的回退）：等待验证码，传送由 /2fa 验证完成流程处理
                     suspend(player, "login.need_2fa", true);
                 } else {
@@ -287,7 +290,7 @@ public final class PlayerListener implements Listener {
             String ip = AuthManager.clientIp(player);
             // 仅 2FA 会话命中（同 IP 且未过期）时免验证码登录：无密钥账户否则会因
             // requires2faAtLogin 判空短路被 autoLogin 免密直入（认证绕过），必须显式判定
-            if (authManager.has2faSession(uuid, ip)) {
+            if (twoFactor.hasSession(uuid, ip)) {
                 // 走到这里说明 login.session 未命中，出生点在保护位置，登录后须传送回退出位置
                 if (Debug.on()) {
                     Debug.log("flow", "auth flow %s: passwordless 2FA session hit, auto login", player.getName());
@@ -299,8 +302,8 @@ public final class PlayerListener implements Listener {
             }
             // 仅已绑定验证器的账户进入待验证码状态：无凭据账户（无密码+无2FA+非正版）无码可验，
             // 不设待验证状态，提示自然落到 authPromptKey 的 passwordless_no_auth（联系管理员）
-            if (authManager.hasTotpSecret(uuid)) {
-                authManager.addPending2fa(uuid);
+            if (twoFactor.hasTotpSecret(uuid)) {
+                twoFactor.markPending(uuid);
             }
         }
         // 无可用登录方式（reject-no-auth-account=false 放行进入的兜底场景，无凭据永远验不过）：
@@ -325,7 +328,7 @@ public final class PlayerListener implements Listener {
      */
     private String authPromptKey(UUID uuid, boolean needsLogin) {
         if (!needsLogin) return "listener.please_register";
-        if (authManager.isPending2fa(uuid)) return "login.need_2fa";
+        if (twoFactor.isPending(uuid)) return "login.need_2fa";
         return authManager.isPasswordless(uuid)
                 ? (authManager.hasNoUsableLoginMethod(uuid)
                         ? "login.passwordless_no_auth" : "login.passwordless_prompt")
@@ -456,7 +459,7 @@ public final class PlayerListener implements Listener {
         // 会话命中（免输密码）的玩家直接在退出位置出生，避免后续传送
         // 登录需 2FA 的除外：验证完成前不放行到退出位置（/2fa 验证后再传送）；
         // 2FA 会话命中（同 IP 且未过期）视同已完成验证
-        if (uuid != null && authManager.hasSession(uuid, ip) && !authManager.requires2faAtLogin(uuid, ip)) {
+        if (uuid != null && authManager.hasSession(uuid, ip) && !twoFactor.requiresAtLogin(uuid, ip)) {
             Location logoutLoc = authManager.getLogoutLocation(uuid);
             if (logoutLoc != null) {
                 if (Debug.on()) {

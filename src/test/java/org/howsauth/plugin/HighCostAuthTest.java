@@ -73,10 +73,10 @@ class HighCostAuthTest {
         assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, changed, ip), "the new password must log in");
 
         // 2FA 全链路（生产强度哈希不参与 TOTP，但绑定/验证走真实代码路径）
-        String secret = auth.setup2fa(player);
+        String secret = env.twoFactor().setup(player);
         assertNotNull(secret, "setup must return a temporary secret");
-        assertTrue(auth.confirm2fa(player, env.totpCode(secret)), "a valid code must confirm the 2FA setup");
-        assertTrue(auth.has2fa(uuid), "2FA must be active after binding");
+        assertTrue(env.twoFactor().confirm(player, env.totpCode(secret)), "a valid code must confirm the 2FA setup");
+        assertTrue(env.twoFactor().has2fa(uuid), "2FA must be active after binding");
         assertEquals(LoginResult.NEED_2FA, env.loginBlocking(uuid, changed, ip), "login must require 2FA after binding");
         assertTrue(auth.verify2faConfig(uuid, env.totpCode(secret), ip), "a valid 2FA code must pass");
 

@@ -48,7 +48,7 @@ public final class DowngradeAccountCommand implements BasicCommand {
         }
         UUID premiumUuid = player.getUniqueId();
         // 降级后离线账号须仍有登录手段：密码或 2FA 密钥，否则账号将被锁死
-        if (authManager.isPasswordless(premiumUuid) && !authManager.hasTotpSecret(premiumUuid)) {
+        if (authManager.isPasswordless(premiumUuid) && !plugin.twoFactor().hasTotpSecret(premiumUuid)) {
             player.sendMessage(I18n.msg("downgrade.need_login_method", player));
             return;
         }
