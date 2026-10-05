@@ -321,42 +321,37 @@ public final class MockBukkitHarness implements AutoCloseable {
     }
 
     /**
-     * 补 AsyncScheduler#cancel：真实 MockBukkit 的 PaperScheduledTask.cancel 抛 UnimplementedOperationException，
-     * 使守卫任务的 cancel（PendingPearlManager.shutdown 取消清理/落盘任务）失败而连带 shutdown 崩掉；
-     * 这里委托真实调度器执行任务体，仅把返回的取消句柄替换为安全实现，保留原有调度时序。
-     */
-    private static final class TestAsyncScheduler implements AsyncScheduler {
-        private final AsyncScheduler delegate;
-
-        private TestAsyncScheduler(AsyncScheduler delegate) {
-            this.delegate = delegate;
-        }
+         * 补 AsyncScheduler#cancel：真实 MockBukkit 的 PaperScheduledTask.cancel 抛 UnimplementedOperationException，
+         * 使守卫任务的 cancel（PendingPearlManager.shutdown 取消清理/落盘任务）失败而连带 shutdown 崩掉；
+         * 这里委托真实调度器执行任务体，仅把返回的取消句柄替换为安全实现，保留原有调度时序。
+         */
+        private record TestAsyncScheduler(AsyncScheduler delegate) implements AsyncScheduler {
 
         @Override
-        @NotNull
-        public ScheduledTask runNow(@NotNull Plugin plugin, @NotNull Consumer<ScheduledTask> task) {
-            return new CancelSafeTask(delegate.runNow(plugin, task));
-        }
+            @NotNull
+            public ScheduledTask runNow(@NotNull Plugin plugin, @NotNull Consumer<ScheduledTask> task) {
+                return new CancelSafeTask(delegate.runNow(plugin, task));
+            }
 
-        @Override
-        @NotNull
-        public ScheduledTask runDelayed(@NotNull Plugin plugin, @NotNull Consumer<ScheduledTask> task,
-                                        long delay, @NotNull TimeUnit unit) {
-            return new CancelSafeTask(delegate.runDelayed(plugin, task, delay, unit));
-        }
+            @Override
+            @NotNull
+            public ScheduledTask runDelayed(@NotNull Plugin plugin, @NotNull Consumer<ScheduledTask> task,
+                                            long delay, @NotNull TimeUnit unit) {
+                return new CancelSafeTask(delegate.runDelayed(plugin, task, delay, unit));
+            }
 
-        @Override
-        @NotNull
-        public ScheduledTask runAtFixedRate(@NotNull Plugin plugin, @NotNull Consumer<ScheduledTask> task,
-                                            long initialDelay, long period, @NotNull TimeUnit unit) {
-            return new CancelSafeTask(delegate.runAtFixedRate(plugin, task, initialDelay, period, unit));
-        }
+            @Override
+            @NotNull
+            public ScheduledTask runAtFixedRate(@NotNull Plugin plugin, @NotNull Consumer<ScheduledTask> task,
+                                                long initialDelay, long period, @NotNull TimeUnit unit) {
+                return new CancelSafeTask(delegate.runAtFixedRate(plugin, task, initialDelay, period, unit));
+            }
 
-        @Override
-        public void cancelTasks(@NotNull Plugin plugin) {
-            delegate.cancelTasks(plugin);
+            @Override
+            public void cancelTasks(@NotNull Plugin plugin) {
+                delegate.cancelTasks(plugin);
+            }
         }
-    }
 
     /** 包装真实任务句柄：取消退化为安全空操作（MockBukkit 未实现 cancel），其余状态透传 */
     private record CancelSafeTask(ScheduledTask delegate) implements ScheduledTask {
