@@ -28,7 +28,7 @@ public final class ChangePasswordCommand implements BasicCommand {
             return;
         }
 
-        if (!authManager.isLoggedIn(player)) {
+        if (!plugin.sessions().isLoggedIn(player)) {
             player.sendMessage(I18n.msg("listener.must_login", player));
             return;
         }

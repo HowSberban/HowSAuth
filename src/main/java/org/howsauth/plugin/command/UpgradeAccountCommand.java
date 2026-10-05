@@ -33,7 +33,7 @@ public final class UpgradeAccountCommand implements BasicCommand {
             sender.sendMessage(I18n.msg("command.player_only"));
             return;
         }
-        if (!authManager.isLoggedIn(player)) {
+        if (!plugin.sessions().isLoggedIn(player)) {
             player.sendMessage(I18n.msg("listener.must_login", player));
             return;
         }

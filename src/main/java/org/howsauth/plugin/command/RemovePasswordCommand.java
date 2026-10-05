@@ -4,6 +4,7 @@ import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.SessionStore;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
@@ -16,9 +17,11 @@ import org.jetbrains.annotations.NotNull;
 public final class RemovePasswordCommand implements BasicCommand {
 
     private final AuthManager authManager;
+    private final SessionStore sessions;
 
-    public RemovePasswordCommand(AuthManager authManager) {
+    public RemovePasswordCommand(AuthManager authManager, SessionStore sessions) {
         this.authManager = authManager;
+        this.sessions = sessions;
     }
 
     @Override
@@ -29,7 +32,7 @@ public final class RemovePasswordCommand implements BasicCommand {
             return;
         }
 
-        if (!authManager.isLoggedIn(player)) {
+        if (!sessions.isLoggedIn(player)) {
             player.sendMessage(I18n.msg("listener.must_login", player));
             return;
         }

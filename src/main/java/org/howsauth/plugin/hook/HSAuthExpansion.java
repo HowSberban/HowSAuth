@@ -41,7 +41,7 @@ public final class HSAuthExpansion extends PlaceholderExpansion {
     public @Nullable String onPlaceholderRequest(Player player, @NotNull String params) {
         if (player == null) return "";
         return switch (params.toLowerCase(Locale.ROOT)) {
-            case "is_logged_in" -> plugin.getAuthManager().isLoggedIn(player) ? "yes" : "no";
+            case "is_logged_in" -> plugin.sessions().isLoggedIn(player) ? "yes" : "no";
             case "is_registered", "has_account" -> plugin.getAuthManager().hasAccount(player) ? "yes" : "no";
             default -> null;
         };

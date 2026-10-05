@@ -6,6 +6,7 @@ import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import com.github.retrooper.packetevents.PacketEvents;
 import org.howsauth.plugin.api.HSAuthApi;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.command.*;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
@@ -71,7 +72,7 @@ public class HowSAuth extends JavaPlugin {
                 && DialogManager.isSupported()
                 && (preJoinSupported() || configManager.dialogAllowRiskyVersions())) {
             this.dialogManager = new DialogManager(this);
-            this.preJoinAuthListener = new PreJoinAuthListener(this, authManager, dialogManager);
+            this.preJoinAuthListener = new PreJoinAuthListener(this, authManager, authManager.sessions(), dialogManager);
             getServer().getPluginManager().registerEvents(preJoinAuthListener, this);
         } else if (configManager.loginDialogEnabled()) {
             getLogger().warning(I18n.get("log.dialog_unsupported"));
@@ -113,7 +114,7 @@ public class HowSAuth extends JavaPlugin {
         // （插件禁用后无法注册异步保存任务）
         if (authManager != null) {
             for (Player player : Bukkit.getOnlinePlayers()) {
-                if (authManager.isLoggedIn(player)) {
+                if (sessions().isLoggedIn(player)) {
                     authManager.updateLogoutLocationCache(player);
                 }
             }
@@ -146,11 +147,11 @@ public class HowSAuth extends JavaPlugin {
         manager.registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             Commands commands = event.registrar();
             commands.register("register", I18n.get("command.desc.register"), List.of("reg"), new RegisterCommand(this, authManager));
-            commands.register("login", I18n.get("command.desc.login"), List.of("l"), new LoginCommand(authManager));
+            commands.register("login", I18n.get("command.desc.login"), List.of("l"), new LoginCommand(authManager, authManager.sessions()));
             commands.register("changepassword", I18n.get("command.desc.changepassword"), List.of("changepw", "cp"), new ChangePasswordCommand(this, authManager));
             commands.register("addpassword", I18n.get("command.desc.addpassword"), List.of("addpw"), new AddPasswordCommand(this, authManager));
-            commands.register("removepassword", I18n.get("command.desc.removepassword"), List.of("removepw", "rmpw"), new RemovePasswordCommand(authManager));
-            commands.register("logout", I18n.get("command.desc.logout"), List.of(), new LogoutCommand(authManager));
+            commands.register("removepassword", I18n.get("command.desc.removepassword"), List.of("removepw", "rmpw"), new RemovePasswordCommand(authManager, authManager.sessions()));
+            commands.register("logout", I18n.get("command.desc.logout"), List.of(), new LogoutCommand(authManager, authManager.sessions()));
             commands.register("upgrade", I18n.get("command.desc.upgrade"), List.of(), new UpgradeAccountCommand(this, authManager));
             commands.register("downgrade", I18n.get("command.desc.downgrade"), List.of(), new DowngradeAccountCommand(this, authManager));
             UnregisterCommand unregisterCommand;
@@ -165,20 +166,20 @@ public class HowSAuth extends JavaPlugin {
     }
 
     private void registerListeners() {
-        playerListener = new PlayerListener(this, authManager);
+        playerListener = new PlayerListener(this, authManager, authManager.sessions());
         getServer().getPluginManager().registerEvents(playerListener, this);
         // 末影珍珠保管：独立监听器（接管飞行珍珠，登录后按配置返还）
         pendingPearlManager = new PendingPearlManager(this);
         getServer().getPluginManager().registerEvents(pendingPearlManager, this);
         // 加入/退出消息：独立监听器（模板替换 + 未登录隐藏 + 登录成功补发）
-        JoinQuitMessageService joinQuitMessageService = new JoinQuitMessageService(authManager, configManager);
+        JoinQuitMessageService joinQuitMessageService = new JoinQuitMessageService(authManager.sessions(), configManager);
         getServer().getPluginManager().registerEvents(joinQuitMessageService, this);
     }
 
     /** 注册 PacketEvents 数据包监听器（背包保护：拦截容器/装备同步包） */
     private void registerPacketListener() {
         PacketEvents.getAPI().getEventManager()
-                .registerListener(new InventoryPacketListener(authManager, configManager));
+                .registerListener(new InventoryPacketListener(authManager.sessions(), configManager));
     }
 
     /**
@@ -208,6 +209,11 @@ public class HowSAuth extends JavaPlugin {
 
     public AuthManager getAuthManager() {
         return authManager;
+    }
+
+    /** 会话状态中心（登录态/认证标记/过渡标记），AuthManager 拆分后的协作服务 */
+    public SessionStore sessions() {
+        return authManager.sessions();
     }
 
     public PlayerListener getPlayerListener() {
@@ -264,7 +270,7 @@ public class HowSAuth extends JavaPlugin {
      */
     private void rePendOnlinePlayers() {
         for (Player player : Bukkit.getOnlinePlayers()) {
-            if (authManager.isLoggedIn(player)) continue;
+            if (sessions().isLoggedIn(player)) continue;
             playerListener.beginAuthFlow(player);
         }
     }

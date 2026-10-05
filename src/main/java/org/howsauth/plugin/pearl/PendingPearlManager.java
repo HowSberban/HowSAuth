@@ -142,7 +142,7 @@ public final class PendingPearlManager implements Listener {
         if (!plugin.getConfigManager().pearlEnabled()) return;
         if (event.getCause() != PlayerTeleportEvent.TeleportCause.ENDER_PEARL) return;
         Player player = event.getPlayer();
-        if (plugin.getAuthManager().isLoggedIn(player)) return;
+        if (plugin.sessions().isLoggedIn(player)) return;
         event.setCancelled(true);
         Location to = event.getTo();
         World world = to.getWorld();
@@ -254,7 +254,7 @@ public final class PendingPearlManager implements Listener {
 
     private boolean isAuthenticatedOwner(UUID owner) {
         Player player = Bukkit.getPlayer(owner);
-        return player != null && plugin.getAuthManager().isLoggedIn(player);
+        return player != null && plugin.sessions().isLoggedIn(player);
     }
 
     private UUID readOwnerUuid(EnderPearl pearl) {

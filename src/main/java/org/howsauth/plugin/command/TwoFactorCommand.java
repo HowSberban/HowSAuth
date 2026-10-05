@@ -86,7 +86,7 @@ public final class TwoFactorCommand {
             player.sendMessage(msg(player, "2fa.feature_disabled"));
             return true;
         }
-        if (!authManager.isLoggedIn(player)) {
+        if (!plugin.sessions().isLoggedIn(player)) {
             player.sendMessage(msg(player, "listener.must_login"));
             return true;
         }

@@ -131,12 +131,12 @@ public final class HSAuthApi {
 
     /** 玩家是否已登录 */
     public boolean isAuthenticated(@NotNull Player player) {
-        return authManager.isLoggedIn(player);
+        return authManager.sessions().isLoggedIn(player);
     }
 
     /** 玩家是否已登录（按 UUID 查询，玩家离线时返回 false） */
     public boolean isAuthenticated(@NotNull UUID uuid) {
-        return authManager.isLoggedIn(uuid);
+        return authManager.sessions().isLoggedIn(uuid);
     }
 
     /** 玩家是否已注册 */
@@ -173,7 +173,7 @@ public final class HSAuthApi {
             }
             return false;
         }
-        if (!player.isOnline() || authManager.isLoggedIn(player)) {
+        if (!player.isOnline() || authManager.sessions().isLoggedIn(player)) {
             if (Debug.on()) {
                 Debug.log("api", "force login %s: skipped (offline or already logged in)", player.getName());
             }

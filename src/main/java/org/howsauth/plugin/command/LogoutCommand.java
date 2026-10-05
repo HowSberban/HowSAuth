@@ -4,6 +4,7 @@ import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.SessionStore;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
@@ -11,9 +12,11 @@ import org.jetbrains.annotations.NotNull;
 public final class LogoutCommand implements BasicCommand {
 
     private final AuthManager authManager;
+    private final SessionStore sessions;
 
-    public LogoutCommand(AuthManager authManager) {
+    public LogoutCommand(AuthManager authManager, SessionStore sessions) {
         this.authManager = authManager;
+        this.sessions = sessions;
     }
 
     @Override
@@ -24,7 +27,7 @@ public final class LogoutCommand implements BasicCommand {
             return;
         }
 
-        if (!authManager.isLoggedIn(player)) {
+        if (!sessions.isLoggedIn(player)) {
             player.sendMessage(I18n.msg("logout.not_logged_in", player));
             return;
         }

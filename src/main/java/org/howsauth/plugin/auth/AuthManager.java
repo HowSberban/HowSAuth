@@ -42,15 +42,7 @@ public final class AuthManager {
     private final PlayerDataManager dataManager;
     private final ConfigManager configManager;
     private final AuthEvents events;
-    // 线程安全集合，用于 Folia 多线程区域化调度
-    private final Set<UUID> loggedIn = ConcurrentHashMap.newKeySet();
-    // 本次连接是否完成过认证（登录/注册/免密）：供加入/退出消息、退出位置保存等会话级判定使用。
-    // 与 loggedIn 的职责划分：loggedIn 表示实时登录态（登录前防护、命令权限、免密判定），
-    // 强制登出/注销会立即失效它；本标记只记录"本次连接是否认证过"，不随提前失效而清除，
-    // 仅在退出清理（clearSession）时移除
-    private final Set<UUID> authenticatedThisConnection = ConcurrentHashMap.newKeySet();
-    // 标记密码异步校验进行中的玩家：防止快速重复提交 /login 触发重复校验、重复登录事件与消息
-    private final Set<UUID> verifying = ConcurrentHashMap.newKeySet();
+    private final SessionStore sessions;
     // 双因素认证：密码已通过但尚未完成 TOTP 验证的玩家（未完成前不算已登录）
     private final Set<UUID> pending2fa = ConcurrentHashMap.newKeySet();
     // 已消费的 2FA 时间片计数器：登录验证通过后记录，拒绝同周期或更旧验证码重放
@@ -66,19 +58,10 @@ public final class AuthManager {
     private final Map<UUID, String> pending2faSecret = new ConcurrentHashMap<>();
     // 临时密钥的创建时间戳：用于按配置时长过期清理（与 pending2faSecret 一一对应）
     private final Map<UUID, Long> pending2faSecretCreatedAt = new ConcurrentHashMap<>();
-    // 登录后传送过渡期：玩家已登录但还在传送到退出位置，期间保持无敌
-    private final Set<UUID> invulnerablePending = ConcurrentHashMap.newKeySet();
-    // 标记当前会话被设为旁观的玩家：onLoginSuccess 仅对这些玩家恢复游戏模式，
-    // 避免对免密登录（IP/正版）的玩家做不必要的 setGameMode
-    private final Set<UUID> spectatorPending = ConcurrentHashMap.newKeySet();
     // 暴力破解防护：记录失败次数[0]/最后失败时间[1]和踢出到期时间
     // failedAttempts 跨连接保留，超过 reset-seconds 未再失败则过期清空
     private final Map<UUID, long[]> failedAttempts = new ConcurrentHashMap<>();
     private final Map<UUID, Long> kickUntil = new ConcurrentHashMap<>();
-    // 标记待删除原版数据的玩家（unregister 后等待 PlayerQuitEvent 触发时删除 .dat）
-    private final Set<UUID> pendingDatDelete = ConcurrentHashMap.newKeySet();
-    // 记录最近注销的玩家时间戳：5 秒内拒绝重连，确保 .dat 删除完成
-    private final Map<UUID, Long> recentUnregister = new ConcurrentHashMap<>();
     // 待升级离线账号（离线 UUID）：玩家执行升级指令后标记，下次登录时尝试正版验证
     private final Set<UUID> pendingUpgrade = ConcurrentHashMap.newKeySet();
     // 正版账号降级标记（内存，不持久化）：下次进入时迁移数据到离线 UUID
@@ -87,13 +70,9 @@ public final class AuthManager {
     // 标记仅代表当前连接会话，正常路径由退出清理；未进世界即断开的连接无退出事件，靠 TTL 过期兜底，
     // TTL 复用回退确认窗口（premium.fallback.cache-seconds）
     private final Map<UUID, Long> premiumFallback = new ConcurrentHashMap<>();
-    // 登录超时任务启动时间戳：用于判断超时任务是否为最新（重启时旧任务自动失效）
-    private final Map<UUID, Long> loginTimeoutStartedAt = new ConcurrentHashMap<>();
     private volatile Consumer<UUID> unregisterConfirmInvalidator;
     // 缓存世界结构类型：26.1+ 采用新结构（players/data + dimensions/minecraft/overworld）
     private final boolean newWorldStructure;
-    // 注销后拒绝重连时长（毫秒）
-    private static final long UNREGISTER_RECONNECT_DELAY = 5000L;
     // failedAttempts 容量阈值：超过时清理未达阈值的失败计数，防止攻击者用大量用户名
     // 各失败未达阈值导致 Map 无界增长（失败计数跨连接保留后不再随退出清理）
     private static final int FAILED_ATTEMPTS_CAP = 1000;
@@ -103,12 +82,21 @@ public final class AuthManager {
         this.dataManager = dataManager;
         this.configManager = configManager;
         this.events = new AuthEvents(plugin);
+        this.sessions = new SessionStore();
         this.newWorldStructure = detectNewWorldStructure();
         // 周期清理过期的 2FA 临时密钥与登录/2FA 会话等状态（懒清理兜底，随插件关闭统一取消）
         Bukkit.getAsyncScheduler().runAtFixedRate(plugin, task -> {
             cleanupExpired2faSecrets();
             cleanupExpiredStates();
         }, 1, 30, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 会话状态中心：登录态、本次连接认证标记、校验中/过渡待处理标记。
+     * 拆分后由本类持有组装，调用方直接使用该服务（AuthManager 不再提供转发）。
+     */
+    public SessionStore sessions() {
+        return sessions;
     }
 
     /**
@@ -255,7 +243,7 @@ public final class AuthManager {
             return;
         }
         // 重入保护：已有一次密码校验进行中时静默忽略本次，避免重复校验、重复登录事件与消息
-        if (!verifying.add(uuid)) {
+        if (!sessions.beginVerifying(uuid)) {
             return;
         }
         final PlayerData snapshot = data;
@@ -267,10 +255,10 @@ public final class AuthManager {
             String alignedHash = ok ? alignedPasswordHash(snapshot, password) : null;
             // 状态变更需回到玩家区域线程（Folia 线程安全）
             player.getScheduler().run(plugin, task2 -> {
-                verifying.remove(uuid);
+                sessions.endVerifying(uuid);
                 // 回调期间被强制登录或账号被注销（管理员操作与异步校验的竞态）：丢弃本次结果
                 // 避免二次登录收尾（重复事件/覆盖会话时间）与注销后的幽灵登录
-                if (loggedIn.contains(uuid) || dataManager.getPlayer(uuid) == null) {
+                if (sessions.isLoggedIn(uuid) || dataManager.getPlayer(uuid) == null) {
                     return;
                 }
                 if (!ok) {
@@ -809,7 +797,7 @@ public final class AuthManager {
 
     /** 强制登出玩家（无需玩家在线，清除登录状态，并使登录会话与 2FA 会话失效） */
     public boolean forceLogout(UUID uuid) {
-        if (!loggedIn.remove(uuid)) return false;
+        if (!sessions.invalidateLoggedIn(uuid)) return false;
         if (Debug.on()) {
             Debug.log("auth", "force logout: %s (live login state invalidated, connection flag kept)", uuid);
         }
@@ -1046,15 +1034,15 @@ public final class AuthManager {
             return false;
         }
         dataManager.removePlayer(uuid);
-        loggedIn.remove(uuid);
+        sessions.invalidateLoggedIn(uuid);
         pending2fa.remove(uuid);
         clearPending2faSecret(uuid);
         // 防重放计数一并清理：残留计数会误拒重绑定新密钥后的正确验证码（counter 单调消费）
         used2faCounters.remove(uuid);
         failedAttempts.remove(uuid);
         kickUntil.remove(uuid);
-        invulnerablePending.remove(uuid);
-        spectatorPending.remove(uuid);
+        sessions.removeInvulnerablePending(uuid);
+        sessions.consumeSpectatorPending(uuid);
         pendingUpgrade.remove(uuid);
         pendingDowngrade.remove(uuid);
         premiumFallback.remove(uuid);
@@ -1063,14 +1051,14 @@ public final class AuthManager {
         // 根据配置决定是否删除 Minecraft 原版玩家数据（player.dat）
         if (configManager.realUnreg()) {
             // 记录注销时间，5 秒内拒绝重连，确保 .dat 删除完成
-            recentUnregister.put(uuid, System.currentTimeMillis());
+            sessions.markRecentUnregister(uuid);
             if (Bukkit.getPlayer(uuid) != null) {
                 // 玩家在线：标记后由 PlayerQuitEvent 删除（避免文件锁冲突）
                 if (Debug.on()) {
                     Debug.log("auth", "unregister %s: account removed, vanilla data delete deferred to quit",
                             uuid.toString().substring(0, 8));
                 }
-                pendingDatDelete.add(uuid);
+                sessions.addPendingDatDelete(uuid);
             } else {
                 // 玩家离线：无文件锁，直接删除
                 if (Debug.on()) {
@@ -1093,21 +1081,12 @@ public final class AuthManager {
 
     /** 检查玩家是否在注销后的拒绝重连期内（5 秒） */
     public boolean isRecentlyUnregistered(UUID uuid) {
-        Long time = recentUnregister.get(uuid);
-        if (time == null) return false;
-        if (System.currentTimeMillis() - time >= UNREGISTER_RECONNECT_DELAY) {
-            recentUnregister.remove(uuid);
-            return false;
-        }
-        return true;
+        return sessions.isRecentlyUnregistered(uuid);
     }
 
     /** 获取拒绝重连剩余秒数 */
     public long getRecentUnregisterRemaining(UUID uuid) {
-        Long time = recentUnregister.get(uuid);
-        if (time == null) return 0;
-        long remaining = UNREGISTER_RECONNECT_DELAY - (System.currentTimeMillis() - time);
-        return remaining > 0 ? (remaining + 999) / 1000 : 0;
+        return sessions.getRecentUnregisterRemaining(uuid);
     }
 
     /**
@@ -1117,7 +1096,7 @@ public final class AuthManager {
      * 5 秒内持续尝试，确保服务器完成保存后能可靠删除。
      */
     public void tryDeletePlayerDataOnQuit(UUID uuid) {
-        if (!pendingDatDelete.remove(uuid)) return;
+        if (!sessions.consumePendingDatDelete(uuid)) return;
         if (Debug.on()) {
             Debug.log("db", "delete vanilla data on quit: %s queued", uuid.toString().substring(0, 8));
         }
@@ -1262,11 +1241,7 @@ public final class AuthManager {
 
     /** 标记玩家为已登录：置位实时登录态与本次连接认证标记，清理双因素待验证、失败计数、踢出记录 */
     private void markLoggedIn(UUID uuid) {
-        loggedIn.add(uuid);
-        authenticatedThisConnection.add(uuid);
-        if (Debug.on()) {
-            Debug.log("auth", "authenticated: %s (live login state + connection flag set)", uuid);
-        }
+        sessions.markLoggedIn(uuid);
         pending2fa.remove(uuid);
         failedAttempts.remove(uuid);
         kickUntil.remove(uuid);
@@ -1278,51 +1253,21 @@ public final class AuthManager {
      */
     public void clearSession(Player player) {
         UUID uuid = player.getUniqueId();
-        if (Debug.on()) {
-            Debug.log("auth", "clear session: %s (authenticatedThisConnection was %s)", uuid,
-                    authenticatedThisConnection.contains(uuid));
-        }
         invalidateUnregisterConfirm(uuid);
-        loggedIn.remove(uuid);
-        // 本次连接认证标记随连接结束失效（晚于加入/退出消息与退出位置保存的判定）
-        authenticatedThisConnection.remove(uuid);
-        // 清除密码校验进行中标记（玩家在校验完成前退出时，异步回调的 player 调度不会执行，需在此兜底清理）
-        verifying.remove(uuid);
+        // 会话级状态（登录态/认证标记/校验中/过渡标记/超时标记）统一由 SessionStore 清理；
+        // 其中认证标记随连接结束失效，须晚于加入/退出消息与退出位置保存的判定
+        sessions.clear(uuid);
         // 清除双因素认证会话状态（未完成验证即退出）
         pending2fa.remove(uuid);
         clearPending2faSecret(uuid);
-        // 清除传送过渡期标记，防止下次登录时错误无敌
-        invulnerablePending.remove(uuid);
-        // 清除旁观标记（未登录退出时防止下次登录误恢复游戏模式）
-        spectatorPending.remove(uuid);
         // 清除正版回退标记（会话级状态：本次连接要求密码登录，退出即失效，
         // 防止残留标记使下次验证成功的连接仍误走密码路径）
         premiumFallback.remove(uuid);
-        // 清除超时任务标记（玩家已下线，旧任务无意义）
-        loginTimeoutStartedAt.remove(uuid);
         // 注意：不清除失败计数与踢出记录（failedAttempts / kickUntil）。
         // 玩家被踢出或退出会触发 PlayerQuitEvent → 本方法；若在此清除，
         // 攻击者可通过"失败1-2次→重连"重置连续失败计数、或借被踢重连绕过踢出期，
         // 使 fail-protection 的连续失败阈值与踢出期保护失效。
         // 两者均为跨连接的暴力破解防护，须保留至达到阈值/登录成功/到期，由对应逻辑清理。
-    }
-
-    // Status checks
-    public boolean isLoggedIn(Player player) {
-        return loggedIn.contains(player.getUniqueId());
-    }
-
-    public boolean isLoggedIn(UUID uuid) {
-        return loggedIn.contains(uuid);
-    }
-
-    /**
-     * 本次连接是否完成过认证（登录/注册/免密）
-     * 与 isLoggedIn 的区别：后者是实时登录态，强制登出/注销会提前失效；
-     * 本方法描述"本次连接认证过"这一历史事实，供加入/退出消息、退出位置保存等会话级判定使用
-     */
-    public boolean hasAuthenticatedThisConnection(UUID uuid) {
-        return authenticatedThisConnection.contains(uuid);
     }
 
     public boolean hasAccount(Player player) {
@@ -1335,15 +1280,12 @@ public final class AuthManager {
 
     /** 记录登录超时任务启动时间，返回当前时间戳（用于触发时判断是否为最新任务） */
     public long markLoginTimeoutStart(UUID uuid) {
-        long now = System.currentTimeMillis();
-        loginTimeoutStartedAt.put(uuid, now);
-        return now;
+        return sessions.markLoginTimeoutStart(uuid);
     }
 
     /** 判断指定时间戳是否为最新的超时任务启动时间（旧任务自动失效） */
     public boolean isLatestLoginTimeout(UUID uuid, long startedAt) {
-        Long latest = loginTimeoutStartedAt.get(uuid);
-        return latest != null && latest == startedAt;
+        return sessions.isLatestLoginTimeout(uuid, startedAt);
     }
 
     // 暴力破解防护：检查是否处于踢出期
@@ -1382,7 +1324,7 @@ public final class AuthManager {
     public void cleanupExpiredStates() {
         long now = System.currentTimeMillis();
         int before = kickUntil.size() + failedAttempts.size() + twoFaSessions.size()
-                + loginSessions.size() + recentUnregister.size();
+                + loginSessions.size() + sessions.recentUnregisterCount();
         kickUntil.values().removeIf(until -> until <= now);
         evictStaleFailures(now);
         twoFaSessions.entrySet().removeIf(e -> now > e.getValue().expiresAt());
@@ -1390,9 +1332,9 @@ public final class AuthManager {
         long sessionMs = TimeUnit.MINUTES.toMillis(configManager.sessionExpireMinutes());
         loginSessions.entrySet().removeIf(e -> now - e.getValue().establishedAt() >= sessionMs);
         // 清理已过期的注销拒绝重连记录
-        recentUnregister.entrySet().removeIf(entry -> now - entry.getValue() >= UNREGISTER_RECONNECT_DELAY);
+        sessions.cleanupExpired(now);
         int removed = before - (kickUntil.size() + failedAttempts.size() + twoFaSessions.size()
-                + loginSessions.size() + recentUnregister.size());
+                + loginSessions.size() + sessions.recentUnregisterCount());
         if (removed > 0 && Debug.on()) {
             Debug.log("session", "cleanup expired states: %s entries removed", removed);
         }
@@ -1435,7 +1377,7 @@ public final class AuthManager {
      *  登录过渡期（传送或游戏模式恢复尚未落地）跳过：此时读到的是保护出生点与临时旁观模式，写入会覆盖真实值 */
     private void captureLogoutLocation(PlayerData data, Player player) {
         UUID uuid = player.getUniqueId();
-        if (invulnerablePending.contains(uuid) || spectatorPending.contains(uuid)) {
+        if (sessions.isInvulnerablePending(uuid) || sessions.isSpectatorPending(uuid)) {
             if (Debug.on()) {
                 Debug.log("flow", "skip logout location for %s: login transition pending (teleport/gamemode not settled)", player.getName());
             }
@@ -1460,22 +1402,18 @@ public final class AuthManager {
                 + " spectatorProtection=" + configManager.protectionGamemodeEnabled());
         lines.add("  caches: loginSessions=" + loginSessions.size() + " twoFaSessions=" + twoFaSessions.size()
                 + " pending2fa=" + pending2fa.size() + " pending2faSecret=" + pending2faSecret.size()
-                + " verifying=" + verifying.size() + " used2faCounters=" + used2faCounters.size()
-                + " premiumFallback=" + premiumFallback.size() + " recentUnregister=" + recentUnregister.size()
-                + " pendingDatDelete=" + pendingDatDelete.size() + " failedAttempts=" + failedAttempts.size());
-        lines.add("  pending markers: invulnerable=" + invulnerablePending.size()
-                + " spectator=" + spectatorPending.size() + " loginTimeout=" + loginTimeoutStartedAt.size());
+                + " verifying=" + sessions.verifyingCount() + " used2faCounters=" + used2faCounters.size()
+                + " premiumFallback=" + premiumFallback.size() + " recentUnregister=" + sessions.recentUnregisterCount()
+                + " pendingDatDelete=" + sessions.pendingDatDeleteCount() + " failedAttempts=" + failedAttempts.size());
+        lines.add("  pending markers: invulnerable=" + sessions.invulnerablePendingCount()
+                + " spectator=" + sessions.spectatorPendingCount() + " loginTimeout=" + sessions.loginTimeoutStartedCount());
         for (Player player : Bukkit.getOnlinePlayers()) {
             UUID uuid = player.getUniqueId();
             lines.add("  " + player.getName() + "(" + uuid.toString().substring(0, 8) + ")"
-                    + " loggedIn=" + loggedIn.contains(uuid)
-                    + " authenticatedConnection=" + authenticatedThisConnection.contains(uuid)
+                    + sessions.describe(uuid)
                     + " pending2fa=" + pending2fa.contains(uuid)
-                    + " verifying=" + verifying.contains(uuid)
                     + " loginSession=" + loginSessions.containsKey(uuid)
                     + " twoFaSession=" + twoFaSessions.containsKey(uuid)
-                    + " invulnerable=" + invulnerablePending.contains(uuid)
-                    + " spectator=" + spectatorPending.contains(uuid)
                     + " failed=" + failedAttempts.containsKey(uuid)
                     + " kicked=" + isKicked(uuid));
         }
@@ -1495,16 +1433,16 @@ public final class AuthManager {
             return;
         }
         // 标记传送过渡期，保持无敌
-        invulnerablePending.add(player.getUniqueId());
+        sessions.addInvulnerablePending(player.getUniqueId());
         // 异步传送；完成与异常都要移除无敌标记——thenAccept 在 future 异常完成时不执行，
         // 标记一旦残留会让该玩家本次会话永久免伤（onDamage 依据该标记取消伤害）
         player.teleportAsync(loc).whenComplete((success, error) ->
-                invulnerablePending.remove(player.getUniqueId()));
+                sessions.removeInvulnerablePending(player.getUniqueId()));
     }
 
     /** 玩家是否处于传送过渡期（已登录但还在传送，应保持无敌） */
     public boolean isInvulnerablePending(Player player) {
-        return invulnerablePending.contains(player.getUniqueId());
+        return sessions.isInvulnerablePending(player.getUniqueId());
     }
 
     /** 是否为正版账号（premium=1），用于免密登录判断 */
@@ -1705,7 +1643,7 @@ public final class AuthManager {
             if (logoutLoc == null || logoutLoc.getWorld() == null) return;
             if (isBlockSolidBelow(logoutLoc)) return;
         }
-        spectatorPending.add(player.getUniqueId());
+        sessions.addSpectatorPending(player.getUniqueId());
         player.getScheduler().run(plugin, task -> player.setGameMode(org.bukkit.GameMode.SPECTATOR), null);
     }
 
@@ -1738,7 +1676,7 @@ public final class AuthManager {
             // 返还退出时保管的飞行末影珍珠（无记录时为空操作）
             plugin.getPendingPearlManager().returnPearls(player);
             // 仅对被设为旁观的玩家恢复游戏模式
-            if (spectatorPending.remove(player.getUniqueId())) {
+            if (sessions.consumeSpectatorPending(player.getUniqueId())) {
                 PlayerData data = dataManager.getPlayer(player.getUniqueId());
                 // 默认使用服务器默认游戏模式（server.properties 中的 level-default-gamemode）
                 org.bukkit.GameMode mode = org.bukkit.Bukkit.getDefaultGameMode();

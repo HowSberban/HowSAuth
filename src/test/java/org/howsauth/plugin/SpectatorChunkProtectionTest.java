@@ -48,12 +48,12 @@ class SpectatorChunkProtectionTest {
         int cz = logout.getBlockZ() >> 4;
 
         assertFalse(world.isChunkLoaded(cx, cz), "the chosen chunk must start unloaded");
-        assertEquals(0, MockBukkitHarness.collectionSize(env.auth(), "spectatorPending"),
+        assertEquals(0, MockBukkitHarness.collectionSize(env.sessions(), "spectatorPending"),
                 "no spectator flag before the decision");
 
         env.auth().setSpectator(player);
 
-        assertEquals(1, MockBukkitHarness.collectionSize(env.auth(), "spectatorPending"),
+        assertEquals(1, MockBukkitHarness.collectionSize(env.sessions(), "spectatorPending"),
                 "an unloaded chunk must be treated as dangling and force spectator");
         assertFalse(world.isChunkLoaded(cx, cz),
                 "the dangling decision must not load the chunk (no waiting)");

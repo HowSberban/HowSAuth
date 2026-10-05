@@ -16,6 +16,7 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.AuthManager.LoginResult;
+import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.Totp;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
@@ -146,6 +147,11 @@ public final class MockBukkitHarness implements AutoCloseable {
 
     public AuthManager auth() {
         return auth;
+    }
+
+    /** 会话状态中心：AuthManager 拆分后会话标记（登录态/旁观/过渡）由该服务持有 */
+    public SessionStore sessions() {
+        return auth.sessions();
     }
 
     /** 注册一个使用同步实体调度器的玩家（addPasswordAsync 等依赖 player.getScheduler()） */

@@ -11,7 +11,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.howsauth.plugin.api.event.HSAuthLoginEvent;
 import org.howsauth.plugin.api.event.HSAuthRegisterEvent;
-import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.config.ConfigManager;
 
 import java.util.Map;
@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class JoinQuitMessageService implements Listener {
 
-    private final AuthManager authManager;
+    private final SessionStore sessions;
     private final ConfigManager configManager;
 
     // 待补发的加入消息（UUID 做键）：未登录加入时消息被隐藏并暂存，登录成功后原子取出广播；
@@ -35,8 +35,8 @@ public class JoinQuitMessageService implements Listener {
     // 补发时直接广播，无二次替换
     private final Map<UUID, Component> pendingJoinMessages = new ConcurrentHashMap<>();
 
-    public JoinQuitMessageService(AuthManager authManager, ConfigManager configManager) {
-        this.authManager = authManager;
+    public JoinQuitMessageService(SessionStore sessions, ConfigManager configManager) {
+        this.sessions = sessions;
         this.configManager = configManager;
     }
 
@@ -59,7 +59,7 @@ public class JoinQuitMessageService implements Listener {
         if (template != null) {
             event.joinMessage(template);
         }
-        if (authManager.hasAuthenticatedThisConnection(player.getUniqueId()) || !configManager.joinHideUnauthenticated()) {
+        if (sessions.hasAuthenticatedThisConnection(player.getUniqueId()) || !configManager.joinHideUnauthenticated()) {
             return;
         }
         Component hidden = template != null ? template : event.joinMessage();
@@ -85,7 +85,7 @@ public class JoinQuitMessageService implements Listener {
             event.quitMessage(null);
             return;
         }
-        if (!authManager.hasAuthenticatedThisConnection(player.getUniqueId()) && configManager.quitHideUnauthenticated()) {
+        if (!sessions.hasAuthenticatedThisConnection(player.getUniqueId()) && configManager.quitHideUnauthenticated()) {
             event.quitMessage(null);
             return;
         }

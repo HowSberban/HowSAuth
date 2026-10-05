@@ -8,6 +8,7 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.api.event.HSAuthLoginEvent;
 import org.howsauth.plugin.api.event.HSAuthRegisterEvent;
 import org.howsauth.plugin.dialog.PreJoinAuthListener;
@@ -39,14 +40,16 @@ public final class PlayerListener implements Listener {
 
     private final HowSAuth plugin;
     private final AuthManager authManager;
+    private final SessionStore sessions;
     // 活跃的提醒 BossBar：登录成功/玩家退出时立即隐藏（不等下一个任务周期）
     private final Map<UUID, net.kyori.adventure.bossbar.BossBar> reminderBars = new ConcurrentHashMap<>();
     // 活跃的提醒任务：重新挂起（reload）时取消旧任务，避免新旧任务并行重复提醒
     private final Map<UUID, ScheduledTask> reminderTasks = new ConcurrentHashMap<>();
 
-    public PlayerListener(HowSAuth plugin, AuthManager authManager) {
+    public PlayerListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions) {
         this.plugin = plugin;
         this.authManager = authManager;
+        this.sessions = sessions;
     }
 
     // 在玩家加入世界前拦截：踢出期玩家、同一 IP 账号数量超限
@@ -89,8 +92,8 @@ public final class PlayerListener implements Listener {
         }
 
         // 注销后 5 秒内拒绝重连，确保 .dat 删除完成
-        if (authManager.isRecentlyUnregistered(uuid)) {
-            long remaining = authManager.getRecentUnregisterRemaining(uuid);
+        if (sessions.isRecentlyUnregistered(uuid)) {
+            long remaining = sessions.getRecentUnregisterRemaining(uuid);
             if (Debug.on()) {
                 Debug.log("flow", "prelogin reject %s: recently unregistered (%s ms left)", event.getName(), remaining);
             }
@@ -348,7 +351,7 @@ public final class PlayerListener implements Listener {
                 scheduledTask.cancel();
                 return;
             }
-            boolean done = needsLogin ? authManager.isLoggedIn(player) : authManager.hasAccount(player);
+            boolean done = needsLogin ? sessions.isLoggedIn(player) : authManager.hasAccount(player);
             if (done) {
                 reminderTasks.remove(uuid);
                 hideReminderBar(player);
@@ -419,7 +422,7 @@ public final class PlayerListener implements Listener {
         clearReminderBars();
         int suspended = 0;
         for (Player player : Bukkit.getOnlinePlayers()) {
-            if (authManager.isLoggedIn(player)) continue;
+            if (sessions.isLoggedIn(player)) continue;
             suspended++;
             player.getScheduler().run(plugin, task -> beginAuthFlow(player), null);
         }
@@ -506,8 +509,8 @@ public final class PlayerListener implements Listener {
         // Paper 1.20+ 统一调度器 API，兼容 Folia（在实体所在区域调度）
         player.getScheduler().runDelayed(plugin, scheduledTask -> {
             // 非最新任务直接放弃（forceRegister 已重启超时计时）
-            if (!authManager.isLatestLoginTimeout(player.getUniqueId(), startedAt)) return;
-            if (!authManager.isLoggedIn(player) && player.isOnline()) {
+            if (!sessions.isLatestLoginTimeout(player.getUniqueId(), startedAt)) return;
+            if (!sessions.isLoggedIn(player) && player.isOnline()) {
                 if (plugin.getConfigManager().kickOnTimeout()) {
                     player.kick(I18n.msg("listener.login_timeout", player));
                 }
@@ -524,10 +527,10 @@ public final class PlayerListener implements Listener {
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
-        boolean authenticated = authManager.hasAuthenticatedThisConnection(uuid);
+        boolean authenticated = sessions.hasAuthenticatedThisConnection(uuid);
         if (Debug.on()) {
             Debug.log("flow", "quit %s: authenticatedThisConnection=%s loggedIn=%s", player.getName(),
-                    authenticated, authManager.isLoggedIn(player));
+                    authenticated, sessions.isLoggedIn(player));
         }
         // 本次连接已认证的玩家退出时保存退出位置（用于下次登录后传送回来）
         // 未认证玩家不保存：其位置是登录前的保护/出生点，写入会覆盖真实退出位置
@@ -536,7 +539,7 @@ public final class PlayerListener implements Listener {
         }
         // 退出时不在登录态（从未认证，或登录态被强制登出/注销提前失效）：清理可能残留的登录失明，
         // 避免效果随 .dat 存档到下次会话（与位置保存是两个独立判定，不共用条件）
-        if (!authManager.isLoggedIn(player)) {
+        if (!sessions.isLoggedIn(player)) {
             clearLoginBlindness(player);
         }
         // 立即清理提醒 BossBar：玩家调度器随退出 retired，任务内的清理分支不再执行
@@ -566,7 +569,7 @@ public final class PlayerListener implements Listener {
         if (!plugin.getConfigManager().preventMove()) return;
 
         Player player = event.getPlayer();
-        if (authManager.isLoggedIn(player)) return;
+        if (sessions.isLoggedIn(player)) return;
 
         // Paper API 保证 getTo() 非 null（@NullMarked）
         // 使用 setTo() 而非 setCancelled(true)：
@@ -602,7 +605,7 @@ public final class PlayerListener implements Listener {
         if (!plugin.getConfigManager().preventChat()) return;
 
         Player player = event.getPlayer();
-        if (!authManager.isLoggedIn(player)) {
+        if (!sessions.isLoggedIn(player)) {
             if (Debug.on()) {
                 Debug.log("flow", "blocked chat for %s (not logged in)", player.getName());
             }
@@ -616,7 +619,7 @@ public final class PlayerListener implements Listener {
         if (!plugin.getConfigManager().preventCommand()) return;
 
         Player player = event.getPlayer();
-        if (authManager.isLoggedIn(player)) return;
+        if (sessions.isLoggedIn(player)) return;
 
         // 提取命令名（去掉前导 / 和参数），统一小写匹配
         String message = event.getMessage();
@@ -642,7 +645,7 @@ public final class PlayerListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onBlockBreak(BlockBreakEvent event) {
         if (plugin.getConfigManager().preventWorldInteraction()
-                && !authManager.isLoggedIn(event.getPlayer())) {
+                && !sessions.isLoggedIn(event.getPlayer())) {
             event.setCancelled(true);
         }
     }
@@ -650,7 +653,7 @@ public final class PlayerListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onBlockPlace(BlockPlaceEvent event) {
         if (plugin.getConfigManager().preventWorldInteraction()
-                && !authManager.isLoggedIn(event.getPlayer())) {
+                && !sessions.isLoggedIn(event.getPlayer())) {
             event.setCancelled(true);
         }
     }
@@ -660,7 +663,7 @@ public final class PlayerListener implements Listener {
         if (!plugin.getConfigManager().preventWorldInteraction()) return;
         if (event.getEntity() instanceof Player player) {
             // 未登录玩家或传送过渡期玩家不受伤害
-            if (!authManager.isLoggedIn(player) || authManager.isInvulnerablePending(player)) {
+            if (!sessions.isLoggedIn(player) || sessions.isInvulnerablePending(player)) {
                 event.setCancelled(true);
                 return;
             }
@@ -668,14 +671,14 @@ public final class PlayerListener implements Listener {
         // 未登录玩家不可伤害任何实体（左键攻击不经过交互事件，须拦攻击者一侧）
         if (event instanceof org.bukkit.event.entity.EntityDamageByEntityEvent byEntity) {
             // 直接近战：damager 为玩家，拦未登录者
-            if (byEntity.getDamager() instanceof Player damager && !authManager.isLoggedIn(damager)) {
+            if (byEntity.getDamager() instanceof Player damager && !sessions.isLoggedIn(damager)) {
                 event.setCancelled(true);
                 return;
             }
             // 投射物：damager 为投射物实体，归因到射击者（箭离弦后射击者注销时仍可命中）
             if (byEntity.getDamager() instanceof Projectile projectile
                     && projectile.getShooter() instanceof Player shooter
-                    && !authManager.isLoggedIn(shooter)) {
+                    && !sessions.isLoggedIn(shooter)) {
                 event.setCancelled(true);
             }
         }
@@ -686,7 +689,7 @@ public final class PlayerListener implements Listener {
     public void onEntityTarget(EntityTargetEvent event) {
         if (!plugin.getConfigManager().preventWorldInteraction()) return;
         if (event.getTarget() instanceof Player player
-                && !authManager.isLoggedIn(player)) {
+                && !sessions.isLoggedIn(player)) {
             event.setCancelled(true);
         }
     }
@@ -695,7 +698,7 @@ public final class PlayerListener implements Listener {
     public void onFoodChange(FoodLevelChangeEvent event) {
         if (plugin.getConfigManager().preventWorldInteraction()
                 && event.getEntity() instanceof Player player
-                && !authManager.isLoggedIn(player)) {
+                && !sessions.isLoggedIn(player)) {
             event.setCancelled(true);
         }
     }
@@ -703,7 +706,7 @@ public final class PlayerListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onDropItem(PlayerDropItemEvent event) {
         if (plugin.getConfigManager().preventWorldInteraction()
-                && !authManager.isLoggedIn(event.getPlayer())) {
+                && !sessions.isLoggedIn(event.getPlayer())) {
             event.setCancelled(true);
         }
     }
@@ -711,7 +714,7 @@ public final class PlayerListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPickupItem(PlayerAttemptPickupItemEvent event) {
         if (plugin.getConfigManager().preventWorldInteraction()
-                && !authManager.isLoggedIn(event.getPlayer())) {
+                && !sessions.isLoggedIn(event.getPlayer())) {
             event.setCancelled(true);
         }
     }
@@ -719,7 +722,7 @@ public final class PlayerListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onInteract(PlayerInteractEvent event) {
         if (plugin.getConfigManager().preventWorldInteraction()
-                && !authManager.isLoggedIn(event.getPlayer())) {
+                && !sessions.isLoggedIn(event.getPlayer())) {
             event.setCancelled(true);
         }
     }
@@ -728,7 +731,7 @@ public final class PlayerListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onInteractEntity(PlayerInteractEntityEvent event) {
         if (plugin.getConfigManager().preventWorldInteraction()
-                && !authManager.isLoggedIn(event.getPlayer())) {
+                && !sessions.isLoggedIn(event.getPlayer())) {
             event.setCancelled(true);
         }
     }
@@ -739,7 +742,7 @@ public final class PlayerListener implements Listener {
     public void onSpectateTeleport(PlayerTeleportEvent event) {
         if (event.getCause() != PlayerTeleportEvent.TeleportCause.SPECTATE) return;
         if (plugin.getConfigManager().preventWorldInteraction()
-                && !authManager.isLoggedIn(event.getPlayer())) {
+                && !sessions.isLoggedIn(event.getPlayer())) {
             event.setCancelled(true);
         }
     }
@@ -749,7 +752,7 @@ public final class PlayerListener implements Listener {
     public void onInventoryClick(InventoryClickEvent event) {
         if (!plugin.getConfigManager().preventInventory()) return;
         if (event.getWhoClicked() instanceof Player player
-                && !authManager.isLoggedIn(player)) {
+                && !sessions.isLoggedIn(player)) {
             event.setCancelled(true);
         }
     }
@@ -759,7 +762,7 @@ public final class PlayerListener implements Listener {
     public void onInventoryDrag(InventoryDragEvent event) {
         if (!plugin.getConfigManager().preventInventory()) return;
         if (event.getWhoClicked() instanceof Player player
-                && !authManager.isLoggedIn(player)) {
+                && !sessions.isLoggedIn(player)) {
             event.setCancelled(true);
         }
     }
@@ -768,7 +771,7 @@ public final class PlayerListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPortal(PlayerPortalEvent event) {
         if (!plugin.getConfigManager().preventWorldInteraction()) return;
-        if (!authManager.isLoggedIn(event.getPlayer())) {
+        if (!sessions.isLoggedIn(event.getPlayer())) {
             event.setCancelled(true);
         }
     }
@@ -777,7 +780,7 @@ public final class PlayerListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onItemConsume(PlayerItemConsumeEvent event) {
         if (!plugin.getConfigManager().preventInventory()) return;
-        if (!authManager.isLoggedIn(event.getPlayer())) {
+        if (!sessions.isLoggedIn(event.getPlayer())) {
             event.setCancelled(true);
         }
     }
@@ -786,7 +789,7 @@ public final class PlayerListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onSwapHandItems(PlayerSwapHandItemsEvent event) {
         if (!plugin.getConfigManager().preventInventory()) return;
-        if (!authManager.isLoggedIn(event.getPlayer())) {
+        if (!sessions.isLoggedIn(event.getPlayer())) {
             event.setCancelled(true);
         }
     }

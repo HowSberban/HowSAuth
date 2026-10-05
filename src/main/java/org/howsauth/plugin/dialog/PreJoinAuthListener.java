@@ -15,6 +15,7 @@ import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.PasswordValidator;
+import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.config.ConfigManager;
 
 import java.lang.reflect.Method;
@@ -44,11 +45,12 @@ public final class PreJoinAuthListener implements Listener {
 
     private final HowSAuth plugin;
     private final AuthManager authManager;
+    private final SessionStore sessions;
     private final DialogManager dialogManager;
     // 配置阶段认证结果：UUID → 结果（进入世界时移除）
     private final Map<UUID, AuthOutcome> outcomes = new ConcurrentHashMap<>();
     // 活跃的配置阶段会话（Dialog 提交回调查找）
-    private final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
+    private final Map<UUID, Session> configSessions = new ConcurrentHashMap<>();
     // timeout=0 时由配置阶段连接生命周期负责释放 Session
     private static final int CONFIG_WAIT_FALLBACK_SECONDS = 600;
 
@@ -63,7 +65,7 @@ public final class PreJoinAuthListener implements Listener {
         // 注册流程完成（写在 countDown 前，由闭锁建立 happens-before）
         boolean registered;
         // 免密登录直弹 2FA（正版/IP）：验证状态失效时重弹验证码窗口而非密码窗口
-        // volatile：写入发生在 sessions.put 之后，回调线程读取无闭锁保护，需保证可见性
+        // volatile：写入发生在 configSessions.put 之后，回调线程读取无闭锁保护，需保证可见性
         volatile boolean passwordless2fa;
 
         Session(PlayerConfigurationConnection connection) {
@@ -71,10 +73,11 @@ public final class PreJoinAuthListener implements Listener {
         }
     }
 
-    public PreJoinAuthListener(HowSAuth plugin, AuthManager authManager,
+    public PreJoinAuthListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions,
                                DialogManager dialogManager) {
         this.plugin = plugin;
         this.authManager = authManager;
+        this.sessions = sessions;
         this.dialogManager = dialogManager;
     }
 
@@ -128,7 +131,7 @@ public final class PreJoinAuthListener implements Listener {
             return;
         }
         // 已登录（reconfigure 场景）直接放行
-        if (uuid == null || authManager.isLoggedIn(uuid)) {
+        if (uuid == null || sessions.isLoggedIn(uuid)) {
             if (Debug.on()) {
                 Debug.log("dialog", "pre-join %s: already logged in, pass",
                         uuid == null ? "unknown" : uuid.toString().substring(0, 8));
@@ -168,8 +171,8 @@ public final class PreJoinAuthListener implements Listener {
         }
 
         Session session = new Session(conn);
-        synchronized (sessions) {
-            Session previous = sessions.put(uuid, session);
+        synchronized (configSessions) {
+            Session previous = configSessions.put(uuid, session);
             if (previous != null) {
                 // 同 UUID 重连/并发配置连接：终止旧等待，避免旧回调失效后遗留阻塞线程
                 previous.kicked = true;
@@ -206,9 +209,9 @@ public final class PreJoinAuthListener implements Listener {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } finally {
-            synchronized (sessions) {
-                boolean current = sessions.get(uuid) == session;
-                sessions.remove(uuid, session);
+            synchronized (configSessions) {
+                boolean current = configSessions.get(uuid) == session;
+                configSessions.remove(uuid, session);
                 if (current && session.success && !session.kicked && !session.fallback) {
                     outcomes.put(uuid, session.registered ? AuthOutcome.REGISTER : AuthOutcome.LOGIN);
                     if (Debug.on()) {
@@ -321,7 +324,7 @@ public final class PreJoinAuthListener implements Listener {
     /** 取消：主动放弃登录并断连（pre-join 阶段尚未进世界）；标记 kicked 使 onConfigure 不放行，并唤醒配置线程 */
     private DialogActionCallback cancel(Session session, UUID uuid, String locale) {
         return (response, audience) -> {
-            if (sessions.get(uuid) != session) return;
+            if (configSessions.get(uuid) != session) return;
             if (Debug.on()) {
                 Debug.log("dialog", "cancel dialog for %s: disconnecting", uuid.toString().substring(0, 8));
             }
@@ -345,14 +348,14 @@ public final class PreJoinAuthListener implements Listener {
     private DialogActionCallback loginConfirm(Session session, UUID uuid, String locale) {
         return (response, audience) -> {
             // 会话已结束（超时/取消后提交）：忽略过期提交
-            if (sessions.get(uuid) != session) return;
+            if (configSessions.get(uuid) != session) return;
             String password = response.getText("password");
             if (password == null || password.isEmpty()) {
                 showLogin(session, uuid, locale, DialogManager.text(locale, "dialog.empty_password"));
                 return;
             }
             authManager.loginConfigAsync(uuid, password, clientIp(session.connection), (result, kickSeconds) -> {
-                if (sessions.get(uuid) != session) return;
+                if (configSessions.get(uuid) != session) return;
                 if (Debug.on()) {
                     Debug.log("dialog", "login dialog confirm for %s: %s", uuid.toString().substring(0, 8), result);
                 }
@@ -379,7 +382,7 @@ public final class PreJoinAuthListener implements Listener {
     /** 注册窗口确认：校验与 /register 一致，成功仅建号（登录收尾延迟到进入世界时） */
     private DialogActionCallback registerConfirm(Session session, UUID uuid, String locale) {
         return (response, audience) -> {
-            if (sessions.get(uuid) != session) return;
+            if (configSessions.get(uuid) != session) return;
             if (authManager.hasAccount(uuid)) {
                 showLogin(session, uuid, locale, DialogManager.text(locale, "register.already_registered"));
                 return;
@@ -404,7 +407,7 @@ public final class PreJoinAuthListener implements Listener {
             // bcrypt 哈希与建号落库耗时，移到异步线程（与 loginConfirm 的 loginConfigAsync 同模式）；
             // 回调仅做线程安全操作：会话校验/重弹窗口/闭锁
             Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-                if (sessions.get(uuid) != session) return;
+                if (configSessions.get(uuid) != session) return;
                 if (authManager.registerConfig(uuid, name, password, ip)) {
                     if (Debug.on()) {
                         Debug.log("dialog", "register dialog confirm for %s: success", uuid.toString().substring(0, 8));
@@ -432,7 +435,7 @@ public final class PreJoinAuthListener implements Listener {
     /** 双因素验证窗口确认：通过放行，失败重弹 */
     private DialogActionCallback twoFaConfirm(Session session, UUID uuid, String locale) {
         return (response, audience) -> {
-            if (sessions.get(uuid) != session) return;
+            if (configSessions.get(uuid) != session) return;
             // 暴力破解踢出期内断连（无密码账户验证码错误达到阈值后进入踢出期，与密码登录失败行为一致）
             long kickRemaining = authManager.getKickRemaining(uuid);
             if (kickRemaining > 0) {

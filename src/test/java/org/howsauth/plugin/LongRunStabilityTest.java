@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.AuthManager.LoginResult;
+import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
 import org.howsauth.plugin.support.MockBukkitHarness;
@@ -75,6 +76,7 @@ class LongRunStabilityTest {
     private HowSAuth plugin;
     private PlayerDataManager data;
     private AuthManager auth;
+    private SessionStore sessions;
 
     @BeforeAll
     void bootstrap() throws Exception {
@@ -88,6 +90,7 @@ class LongRunStabilityTest {
         plugin = env.plugin();
         data = env.data();
         auth = env.auth();
+        sessions = env.sessions();
     }
 
     @AfterAll
@@ -184,9 +187,9 @@ class LongRunStabilityTest {
         assertEquals(0, errors.get(),
                 () -> "business loop raised " + errors.get() + " error(s), first: " + describe(firstError.get()));
         assertEquals(0, collectionSize(data, "dirty"), "dirty set must be empty after flush");
-        assertEquals(0, collectionSize(auth, "verifying"), "password verification re-entry markers must be empty");
+        assertEquals(0, collectionSize(sessions, "verifying"), "password verification re-entry markers must be empty");
         assertEquals(0, collectionSize(auth, "pending2fa"), "pending 2FA states must be empty");
-        assertEquals(0, collectionSize(auth, "loggedIn"), "logged-in states must be empty (this scenario never involves a Player)");
+        assertEquals(0, collectionSize(sessions, "loggedIn"), "logged-in states must be empty (this scenario never involves a Player)");
         assertEquals(0, mapSize(auth, "pending2faSecret"), "pending 2FA secrets must be cleared");
         assertEquals(0, mapSize(auth, "pending2faSecretCreatedAt"), "pending 2FA secret timestamps must be cleared");
         assertEquals(0, mapSize(auth, "loginSessions"), "login sessions must be cleared");
@@ -357,7 +360,7 @@ class LongRunStabilityTest {
         // 内存收敛
         data.flushDirty();
         assertEquals(0, collectionSize(data, "dirty"), "dirty set must be empty after flush");
-        assertEquals(0, collectionSize(auth, "loggedIn"), "logged-in states must be empty");
+        assertEquals(0, collectionSize(sessions, "loggedIn"), "logged-in states must be empty");
         assertEquals(0, mapSize(auth, "loginSessions"), "login sessions must be cleared");
     }
 

@@ -11,7 +11,7 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSe
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerWindowItems;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
-import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.config.ConfigManager;
 import org.jspecify.annotations.NonNull;
 
@@ -35,12 +35,12 @@ import java.util.UUID;
  */
 public final class InventoryPacketListener extends PacketListenerAbstract {
 
-    private final AuthManager authManager;
+    private final SessionStore sessions;
     private final ConfigManager configManager;
 
-    public InventoryPacketListener(AuthManager authManager, ConfigManager configManager) {
+    public InventoryPacketListener(SessionStore sessions, ConfigManager configManager) {
         super(PacketListenerPriority.LOW);
-        this.authManager = authManager;
+        this.sessions = sessions;
         this.configManager = configManager;
     }
 
@@ -67,7 +67,7 @@ public final class InventoryPacketListener extends PacketListenerAbstract {
     private void handleWindowItems(PacketSendEvent event, UUID receiverId) {
         WrapperPlayServerWindowItems wrapper = new WrapperPlayServerWindowItems(event);
         if (wrapper.getWindowId() != 0) return;
-        if (authManager.isLoggedIn(receiverId)) return;
+        if (sessions.isLoggedIn(receiverId)) return;
 
         List<ItemStack> original = wrapper.getItems();
         if (original.isEmpty()) return;
@@ -91,7 +91,7 @@ public final class InventoryPacketListener extends PacketListenerAbstract {
         int windowId = wrapper.getWindowId();
         // windowId=0 玩家背包；-1/-2 光标携带物品，都可能泄露物品信息
         if (windowId != 0 && windowId != -1 && windowId != -2) return;
-        if (authManager.isLoggedIn(receiverId)) return;
+        if (sessions.isLoggedIn(receiverId)) return;
 
         wrapper.setItem(ItemStack.EMPTY);
         event.markForReEncode(true);
@@ -110,7 +110,7 @@ public final class InventoryPacketListener extends PacketListenerAbstract {
         Player receiver = Bukkit.getPlayer(receiverId);
         if (receiver == null) return;
         if (receiver.getEntityId() != entityId) return;
-        if (authManager.isLoggedIn(receiverId)) return;
+        if (sessions.isLoggedIn(receiverId)) return;
 
         List<Equipment> original = wrapper.getEquipment();
         if (original.isEmpty()) return;

@@ -350,7 +350,7 @@ public final class HSAuthCommand {
             return 0;
         }
         // 已登录则无需重复操作
-        if (plugin.getAuthManager().isLoggedIn(target)) {
+        if (plugin.sessions().isLoggedIn(target)) {
             if (Debug.on()) {
                 Debug.log("cmd", "forcelogin by %s for %s: already logged in", sender.getName(), targetName);
             }

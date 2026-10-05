@@ -4,6 +4,7 @@ import net.kyori.adventure.text.Component;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.listener.JoinQuitMessageService;
 import org.howsauth.plugin.listener.PlayerListener;
@@ -33,6 +34,7 @@ class QuitFlowRegressionTest {
     private MockBukkitHarness env;
     private HowSAuth plugin;
     private AuthManager auth;
+    private SessionStore sessions;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -40,14 +42,15 @@ class QuitFlowRegressionTest {
                 MockBukkitHarness.inject(ConfigManager.class, "bcryptCost", config, 4));
         plugin = env.plugin();
         auth = env.auth();
+        sessions = env.sessions();
         // 监听器与登录收尾依赖的插件字段由 onEnable 装配，测试不触发 onEnable 需按同样次序注入
-        PlayerListener playerListener = new PlayerListener(plugin, auth);
+        PlayerListener playerListener = new PlayerListener(plugin, auth, sessions);
         MockBukkitHarness.inject(HowSAuth.class, "playerListener", plugin, playerListener);
         MockBukkitHarness.inject(HowSAuth.class, "pendingPearlManager", plugin, new PendingPearlManager(plugin));
         // MockBukkit 分发时会跳过未启用插件的监听器：只置启用标记，不触发 onEnable
         MockBukkitHarness.inject(JavaPlugin.class, "isEnabled", plugin, true);
         env.server().getPluginManager().registerEvents(playerListener, plugin);
-        env.server().getPluginManager().registerEvents(new JoinQuitMessageService(auth, env.config()), plugin);
+        env.server().getPluginManager().registerEvents(new JoinQuitMessageService(sessions, env.config()), plugin);
     }
 
     @AfterEach
@@ -65,19 +68,19 @@ class QuitFlowRegressionTest {
         assertTrue(auth.forceRegister(uuid, player.getName(), "test-pw"), "force register must create the account");
 
         auth.forceLogin(player);
-        assertTrue(auth.isLoggedIn(uuid), "force login must set the live login state");
-        assertTrue(auth.hasAuthenticatedThisConnection(uuid), "force login must mark the connection authenticated");
+        assertTrue(sessions.isLoggedIn(uuid), "force login must set the live login state");
+        assertTrue(sessions.hasAuthenticatedThisConnection(uuid), "force login must mark the connection authenticated");
 
         assertTrue(auth.forceLogout(uuid), "force logout must invalidate the live login state");
-        assertFalse(auth.isLoggedIn(uuid), "force logout must clear the live login state");
-        assertTrue(auth.hasAuthenticatedThisConnection(uuid), "force logout must keep the session authentication flag");
+        assertFalse(sessions.isLoggedIn(uuid), "force logout must clear the live login state");
+        assertTrue(sessions.hasAuthenticatedThisConnection(uuid), "force logout must keep the session authentication flag");
 
         assertTrue(auth.unregister(uuid), "unregister must remove the account");
-        assertTrue(auth.hasAuthenticatedThisConnection(uuid), "unregister must keep the session authentication flag");
+        assertTrue(sessions.hasAuthenticatedThisConnection(uuid), "unregister must keep the session authentication flag");
 
         auth.clearSession(player);
-        assertFalse(auth.isLoggedIn(uuid), "session cleanup must clear the live login state");
-        assertFalse(auth.hasAuthenticatedThisConnection(uuid), "session cleanup must clear the session authentication flag");
+        assertFalse(sessions.isLoggedIn(uuid), "session cleanup must clear the live login state");
+        assertFalse(sessions.hasAuthenticatedThisConnection(uuid), "session cleanup must clear the session authentication flag");
     }
 
     /** 退出消息：仅"本次连接未认证"按配置隐藏，认证过的会话即使登录态被提前失效也要保留消息 */
