@@ -17,6 +17,7 @@ import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.AuthManager.LoginResult;
 import org.howsauth.plugin.auth.FailProtection;
+import org.howsauth.plugin.auth.LogoutLocation;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.Totp;
 import org.howsauth.plugin.auth.TwoFactorAuth;
@@ -164,6 +165,11 @@ public final class MockBukkitHarness implements AutoCloseable {
     /** 双因素认证：AuthManager 拆分后待验证状态/2FA 会话由该服务持有 */
     public TwoFactorAuth twoFactor() {
         return auth.twoFactor();
+    }
+
+    /** 退出位置与坐标保护：AuthManager 拆分后位置/旁观切换由该服务持有 */
+    public LogoutLocation locations() {
+        return auth.locations();
     }
 
     /** 注册一个使用同步实体调度器的玩家（addPasswordAsync 等依赖 player.getScheduler()） */

@@ -281,7 +281,7 @@ public final class HSAuthApi {
     /** 获取玩家上次退出位置，无记录时返回 null */
     @Nullable
     public Location getLastLocation(@NotNull UUID uuid) {
-        return authManager.getLogoutLocation(uuid);
+        return authManager.locations().get(uuid);
     }
 
     /** 获取玩家上次登录 IP，无记录时返回 null */

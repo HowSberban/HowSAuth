@@ -359,7 +359,7 @@ public final class HSAuthCommand {
         }
         plugin.getAuthManager().forceLogin(target);
         // 强制登录后传送回上次退出位置
-        plugin.getAuthManager().returnToLogoutLocation(target);
+        plugin.locations().teleportBack(target);
         if (Debug.on()) {
             Debug.log("cmd", "forcelogin by %s for %s: success", sender.getName(), targetName);
         }

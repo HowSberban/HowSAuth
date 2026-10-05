@@ -274,7 +274,7 @@ public final class TwoFactorCommand {
         if (authManager.verify2fa(player, code)) {
             player.sendMessage(msg(player, "2fa.verify_success"));
             // 登录完成后传送回上次退出位置（与密码登录成功一致）
-            authManager.returnToLogoutLocation(player);
+            plugin.locations().teleportBack(player);
         } else {
             player.sendMessage(msg(player, "2fa.confirm_incorrect"));
         }

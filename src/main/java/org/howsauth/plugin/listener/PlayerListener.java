@@ -9,6 +9,7 @@ import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.FailProtection;
+import org.howsauth.plugin.auth.LogoutLocation;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.TwoFactorAuth;
 import org.howsauth.plugin.api.event.HSAuthLoginEvent;
@@ -45,18 +46,20 @@ public final class PlayerListener implements Listener {
     private final SessionStore sessions;
     private final FailProtection failProtection;
     private final TwoFactorAuth twoFactor;
+    private final LogoutLocation locations;
     // 活跃的提醒 BossBar：登录成功/玩家退出时立即隐藏（不等下一个任务周期）
     private final Map<UUID, net.kyori.adventure.bossbar.BossBar> reminderBars = new ConcurrentHashMap<>();
     // 活跃的提醒任务：重新挂起（reload）时取消旧任务，避免新旧任务并行重复提醒
     private final Map<UUID, ScheduledTask> reminderTasks = new ConcurrentHashMap<>();
 
     public PlayerListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions,
-                          FailProtection failProtection, TwoFactorAuth twoFactor) {
+                          FailProtection failProtection, TwoFactorAuth twoFactor, LogoutLocation locations) {
         this.plugin = plugin;
         this.authManager = authManager;
         this.sessions = sessions;
         this.failProtection = failProtection;
         this.twoFactor = twoFactor;
+        this.locations = locations;
     }
 
     // 在玩家加入世界前拦截：踢出期玩家、同一 IP 账号数量超限
@@ -126,7 +129,7 @@ public final class PlayerListener implements Listener {
 
         // 放行玩家异步预载退出位置区块：fire-and-forget，不阻塞、不影响放行判定
         if (event.getLoginResult() == AsyncPlayerPreLoginEvent.Result.ALLOWED) {
-            authManager.preloadLogoutChunk(uuid);
+            locations.preloadChunk(uuid);
         }
     }
 
@@ -180,7 +183,7 @@ public final class PlayerListener implements Listener {
                 player.sendMessage(I18n.msg("login.premium_auto_login", player));
             }
             if (!sessionHit && !pending2fa) {
-                authManager.returnToLogoutLocation(player);
+                locations.teleportBack(player);
             }
             return;
         }
@@ -216,7 +219,7 @@ public final class PlayerListener implements Listener {
             Debug.log("flow", "suspend %s: %s (needsLogin=%s, spectatorProtection=%s)", player.getName(), messageKey,
                     needsLogin, plugin.getConfigManager().protectionGamemodeEnabled());
         }
-        authManager.setSpectator(player);
+        locations.setSpectator(player);
         applyLoginBlindness(player);
         player.sendMessage(I18n.msg(messageKey, player));
         scheduleReminder(player, needsLogin);
@@ -297,7 +300,7 @@ public final class PlayerListener implements Listener {
                 }
                 authManager.autoLogin(player);
                 player.sendMessage(I18n.msg("login.success", player));
-                authManager.returnToLogoutLocation(player);
+                locations.teleportBack(player);
                 return;
             }
             // 仅已绑定验证器的账户进入待验证码状态：无凭据账户（无密码+无2FA+非正版）无码可验，
@@ -460,7 +463,7 @@ public final class PlayerListener implements Listener {
         // 登录需 2FA 的除外：验证完成前不放行到退出位置（/2fa 验证后再传送）；
         // 2FA 会话命中（同 IP 且未过期）视同已完成验证
         if (uuid != null && authManager.hasSession(uuid, ip) && !twoFactor.requiresAtLogin(uuid, ip)) {
-            Location logoutLoc = authManager.getLogoutLocation(uuid);
+            Location logoutLoc = locations.get(uuid);
             if (logoutLoc != null) {
                 if (Debug.on()) {
                     Debug.log("flow", "spawn %s: logout location (login session hit)", uuid.toString().substring(0, 8));
@@ -473,7 +476,7 @@ public final class PlayerListener implements Listener {
         // Pre-join 已认证玩家：与会话命中一致，直接在退出位置出生，避免随机出生后再传送
         PreJoinAuthListener preJoin = plugin.getPreJoinAuthListener();
         if (uuid != null && preJoin != null && preJoin.hasCompleted(uuid)) {
-            Location logoutLoc = authManager.getLogoutLocation(uuid);
+            Location logoutLoc = locations.get(uuid);
             if (logoutLoc != null) {
                 if (Debug.on()) {
                     Debug.log("flow", "spawn %s: logout location (pre-join completed)", uuid.toString().substring(0, 8));
@@ -490,7 +493,7 @@ public final class PlayerListener implements Listener {
         // 启用坐标保护：强制主世界随机位置，防止坐标泄露
         if (plugin.getConfigManager().protectionPosEnabled()) {
             org.bukkit.World world = org.bukkit.Bukkit.getWorlds().getFirst();
-            Location safeSpawn = authManager.findSafeAuthSpawn(world);
+            Location safeSpawn = locations.findSafeAuthSpawn(world);
             event.setSpawnLocation(safeSpawn);
             if (Debug.on()) {
                 Debug.log("flow", "spawn %s: coordinate protection location",
@@ -542,7 +545,7 @@ public final class PlayerListener implements Listener {
         // 本次连接已认证的玩家退出时保存退出位置（用于下次登录后传送回来）
         // 未认证玩家不保存：其位置是登录前的保护/出生点，写入会覆盖真实退出位置
         if (authenticated) {
-            authManager.saveLogoutLocation(player);
+            locations.save(player);
         }
         // 退出时不在登录态（从未认证，或登录态被强制登出/注销提前失效）：清理可能残留的登录失明，
         // 避免效果随 .dat 存档到下次会话（与位置保存是两个独立判定，不共用条件）

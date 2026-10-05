@@ -44,7 +44,7 @@ class QuitFlowRegressionTest {
         auth = env.auth();
         sessions = env.sessions();
         // 监听器与登录收尾依赖的插件字段由 onEnable 装配，测试不触发 onEnable 需按同样次序注入
-        PlayerListener playerListener = new PlayerListener(plugin, auth, sessions, env.failProtection(), env.twoFactor());
+        PlayerListener playerListener = new PlayerListener(plugin, auth, sessions, env.failProtection(), env.twoFactor(), env.locations());
         MockBukkitHarness.inject(HowSAuth.class, "playerListener", plugin, playerListener);
         MockBukkitHarness.inject(HowSAuth.class, "pendingPearlManager", plugin, new PendingPearlManager(plugin));
         // MockBukkit 分发时会跳过未启用插件的监听器：只置启用标记，不触发 onEnable

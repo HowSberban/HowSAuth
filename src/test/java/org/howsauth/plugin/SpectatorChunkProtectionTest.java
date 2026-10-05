@@ -51,7 +51,7 @@ class SpectatorChunkProtectionTest {
         assertEquals(0, MockBukkitHarness.collectionSize(env.sessions(), "spectatorPending"),
                 "no spectator flag before the decision");
 
-        env.auth().setSpectator(player);
+        env.locations().setSpectator(player);
 
         assertEquals(1, MockBukkitHarness.collectionSize(env.sessions(), "spectatorPending"),
                 "an unloaded chunk must be treated as dangling and force spectator");
@@ -68,7 +68,7 @@ class SpectatorChunkProtectionTest {
         int cz = logout.getBlockZ() >> 4;
 
         assertFalse(world.isChunkLoaded(cx, cz), "the chosen chunk must start unloaded");
-        env.auth().preloadLogoutChunk(player.getUniqueId());
+        env.locations().preloadChunk(player.getUniqueId());
         assertTrue(world.isChunkLoaded(cx, cz), "preload must actually mark the chunk loaded");
     }
 
@@ -81,7 +81,7 @@ class SpectatorChunkProtectionTest {
         int cz = logout.getBlockZ() >> 4;
 
         MockBukkitHarness.inject(ConfigManager.class, "protectionPosEnabled", env.config(), true);
-        env.auth().preloadLogoutChunk(player.getUniqueId());
+        env.locations().preloadChunk(player.getUniqueId());
         assertFalse(world.isChunkLoaded(cx, cz), "position protection must skip preloading");
     }
 

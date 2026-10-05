@@ -4,6 +4,7 @@ import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.LogoutLocation;
 import org.howsauth.plugin.auth.SessionStore;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
@@ -13,10 +14,12 @@ public final class LoginCommand implements BasicCommand {
 
     private final AuthManager authManager;
     private final SessionStore sessions;
+    private final LogoutLocation locations;
 
-    public LoginCommand(AuthManager authManager, SessionStore sessions) {
+    public LoginCommand(AuthManager authManager, SessionStore sessions, LogoutLocation locations) {
         this.authManager = authManager;
         this.sessions = sessions;
+        this.locations = locations;
     }
 
     @Override
@@ -55,7 +58,7 @@ public final class LoginCommand implements BasicCommand {
                 case SUCCESS -> {
                     player.sendMessage(I18n.msg("login.success", player));
                     // 登录成功后传送回上次退出位置（启用坐标保护时生效）
-                    authManager.returnToLogoutLocation(player);
+                    locations.teleportBack(player);
                 }
                 case NEED_2FA -> player.sendMessage(I18n.msg("login.need_2fa", player));
                 case FAILED -> {

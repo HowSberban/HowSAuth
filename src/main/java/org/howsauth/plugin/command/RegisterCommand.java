@@ -60,7 +60,7 @@ public final class RegisterCommand implements BasicCommand {
             if (success) {
                 player.sendMessage(I18n.msg("register.success", player));
                 // 注册成功后传送到默认世界 spawn（启用坐标保护时生效）
-                authManager.returnToLogoutLocation(player);
+                plugin.locations().teleportBack(player);
             } else {
                 player.sendMessage(I18n.msg("register.failed", player));
             }

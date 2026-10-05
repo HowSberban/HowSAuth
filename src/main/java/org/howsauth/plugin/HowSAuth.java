@@ -7,6 +7,7 @@ import com.github.retrooper.packetevents.PacketEvents;
 import org.howsauth.plugin.api.HSAuthApi;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.FailProtection;
+import org.howsauth.plugin.auth.LogoutLocation;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.TwoFactorAuth;
 import org.howsauth.plugin.command.*;
@@ -117,7 +118,7 @@ public class HowSAuth extends JavaPlugin {
         if (authManager != null) {
             for (Player player : Bukkit.getOnlinePlayers()) {
                 if (sessions().isLoggedIn(player)) {
-                    authManager.updateLogoutLocationCache(player);
+                    authManager.locations().updateCache(player);
                 }
             }
         }
@@ -149,7 +150,7 @@ public class HowSAuth extends JavaPlugin {
         manager.registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             Commands commands = event.registrar();
             commands.register("register", I18n.get("command.desc.register"), List.of("reg"), new RegisterCommand(this, authManager));
-            commands.register("login", I18n.get("command.desc.login"), List.of("l"), new LoginCommand(authManager, authManager.sessions()));
+            commands.register("login", I18n.get("command.desc.login"), List.of("l"), new LoginCommand(authManager, authManager.sessions(), authManager.locations()));
             commands.register("changepassword", I18n.get("command.desc.changepassword"), List.of("changepw", "cp"), new ChangePasswordCommand(this, authManager));
             commands.register("addpassword", I18n.get("command.desc.addpassword"), List.of("addpw"), new AddPasswordCommand(this, authManager));
             commands.register("removepassword", I18n.get("command.desc.removepassword"), List.of("removepw", "rmpw"), new RemovePasswordCommand(authManager, authManager.sessions(), authManager.twoFactor()));
@@ -168,7 +169,7 @@ public class HowSAuth extends JavaPlugin {
     }
 
     private void registerListeners() {
-        playerListener = new PlayerListener(this, authManager, authManager.sessions(), authManager.failProtection(), authManager.twoFactor());
+        playerListener = new PlayerListener(this, authManager, authManager.sessions(), authManager.failProtection(), authManager.twoFactor(), authManager.locations());
         getServer().getPluginManager().registerEvents(playerListener, this);
         // 末影珍珠保管：独立监听器（接管飞行珍珠，登录后按配置返还）
         pendingPearlManager = new PendingPearlManager(this);
@@ -226,6 +227,11 @@ public class HowSAuth extends JavaPlugin {
     /** 双因素认证（待验证状态/验证码/绑定解绑），AuthManager 拆分后的协作服务 */
     public TwoFactorAuth twoFactor() {
         return authManager.twoFactor();
+    }
+
+    /** 退出位置与坐标保护（位置保存/传送/旁观切换），AuthManager 拆分后的协作服务 */
+    public LogoutLocation locations() {
+        return authManager.locations();
     }
 
     public PlayerListener getPlayerListener() {
