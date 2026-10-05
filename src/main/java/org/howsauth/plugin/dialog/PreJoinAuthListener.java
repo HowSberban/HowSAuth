@@ -136,7 +136,7 @@ public final class PreJoinAuthListener implements Listener {
         if (!plugin.getConfigManager().loginDialogEnabled()) {
             if (Debug.on()) {
                 Debug.log("dialog", "pre-join %s: dialog disabled, fallback to chat",
-                        uuid == null ? "unknown" : uuid.toString().substring(0, 8));
+                        Debug.shortId(uuid));
             }
             return;
         }
@@ -144,7 +144,7 @@ public final class PreJoinAuthListener implements Listener {
         if (uuid == null || sessions.isLoggedIn(uuid)) {
             if (Debug.on()) {
                 Debug.log("dialog", "pre-join %s: already logged in, pass",
-                        uuid == null ? "unknown" : uuid.toString().substring(0, 8));
+                        Debug.shortId(uuid));
             }
             return;
         }

@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.AuthManager.LoginResult;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.support.MockBukkitHarness;
@@ -32,7 +31,6 @@ class FailProtectionTest {
     private static final int KICK_SECONDS = 1;
 
     private MockBukkitHarness env;
-    private AuthManager auth;
 
     @BeforeAll
     void bootstrap() throws Exception {
@@ -44,7 +42,6 @@ class FailProtectionTest {
             // 过期窗口远大于用例时长：确保本节用例不会因计数过期而重置
             MockBukkitHarness.inject(ConfigManager.class, "failProtectionResetSeconds", config, 60);
         });
-        auth = env.auth();
     }
 
     @AfterAll

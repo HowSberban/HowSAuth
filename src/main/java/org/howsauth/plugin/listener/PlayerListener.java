@@ -500,11 +500,11 @@ public final class PlayerListener implements Listener {
             event.setSpawnLocation(safeSpawn);
             if (Debug.on()) {
                 Debug.log("flow", "spawn %s: coordinate protection location",
-                        uuid == null ? "unknown" : uuid.toString().substring(0, 8));
+                        Debug.shortId(uuid));
             }
         } else if (Debug.on()) {
             Debug.log("flow", "spawn %s: default spawn (no intervention)",
-                    uuid == null ? "unknown" : uuid.toString().substring(0, 8));
+                    Debug.shortId(uuid));
         }
     }
 

@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.AuthManager.LoginResult;
 import org.howsauth.plugin.support.MockBukkitHarness;
 import org.howsauth.plugin.support.MockBukkitHarness.TestPlayerMock;
@@ -30,13 +29,11 @@ class HighCostAuthTest {
     private static final int PRODUCTION_BCRYPT_COST = 12;
 
     private MockBukkitHarness env;
-    private AuthManager auth;
 
     @BeforeAll
     void bootstrap() throws Exception {
         // 不调整 bcryptCost：验证出厂配置本身的生产强度
         env = MockBukkitHarness.start("hsauth-highcost-test");
-        auth = env.auth();
     }
 
     @AfterAll

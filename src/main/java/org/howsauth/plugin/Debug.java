@@ -2,6 +2,8 @@ package org.howsauth.plugin;
 
 import org.howsauth.plugin.config.ConfigManager;
 
+import java.util.UUID;
+
 /**
  * 调试日志：由 {@code advanced.debug} 控制的条件输出，用于排查认证流程问题。
  * <p>
@@ -50,6 +52,12 @@ public final class Debug {
             return;
         }
         DebugFile.write("[" + area + "] " + (args.length == 0 ? format : String.format(format, args)));
+    }
+
+    /** 日志用的短 UUID 标识（前 8 位）；null（连接尚未解析出 UUID）返回 "unknown"。
+     *  纯函数，须在 {@code if (Debug.on())} 守卫内调用以避免关闭时的多余求值 */
+    public static String shortId(UUID uuid) {
+        return uuid == null ? "unknown" : uuid.toString().substring(0, 8);
     }
 
     /** 插件卸载时关闭日志文件句柄 */

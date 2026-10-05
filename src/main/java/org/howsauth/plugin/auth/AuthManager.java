@@ -41,10 +41,8 @@ public final class AuthManager {
         FAILED
     }
 
-    private final HowSAuth plugin;
     private final PlayerDataManager dataManager;
     private final ConfigManager configManager;
-    private final AuthEvents events;
     private final SessionStore sessions;
     private final FailProtection failProtection;
     private final TwoFactorAuth twoFactor;
@@ -53,10 +51,10 @@ public final class AuthManager {
     private final LoginFlow loginFlow;
 
     public AuthManager(HowSAuth plugin, PlayerDataManager dataManager, ConfigManager configManager) {
-        this.plugin = plugin;
         this.dataManager = dataManager;
         this.configManager = configManager;
-        this.events = new AuthEvents(plugin);
+        // 事件总线仅在装配期使用，无需持有为字段
+        AuthEvents events = new AuthEvents(plugin);
         this.sessions = new SessionStore(configManager, dataManager);
         this.failProtection = new FailProtection(configManager);
         this.twoFactor = new TwoFactorAuth(dataManager, configManager, failProtection, events);

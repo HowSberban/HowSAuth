@@ -24,6 +24,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class SpectatorChunkProtectionTest {
 
+    /** 用例统一使用的退出高度（地面层），使"区块是否加载"成为唯一变量 */
+    private static final int GROUND_Y = 64;
+
     private MockBukkitHarness env;
     private World world;
 
@@ -43,7 +46,7 @@ class SpectatorChunkProtectionTest {
     @Test
     void unloadedChunkIsTreatedAsDanglingAndForcesSpectator() {
         TestPlayerMock player = newPlayer("danglinguser");
-        Location logout = registerAtUnloadedChunk(player, 100, 200, 64);
+        Location logout = registerAtUnloadedChunk(player, 100, 200);
         int cx = logout.getBlockX() >> 4;
         int cz = logout.getBlockZ() >> 4;
 
@@ -63,7 +66,7 @@ class SpectatorChunkProtectionTest {
     @Test
     void preloadLogoutChunkActuallyLoadsTheChunk() {
         TestPlayerMock player = newPlayer("preloaduser");
-        Location logout = registerAtUnloadedChunk(player, 300, 400, 64);
+        Location logout = registerAtUnloadedChunk(player, 300, 400);
         int cx = logout.getBlockX() >> 4;
         int cz = logout.getBlockZ() >> 4;
 
@@ -76,7 +79,7 @@ class SpectatorChunkProtectionTest {
     @Test
     void preloadIsSkippedWhenPositionProtectionEnabled() {
         TestPlayerMock player = newPlayer("protecteduser");
-        Location logout = registerAtUnloadedChunk(player, 500, 600, 64);
+        Location logout = registerAtUnloadedChunk(player, 500, 600);
         int cx = logout.getBlockX() >> 4;
         int cz = logout.getBlockZ() >> 4;
 
@@ -91,11 +94,11 @@ class SpectatorChunkProtectionTest {
     }
 
     /** 建号并写入位于测试世界内、指定区块的退出位置，返回该位置 */
-    private Location registerAtUnloadedChunk(TestPlayerMock player, int chunkX, int chunkZ, int y) {
+    private Location registerAtUnloadedChunk(TestPlayerMock player, int chunkX, int chunkZ) {
         UUID uuid = player.getUniqueId();
         assertTrue(env.accounts().forceRegister(uuid, player.getName(), "test-pw"),
                 "force register must create the account");
-        Location logout = new Location(world, chunkX * 16 + 8, y, chunkZ * 16 + 8);
+        Location logout = new Location(world, chunkX * 16 + 8, GROUND_Y, chunkZ * 16 + 8);
         env.data().getPlayer(uuid).logoutLocation(PlayerDataManager.serializeLocation(logout));
         return logout;
     }

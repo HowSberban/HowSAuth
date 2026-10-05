@@ -359,12 +359,7 @@ public final class MockBukkitHarness implements AutoCloseable {
     }
 
     /** 包装真实任务句柄：取消退化为安全空操作（MockBukkit 未实现 cancel），其余状态透传 */
-    private static final class CancelSafeTask implements ScheduledTask {
-        private final ScheduledTask delegate;
-
-        private CancelSafeTask(ScheduledTask delegate) {
-            this.delegate = delegate;
-        }
+    private record CancelSafeTask(ScheduledTask delegate) implements ScheduledTask {
 
         @Override
         @NotNull
