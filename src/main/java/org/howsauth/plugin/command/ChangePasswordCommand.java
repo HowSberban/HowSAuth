@@ -50,7 +50,7 @@ public final class ChangePasswordCommand implements BasicCommand {
         if (PasswordValidator.invalid(plugin, player, newPassword)) return;
 
         // 异步修改：旧密码校验与新密码哈希（bcrypt 耗时）在异步线程执行，回调回到玩家区域线程
-        authManager.changePasswordAsync(player, oldPassword, newPassword, success ->
+        plugin.loginFlow().changePasswordAsync(player, oldPassword, newPassword, success ->
                 player.sendMessage(I18n.msg(success ? "changepw.success" : "changepw.incorrect_old", player)));
     }
 }

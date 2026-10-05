@@ -15,6 +15,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.LoginFlow;
 import org.howsauth.plugin.auth.AccountLifecycle;
 import org.howsauth.plugin.auth.AuthManager.LoginResult;
 import org.howsauth.plugin.auth.FailProtection;
@@ -178,6 +179,11 @@ public final class MockBukkitHarness implements AutoCloseable {
         return auth.accounts();
     }
 
+    /** 登录/注册编排：AuthManager 拆分后登录流程由该服务持有 */
+    public LoginFlow loginFlow() {
+        return auth.loginFlow();
+    }
+
     /** 注册一个使用同步实体调度器的玩家（addPasswordAsync 等依赖 player.getScheduler()） */
     public TestPlayerMock addScheduledPlayer(String name) {
         TestPlayerMock player = new TestPlayerMock(server, name);
@@ -201,7 +207,7 @@ public final class MockBukkitHarness implements AutoCloseable {
     /** 阻塞等待异步登录结果（loginConfigAsync 的回调在异步调度线程执行） */
     public LoginOutcome login(UUID uuid, String password, String ip) throws Exception {
         CompletableFuture<LoginOutcome> future = new CompletableFuture<>();
-        auth.loginConfigAsync(uuid, password, ip,
+        auth.loginFlow().loginConfigAsync(uuid, password, ip,
                 (result, kickSeconds) -> future.complete(new LoginOutcome(result, kickSeconds)));
         return future.get(30, TimeUnit.SECONDS);
     }

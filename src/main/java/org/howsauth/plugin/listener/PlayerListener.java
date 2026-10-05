@@ -8,6 +8,7 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.LoginFlow;
 import org.howsauth.plugin.auth.AccountLifecycle;
 import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.LogoutLocation;
@@ -49,13 +50,14 @@ public final class PlayerListener implements Listener {
     private final TwoFactorAuth twoFactor;
     private final LogoutLocation locations;
     private final AccountLifecycle accounts;
+    private final LoginFlow loginFlow;
     // 活跃的提醒 BossBar：登录成功/玩家退出时立即隐藏（不等下一个任务周期）
     private final Map<UUID, net.kyori.adventure.bossbar.BossBar> reminderBars = new ConcurrentHashMap<>();
     // 活跃的提醒任务：重新挂起（reload）时取消旧任务，避免新旧任务并行重复提醒
     private final Map<UUID, ScheduledTask> reminderTasks = new ConcurrentHashMap<>();
 
     public PlayerListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions,
-                          FailProtection failProtection, TwoFactorAuth twoFactor, LogoutLocation locations, AccountLifecycle accounts) {
+                          FailProtection failProtection, TwoFactorAuth twoFactor, LogoutLocation locations, AccountLifecycle accounts, LoginFlow loginFlow) {
         this.plugin = plugin;
         this.authManager = authManager;
         this.sessions = sessions;
@@ -63,6 +65,7 @@ public final class PlayerListener implements Listener {
         this.twoFactor = twoFactor;
         this.locations = locations;
         this.accounts = accounts;
+        this.loginFlow = loginFlow;
     }
 
     // 在玩家加入世界前拦截：踢出期玩家、同一 IP 账号数量超限
@@ -146,7 +149,7 @@ public final class PlayerListener implements Listener {
         clearLoginBlindness(player);
 
         // 更新活跃时间（有账号即更新，用于不活跃清理；未注册玩家不写库）
-        authManager.touchActive(player);
+        loginFlow.touchActive(player);
 
         // Pre-join Dialog 已在配置阶段完成登录/注册：收尾后直接进入世界（无需挂起）
         PreJoinAuthListener preJoin = plugin.getPreJoinAuthListener();
@@ -154,7 +157,7 @@ public final class PlayerListener implements Listener {
             PreJoinAuthListener.AuthOutcome outcome = preJoin.consume(player);
             if (outcome != null) {
                 boolean login = outcome == PreJoinAuthListener.AuthOutcome.LOGIN;
-                if (login ? authManager.finishPreJoinLogin(player) : authManager.finishPreJoinRegister(player)) {
+                if (login ? loginFlow.finishPreJoinLogin(player) : loginFlow.finishPreJoinRegister(player)) {
                     player.sendMessage(I18n.msg(login ? "login.success" : "register.success", player));
                     return;
                 }
@@ -176,7 +179,7 @@ public final class PlayerListener implements Listener {
             if (Debug.on()) {
                 Debug.log("flow", "join %s: premium branch (sessionHit=%s)", player.getName(), sessionHit);
             }
-            authManager.autoLogin(player);
+            loginFlow.autoLogin(player);
             // 已绑定 2FA（pre-join 弹窗未覆盖时的回退）：等待验证码，登录收尾与传送延迟到 /2fa 验证完成
             boolean pending2fa = twoFactor.isPending(player.getUniqueId());
             if (pending2fa) {
@@ -197,7 +200,7 @@ public final class PlayerListener implements Listener {
                 if (Debug.on()) {
                     Debug.log("flow", "join %s: account branch, login session hit", player.getName());
                 }
-                authManager.autoLogin(player);
+                loginFlow.autoLogin(player);
                 if (twoFactor.isPending(player.getUniqueId())) {
                     // 已绑定 2FA（pre-join 弹窗未覆盖时的回退）：等待验证码，传送由 /2fa 验证完成流程处理
                     suspend(player, "login.need_2fa", true);
@@ -293,7 +296,7 @@ public final class PlayerListener implements Listener {
         // 无密码账户：密码不是登录因素，已绑定验证器时验证码成为唯一登录方式
         boolean passwordless = hasAccount && accounts.isPasswordless(uuid);
         if (passwordless) {
-            String ip = AuthManager.clientIp(player);
+            String ip = SessionStore.clientIp(player);
             // 仅 2FA 会话命中（同 IP 且未过期）时免验证码登录：无密钥账户否则会因
             // requires2faAtLogin 判空短路被 autoLogin 免密直入（认证绕过），必须显式判定
             if (twoFactor.hasSession(uuid, ip)) {
@@ -301,7 +304,7 @@ public final class PlayerListener implements Listener {
                 if (Debug.on()) {
                     Debug.log("flow", "auth flow %s: passwordless 2FA session hit, auto login", player.getName());
                 }
-                authManager.autoLogin(player);
+                loginFlow.autoLogin(player);
                 player.sendMessage(I18n.msg("login.success", player));
                 locations.teleportBack(player);
                 return;
@@ -319,7 +322,7 @@ public final class PlayerListener implements Listener {
                 Debug.log("flow", "auth flow %s: no usable login method (suspend to timeout)", player.getName());
             }
             plugin.getLogger().warning(I18n.get("log.passwordless_no_auth_account",
-                    player.getName(), AuthManager.clientIp(player)));
+                    player.getName(), SessionStore.clientIp(player)));
         }
         if (Debug.on()) {
             Debug.log("flow", "auth flow %s: suspend with prompt %s (hasAccount=%s)",
@@ -516,7 +519,7 @@ public final class PlayerListener implements Listener {
         if (timeout <= 0) return;
 
         // 记录启动时间，触发时校验是否为最新任务（forceRegister 重启超时后旧任务自动失效）
-        long startedAt = authManager.markLoginTimeoutStart(player.getUniqueId());
+        long startedAt = sessions.markLoginTimeoutStart(player.getUniqueId());
         // 20 tick = 1 秒
         long delayTicks = timeout * 20L;
         // Paper 1.20+ 统一调度器 API，兼容 Folia（在实体所在区域调度）
@@ -574,7 +577,7 @@ public final class PlayerListener implements Listener {
         if (Debug.on()) {
             Debug.log("flow", "quit cleanup for %s: clearing session state (MONITOR, after message decision)", event.getPlayer().getName());
         }
-        authManager.clearSession(event.getPlayer());
+        loginFlow.clearSession(event.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.LOWEST)

@@ -153,11 +153,11 @@ class LongRunStabilityTest {
                             // 正确密码登录
                             assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, password, ip), name + " must log in successfully");
                             // 修改密码：旧密码失效、新密码可用
-                            assertTrue(auth.forceChangePassword(uuid, "newpass" + i), name + " forceChangePassword must succeed");
+                            assertTrue(env.loginFlow().forceChangePassword(uuid, "newpass" + i), name + " forceChangePassword must succeed");
                             assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, password, ip), name + " old password must be rejected after change");
                             assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, "newpass" + i, ip), name + " new password must log in");
                             // 管理员强制下线后仍可再次登录
-                            auth.forceLogout(uuid);
+                            env.loginFlow().forceLogout(uuid);
                             assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, "newpass" + i, ip), name + " must log in again after force logout");
                             // 间歇触发周期任务（模拟 5s flush 与 30s 状态清理）
                             if ((i & 7) == 0) {
@@ -386,16 +386,16 @@ class LongRunStabilityTest {
 
         // 绑定后登录需 2FA：错误码保持待验证，正确码通过，同周期验证码被防重放拒绝
         assertEquals(LoginResult.NEED_2FA, env.loginBlocking(uuid, password, ip), "login must require 2FA after binding");
-        assertFalse(auth.verify2faConfig(uuid, "000000", ip), "wrong 2FA code must be rejected");
+        assertFalse(env.loginFlow().verify2faConfig(uuid, "000000", ip), "wrong 2FA code must be rejected");
         assertTrue(env.twoFactor().isPending(uuid), "state must return to pending verification after failure");
         String code = env.totpCode(secret);
-        assertTrue(auth.verify2faConfig(uuid, code, ip), "correct 2FA code must pass");
+        assertTrue(env.loginFlow().verify2faConfig(uuid, code, ip), "correct 2FA code must pass");
         env.twoFactor().markPending(uuid);
-        assertFalse(auth.verify2faConfig(uuid, code, ip), "code from the same TOTP period must be rejected by replay protection");
+        assertFalse(env.loginFlow().verify2faConfig(uuid, code, ip), "code from the same TOTP period must be rejected by replay protection");
 
         // rmpw：错误码拒、正确码转无密码账户；旧密码随之失效
-        assertFalse(auth.removePassword(player, "000000"), "removePassword with a wrong code must fail");
-        assertTrue(auth.removePassword(player, env.totpCode(secret)), "removePassword with a correct code must succeed");
+        assertFalse(env.loginFlow().removePassword(player, "000000"), "removePassword with a wrong code must fail");
+        assertTrue(env.loginFlow().removePassword(player, env.totpCode(secret)), "removePassword with a correct code must succeed");
         assertTrue(env.accounts().isPasswordless(uuid), "account must be passwordless after removal");
         assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, password, ip), "old password must be rejected after removal");
 
@@ -404,16 +404,16 @@ class LongRunStabilityTest {
         // 注入时钟前进一个周期即可（无需真实等待 30 秒）
         env.advanceTotpPeriod();
         env.twoFactor().markPending(uuid);
-        assertTrue(auth.verify2faConfig(uuid, env.totpCode(secret), ip), "passwordless account must verify with 2FA only");
+        assertTrue(env.loginFlow().verify2faConfig(uuid, env.totpCode(secret), ip), "passwordless account must verify with 2FA only");
 
         // addpw：无密码账户可设密；已有密码再设应被拒绝
         CompletableFuture<Boolean> setFuture = new CompletableFuture<>();
-        auth.addPasswordAsync(player, "set-pw", setFuture::complete);
+        env.loginFlow().addPasswordAsync(player, "set-pw", setFuture::complete);
         assertTrue(setFuture.get(30, TimeUnit.SECONDS), "passwordless account must accept a new password");
         assertFalse(env.accounts().isPasswordless(uuid), "account must have a password after set");
         assertTrue(env.twoFactor().has2fa(uuid), "2FA must stay active after setting a password");
         CompletableFuture<Boolean> again = new CompletableFuture<>();
-        auth.addPasswordAsync(player, "another-pw", again::complete);
+        env.loginFlow().addPasswordAsync(player, "another-pw", again::complete);
         assertFalse(again.get(30, TimeUnit.SECONDS), "addpw on an account that already has a password must be rejected");
 
         // 有密 + 2FA：登录仍须验证码（拦截生效）；解绑（错误码拒/正确码过）后直接登录
@@ -432,10 +432,10 @@ class LongRunStabilityTest {
             assertTrue(env.twoFactor().confirm(player, env.totpCode(s)), "round " + round + " confirm2fa must succeed");
             assertTrue(env.twoFactor().has2fa(uuid), "round " + round + " 2FA must be active after binding");
             assertEquals(LoginResult.NEED_2FA, env.loginBlocking(uuid, lastPw, ip), "round " + round + " login must require 2FA");
-            assertTrue(auth.removePassword(player, env.totpCode(s)), "round " + round + " removePassword must succeed");
+            assertTrue(env.loginFlow().removePassword(player, env.totpCode(s)), "round " + round + " removePassword must succeed");
             assertTrue(env.accounts().isPasswordless(uuid), "round " + round + " account must be passwordless");
             CompletableFuture<Boolean> set = new CompletableFuture<>();
-            auth.addPasswordAsync(player, "cycle-pw" + round, set::complete);
+            env.loginFlow().addPasswordAsync(player, "cycle-pw" + round, set::complete);
             assertTrue(set.get(30, TimeUnit.SECONDS), "round " + round + " addpw must succeed");
             assertFalse(env.accounts().isPasswordless(uuid), "round " + round + " account must have a password");
             lastPw = "cycle-pw" + round;

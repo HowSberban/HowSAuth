@@ -243,7 +243,7 @@ public final class SessionStore {
     // ===== 登录超时任务 =====
 
     /** 记录登录超时任务启动时间并返回（调用方据此判断超时任务是否为最新） */
-    long markLoginTimeoutStart(UUID uuid) {
+    public long markLoginTimeoutStart(UUID uuid) {
         long now = System.currentTimeMillis();
         loginTimeoutStartedAt.put(uuid, now);
         return now;

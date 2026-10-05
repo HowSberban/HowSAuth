@@ -116,7 +116,7 @@ class FailProtectionTest {
         assertFalse(env.failProtection().isKicked(uuid), "below-threshold failures must not kick");
 
         // 模拟玩家退出重连：会话状态清理不应丢弃失败计数
-        auth.clearSession(player);
+        env.loginFlow().clearSession(player);
         assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, "wrong", ip), "wrong password must still fail after reconnect");
         assertTrue(env.failProtection().isKicked(uuid), "failure count must survive session clear: threshold reached after reconnect must kick");
     }

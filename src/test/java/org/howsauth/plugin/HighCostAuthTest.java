@@ -68,7 +68,7 @@ class HighCostAuthTest {
         assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, password, ip), "the correct password must log in");
         assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, "wrong-pw", ip), "wrong password must fail login");
 
-        assertTrue(auth.forceChangePassword(uuid, changed), "password change must succeed");
+        assertTrue(env.loginFlow().forceChangePassword(uuid, changed), "password change must succeed");
         assertEquals(LoginResult.FAILED, env.loginBlocking(uuid, password, ip), "the old password must stop working");
         assertEquals(LoginResult.SUCCESS, env.loginBlocking(uuid, changed, ip), "the new password must log in");
 
@@ -78,7 +78,7 @@ class HighCostAuthTest {
         assertTrue(env.twoFactor().confirm(player, env.totpCode(secret)), "a valid code must confirm the 2FA setup");
         assertTrue(env.twoFactor().has2fa(uuid), "2FA must be active after binding");
         assertEquals(LoginResult.NEED_2FA, env.loginBlocking(uuid, changed, ip), "login must require 2FA after binding");
-        assertTrue(auth.verify2faConfig(uuid, env.totpCode(secret), ip), "a valid 2FA code must pass");
+        assertTrue(env.loginFlow().verify2faConfig(uuid, env.totpCode(secret), ip), "a valid 2FA code must pass");
 
         // 数据可持久化读取（确认生产强度哈希落库后仍可校验）
         assertNotNull(env.data().getPlayer(uuid), "account data must exist");

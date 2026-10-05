@@ -14,6 +14,7 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.LoginFlow;
 import org.howsauth.plugin.auth.AccountLifecycle;
 import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.PasswordValidator;
@@ -52,6 +53,7 @@ public final class PreJoinAuthListener implements Listener {
     private final FailProtection failProtection;
     private final TwoFactorAuth twoFactor;
     private final AccountLifecycle accounts;
+    private final LoginFlow loginFlow;
     private final DialogManager dialogManager;
     // 配置阶段认证结果：UUID → 结果（进入世界时移除）
     private final Map<UUID, AuthOutcome> outcomes = new ConcurrentHashMap<>();
@@ -81,13 +83,14 @@ public final class PreJoinAuthListener implements Listener {
 
     public PreJoinAuthListener(HowSAuth plugin, AuthManager authManager, SessionStore sessions,
                                FailProtection failProtection, TwoFactorAuth twoFactor,
-                               AccountLifecycle accounts, DialogManager dialogManager) {
+                               AccountLifecycle accounts, LoginFlow loginFlow, DialogManager dialogManager) {
         this.plugin = plugin;
         this.authManager = authManager;
         this.sessions = sessions;
         this.failProtection = failProtection;
         this.twoFactor = twoFactor;
         this.accounts = accounts;
+        this.loginFlow = loginFlow;
         this.dialogManager = dialogManager;
     }
 
@@ -364,7 +367,7 @@ public final class PreJoinAuthListener implements Listener {
                 showLogin(session, uuid, locale, DialogManager.text(locale, "dialog.empty_password"));
                 return;
             }
-            authManager.loginConfigAsync(uuid, password, clientIp(session.connection), (result, kickSeconds) -> {
+            loginFlow.loginConfigAsync(uuid, password, clientIp(session.connection), (result, kickSeconds) -> {
                 if (configSessions.get(uuid) != session) return;
                 if (Debug.on()) {
                     Debug.log("dialog", "login dialog confirm for %s: %s", uuid.toString().substring(0, 8), result);
@@ -470,7 +473,7 @@ public final class PreJoinAuthListener implements Listener {
                 show2fa(session, uuid, locale, DialogManager.text(locale, "dialog.empty_code"));
                 return;
             }
-            if (authManager.verify2faConfig(uuid, code, clientIp(session.connection))) {
+            if (loginFlow.verify2faConfig(uuid, code, clientIp(session.connection))) {
                 if (Debug.on()) {
                     Debug.log("dialog", "2fa dialog confirm for %s: success", uuid.toString().substring(0, 8));
                 }

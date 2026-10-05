@@ -247,7 +247,7 @@ public final class HSAuthCommand {
         }
         // 异步解析 UUID（Folia 兼容）
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            boolean success = plugin.getAuthManager().forceLogout(resolveTargetUuid(targetName));
+            boolean success = plugin.loginFlow().forceLogout(resolveTargetUuid(targetName));
             if (success) {
                 if (Debug.on()) {
                     Debug.log("cmd", "forcelogout by %s for %s: success", sender.getName(), targetName);
@@ -279,7 +279,7 @@ public final class HSAuthCommand {
         if (PasswordValidator.invalidPattern(plugin, sender, newPassword)) return Command.SINGLE_SUCCESS;
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
             UUID uuid = resolveTargetUuid(targetName);
-            if (!plugin.getAuthManager().forceChangePassword(uuid, newPassword)) {
+            if (!plugin.loginFlow().forceChangePassword(uuid, newPassword)) {
                 if (Debug.on()) {
                     Debug.log("cmd", "forcechangepw by %s for %s: account not found", sender.getName(), targetName);
                 }
@@ -307,7 +307,7 @@ public final class HSAuthCommand {
             Debug.log("cmd", "forcermpw by %s for %s", sender.getName(), targetName);
         }
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            if (!plugin.getAuthManager().forceRemovePassword(resolveTargetUuid(targetName))) {
+            if (!plugin.loginFlow().forceRemovePassword(resolveTargetUuid(targetName))) {
                 if (Debug.on()) {
                     Debug.log("cmd", "forcermpw by %s for %s: account not found", sender.getName(), targetName);
                 }
@@ -357,7 +357,7 @@ public final class HSAuthCommand {
             sender.sendMessage(I18n.msg("hsauth.already_logged_in", sender, targetName));
             return 0;
         }
-        plugin.getAuthManager().forceLogin(target);
+        plugin.loginFlow().forceLogin(target);
         // 强制登录后传送回上次退出位置
         plugin.locations().teleportBack(target);
         if (Debug.on()) {

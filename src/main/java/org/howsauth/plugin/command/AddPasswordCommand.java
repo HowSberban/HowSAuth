@@ -55,7 +55,7 @@ public final class AddPasswordCommand implements BasicCommand {
         if (PasswordValidator.invalid(plugin, player, password)) return;
 
         // 异步设置：bcrypt 哈希耗时，避免阻塞玩家区域线程；回调在玩家区域线程执行
-        authManager.addPasswordAsync(player, password, success ->
+        plugin.loginFlow().addPasswordAsync(player, password, success ->
                 player.sendMessage(I18n.msg(success ? "addpassword.success" : "addpassword.failed", player)));
     }
 }

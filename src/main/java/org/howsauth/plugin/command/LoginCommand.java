@@ -3,7 +3,7 @@ package org.howsauth.plugin.command;
 import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.howsauth.plugin.I18n;
-import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.LoginFlow;
 import org.howsauth.plugin.auth.AccountLifecycle;
 import org.howsauth.plugin.auth.LogoutLocation;
 import org.howsauth.plugin.auth.SessionStore;
@@ -13,13 +13,13 @@ import org.jetbrains.annotations.NotNull;
 
 public final class LoginCommand implements BasicCommand {
 
-    private final AuthManager authManager;
+    private final LoginFlow loginFlow;
     private final SessionStore sessions;
     private final LogoutLocation locations;
     private final AccountLifecycle accounts;
 
-    public LoginCommand(AuthManager authManager, SessionStore sessions, LogoutLocation locations, AccountLifecycle accounts) {
-        this.authManager = authManager;
+    public LoginCommand(LoginFlow loginFlow, SessionStore sessions, LogoutLocation locations, AccountLifecycle accounts) {
+        this.loginFlow = loginFlow;
         this.sessions = sessions;
         this.locations = locations;
         this.accounts = accounts;
@@ -56,7 +56,7 @@ public final class LoginCommand implements BasicCommand {
 
         // 异步登录：bcrypt 校验在异步线程执行，回调回到玩家区域线程处理结果
         // 踢出期检查已包含在 loginAsync 的轻量检查中，FAILED 回调的 kickSeconds > 0 即踢出
-        authManager.loginAsync(player, args[0], (result, kickSeconds) -> {
+        loginFlow.loginAsync(player, args[0], (result, kickSeconds) -> {
             switch (result) {
                 case SUCCESS -> {
                     player.sendMessage(I18n.msg("login.success", player));

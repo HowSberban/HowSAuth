@@ -3,7 +3,7 @@ package org.howsauth.plugin.command;
 import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.howsauth.plugin.I18n;
-import org.howsauth.plugin.auth.AuthManager;
+import org.howsauth.plugin.auth.LoginFlow;
 import org.howsauth.plugin.auth.AccountLifecycle;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.TwoFactorAuth;
@@ -18,13 +18,13 @@ import org.jetbrains.annotations.NotNull;
  */
 public final class RemovePasswordCommand implements BasicCommand {
 
-    private final AuthManager authManager;
+    private final LoginFlow loginFlow;
     private final SessionStore sessions;
     private final TwoFactorAuth twoFactor;
     private final AccountLifecycle accounts;
 
-    public RemovePasswordCommand(AuthManager authManager, SessionStore sessions, TwoFactorAuth twoFactor, AccountLifecycle accounts) {
-        this.authManager = authManager;
+    public RemovePasswordCommand(LoginFlow loginFlow, SessionStore sessions, TwoFactorAuth twoFactor, AccountLifecycle accounts) {
+        this.loginFlow = loginFlow;
         this.sessions = sessions;
         this.twoFactor = twoFactor;
         this.accounts = accounts;
@@ -63,7 +63,7 @@ public final class RemovePasswordCommand implements BasicCommand {
             return;
         }
 
-        if (authManager.removePassword(player, code)) {
+        if (loginFlow.removePassword(player, code)) {
             player.sendMessage(I18n.msg("removepassword.success", player));
         } else {
             player.sendMessage(I18n.msg("2fa.confirm_incorrect", player));

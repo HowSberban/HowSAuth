@@ -179,7 +179,7 @@ public final class HSAuthApi {
             }
             return false;
         }
-        authManager.forceLogin(player);
+        authManager.loginFlow().forceLogin(player);
         if (Debug.on()) {
             Debug.log("api", "force login %s: success", player.getName());
         }
@@ -198,7 +198,7 @@ public final class HSAuthApi {
             }
             return false;
         }
-        boolean result = authManager.forceLogout(uuid);
+        boolean result = authManager.loginFlow().forceLogout(uuid);
         if (Debug.on()) {
             Debug.log("api", "force logout %s: %s", uuid.toString().substring(0, 8), result ? "success" : "not logged in");
         }
@@ -229,7 +229,7 @@ public final class HSAuthApi {
             }
             return false;
         }
-        authManager.forceLogin(player);
+        authManager.loginFlow().forceLogin(player);
         if (Debug.on()) {
             Debug.log("api", "force register %s: success", player.getName());
         }
@@ -333,7 +333,7 @@ public final class HSAuthApi {
             }
             return false;
         }
-        boolean result = authManager.forceChangePassword(uuid, newPassword);
+        boolean result = authManager.loginFlow().forceChangePassword(uuid, newPassword);
         if (Debug.on()) {
             Debug.log("api", "change password %s: %s", uuid.toString().substring(0, 8), result ? "success" : "no account");
         }
