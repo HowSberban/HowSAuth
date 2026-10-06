@@ -15,7 +15,7 @@ import java.util.UUID;
 
 /**
  * 登录阶段事件仿真脚手架（测试专用）：用真实 {@code EmbeddedChannel}（真 pipeline + 内联 EventLoop）
- * 与真实 {@code User} 驱动握手代码，出站包记入 {@link RecordingProtocolManager} 供断言。
+ * 与真实 {@code User} 驱动握手代码，出站包由 {@code RecordingProtocolManager} 记录供断言。
  * <p>
  * 真实 {@code User} 的构造前提是先装好 {@link PacketEventsTestSupport}。
  * <p>
@@ -53,14 +53,14 @@ public final class LoginEventScaffold {
     }
 
     /** 构造 EncryptionResponse 事件；包体留空（测试只覆盖无需解密的早退分支） */
-    public static PacketReceiveEvent encryptionResponse(FakeClient client) throws Exception {
+    public static PacketReceiveEvent encryptionResponse(FakeClient client) {
         return rawPacket(client, PacketType.Login.Client.ENCRYPTION_RESPONSE, Unpooled.buffer());
     }
 
     /** 用给定包体构造一个收包事件；readerIndex 归零，保证从包首开始解析 */
     public static PacketReceiveEvent rawPacket(FakeClient client,
                                                com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon type,
-                                               ByteBuf body) throws Exception {
+                                               ByteBuf body) {
         PacketReceiveEvent event = new TestPacketReceiveEvent(client.channel(), client.user(), type, Unpooled.buffer());
         event.setByteBuf(body.readerIndex(0));
         return event;

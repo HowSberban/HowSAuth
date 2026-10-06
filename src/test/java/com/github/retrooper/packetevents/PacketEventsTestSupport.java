@@ -9,7 +9,6 @@ import com.github.retrooper.packetevents.netty.NettyManager;
 import com.github.retrooper.packetevents.netty.buffer.ByteBufAllocationOperator;
 import com.github.retrooper.packetevents.settings.PacketEventsSettings;
 import io.netty.buffer.ByteBuf;
-import org.jetbrains.annotations.Nullable;
 import io.netty.buffer.Unpooled;
 
 import java.lang.reflect.InvocationHandler;
@@ -53,30 +52,25 @@ public final class PacketEventsTestSupport {
             };
         }
 
-        public List<Object> sentPackets() {
-            return sentPackets;
-        }
     }
 
     /** 缓冲分配器：直接委托 netty 的 Unpooled（packetevents 的读写都走此接口） */
     private static final class NettyProxies {
         static ByteBufAllocationOperator allocationOperator() {
-            InvocationHandler h = (proxy, method, args) -> {
-                return switch (method.getName()) {
-                    case "wrappedBuffer" -> Unpooled.wrappedBuffer((byte[]) args[0]);
-                    case "copiedBuffer" -> Unpooled.copiedBuffer((byte[]) args[0]);
-                    case "buffer" -> args == null || args.length == 0
-                            ? Unpooled.buffer() : Unpooled.buffer((int) args[0]);
-                    case "directBuffer" -> args == null || args.length == 0
-                            ? Unpooled.directBuffer() : Unpooled.directBuffer((int) args[0]);
-                    case "compositeBuffer" -> args == null || args.length == 0
-                            ? Unpooled.compositeBuffer() : Unpooled.compositeBuffer((int) args[0]);
-                    case "emptyBuffer" -> Unpooled.EMPTY_BUFFER;
-                    case "toString" -> "TestByteBufAllocationOperator";
-                    case "hashCode" -> System.identityHashCode(proxy);
-                    case "equals" -> proxy == (args == null ? null : args[0]);
-                    default -> defaultValue(method.getReturnType());
-                };
+            InvocationHandler h = (proxy, method, args) -> switch (method.getName()) {
+                case "wrappedBuffer" -> Unpooled.wrappedBuffer((byte[]) args[0]);
+                case "copiedBuffer" -> Unpooled.copiedBuffer((byte[]) args[0]);
+                case "buffer" -> args == null || args.length == 0
+                        ? Unpooled.buffer() : Unpooled.buffer((int) args[0]);
+                case "directBuffer" -> args == null || args.length == 0
+                        ? Unpooled.directBuffer() : Unpooled.directBuffer((int) args[0]);
+                case "compositeBuffer" -> args == null || args.length == 0
+                        ? Unpooled.compositeBuffer() : Unpooled.compositeBuffer((int) args[0]);
+                case "emptyBuffer" -> Unpooled.EMPTY_BUFFER;
+                case "toString" -> "TestByteBufAllocationOperator";
+                case "hashCode" -> System.identityHashCode(proxy);
+                case "equals" -> proxy == (args == null ? null : args[0]);
+                default -> defaultValue(method.getReturnType());
             };
             return (ByteBufAllocationOperator) Proxy.newProxyInstance(
                     PacketEventsTestSupport.class.getClassLoader(),
@@ -86,15 +80,13 @@ public final class PacketEventsTestSupport {
         static NettyManager manager() {
             ByteBufAllocationOperator alloc = allocationOperator();
             com.github.retrooper.packetevents.netty.buffer.ByteBufOperator bufOps = byteBufOperator();
-            InvocationHandler h = (proxy, method, args) -> {
-                return switch (method.getName()) {
-                    case "getByteBufAllocationOperator" -> alloc;
-                    case "getByteBufOperator" -> bufOps;
-                    case "toString" -> "TestNettyManager";
-                    case "hashCode" -> System.identityHashCode(proxy);
-                    case "equals" -> proxy == (args == null ? null : args[0]);
-                    default -> defaultValue(method.getReturnType());
-                };
+            InvocationHandler h = (proxy, method, args) -> switch (method.getName()) {
+                case "getByteBufAllocationOperator" -> alloc;
+                case "getByteBufOperator" -> bufOps;
+                case "toString" -> "TestNettyManager";
+                case "hashCode" -> System.identityHashCode(proxy);
+                case "equals" -> proxy == (args == null ? null : args[0]);
+                default -> defaultValue(method.getReturnType());
             };
             return (NettyManager) Proxy.newProxyInstance(
                     PacketEventsTestSupport.class.getClassLoader(),
@@ -191,49 +183,41 @@ public final class PacketEventsTestSupport {
         }
 
         @Override
-        @Nullable
         public Object getPlugin() {
             return null;
         }
 
         @Override
-        @Nullable
         public ServerManager getServerManager() {
             return null;
         }
 
         @Override
-        @Nullable
         public ProtocolManager getProtocolManager() {
             return protocolManager;
         }
 
         @Override
-        @Nullable
         public PlayerManager getPlayerManager() {
             return null;
         }
 
         @Override
-        @Nullable
         public NettyManager getNettyManager() {
             return NettyProxies.manager();
         }
 
         @Override
-        @Nullable
         public ChannelInjector getInjector() {
             return null;
         }
 
         @Override
-        @Nullable
         public PacketEventsSettings getSettings() {
             return settings;
         }
 
         @Override
-        @Nullable
         public EventManager getEventManager() {
             return new EventManager();
         }
@@ -246,13 +230,12 @@ public final class PacketEventsTestSupport {
      * 安装 API 替身并返回记录器。
      * 幂等：重复调用替换为新的记录器（每个测试用例独立记录）。
      */
-    public static RecordingProtocolManager install() {
+    public static void install() {
         RecordingProtocolManager recorder = new RecordingProtocolManager();
         ProtocolManager protocolManager = (ProtocolManager) Proxy.newProxyInstance(
                 PacketEventsTestSupport.class.getClassLoader(),
                 new Class<?>[]{ProtocolManager.class}, recorder);
         PacketEvents.setAPI(new StubApi(protocolManager));
-        return recorder;
     }
 
     private static Object defaultValue(Class<?> type) {

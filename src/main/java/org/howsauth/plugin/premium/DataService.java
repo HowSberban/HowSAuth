@@ -45,6 +45,11 @@ public final class DataService {
      * @return ProfileResult，exists=false 表示无记录
      */
     public ProfileResult getProfile(String name) {
+        // name 为 null 时离线 UUID 推导与按名索引都无意义，直接判为无记录
+        // （底层缓存是 ConcurrentHashMap，不接受 null 键）
+        if (name == null) {
+            return new ProfileResult(false, false, null, null);
+        }
         // 1. 计算离线 UUID 并查询
         UUID offlineUuid = OfflineUuids.of(name);
         PlayerData offlineData = dataManager.getPlayer(offlineUuid);

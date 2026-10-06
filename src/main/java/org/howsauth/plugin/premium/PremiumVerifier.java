@@ -28,7 +28,7 @@ final class PremiumVerifier {
                               UUID uuid, String username, String properties);
 
         /** 踢出连接：发送 Disconnect、关闭 channel 并清理会话 */
-        void kick(Channel channel, User user, SessionContext session);
+        void kick(Channel channel, User user);
 
         /** 异步异常兜底：回退升级标记、记日志、踢出（连接已断则仅清会话） */
         void failAsyncLogin(Channel channel, User user, SessionContext session, String reason);
@@ -107,7 +107,7 @@ final class PremiumVerifier {
         if (Debug.on()) {
             Debug.log("premium", "kick %s: premium verification failed", username);
         }
-        handler.kick(channel, user, session);
+        handler.kick(channel, user);
     }
 
     /** 验证成功：保存/迁移正版数据、清除回退标记，然后进入游戏 */

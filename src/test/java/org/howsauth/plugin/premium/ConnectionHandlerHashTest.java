@@ -1,7 +1,8 @@
 package org.howsauth.plugin.premium;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -68,7 +69,7 @@ class ConnectionHandlerHashTest {
                 break;
             }
         }
-        assertTrue(sharedSecret != null,
+        assertNotNull(sharedSecret,
                 "the vector search must find a digest whose first byte has the high bit set");
 
         String hash = computeServerHash(sharedSecret, publicKey);
@@ -89,7 +90,7 @@ class ConnectionHandlerHashTest {
     void differentInputsProduceDifferentHashes() throws Exception {
         String a = computeServerHash(new byte[]{1}, new byte[]{2});
         String b = computeServerHash(new byte[]{2}, new byte[]{1});
-        assertFalse(a.equals(b), "different inputs must not collide");
+        assertNotEquals(a, b, "different inputs must not collide");
     }
 
     /** 同一输入重复计算结果一致 */

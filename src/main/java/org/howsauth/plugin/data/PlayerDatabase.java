@@ -204,10 +204,10 @@ final class PlayerDatabase implements AutoCloseable {
     }
 
     /**
-     * 整批 upsert，同一事务；成功返回 true。
-     * 用批量 addBatch 减少往返，失败整体回滚，避免只写一半。
+     * 整批 upsert，同一事务。
+     * 用批量 addBatch 减少往返，失败整体回滚并抛出，避免只写一半（故无布尔返回值）。
      */
-    boolean upsertRows(List<PlayerData> list) throws SQLException {
+    void upsertRows(List<PlayerData> list) throws SQLException {
         try (Connection conn = dataSource.getConnection()) {
             conn.setAutoCommit(false);
             try (PreparedStatement ps = conn.prepareStatement(sqlUpsert)) {
@@ -222,7 +222,6 @@ final class PlayerDatabase implements AutoCloseable {
                 throw e;
             }
         }
-        return true;
     }
 
     /** 删除一行（自动提交）。 */

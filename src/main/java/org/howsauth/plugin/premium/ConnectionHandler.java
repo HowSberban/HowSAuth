@@ -46,9 +46,6 @@ public final class ConnectionHandler extends PacketListenerAbstract {
     // 每连接会话状态：channel → SessionContext（由 LoginSessions 统一管理增删与清理）
     private final LoginSessions sessions = new LoginSessions();
 
-    // 正版验证结果处理：账号迁移/密码回退/踢出的分支在此，控制动作回指本类
-    private final PremiumVerifier verifier;
-
     // 登录加密握手：LoginStart 拦截决策与 EncryptionResponse 处理
     private final PremiumHandshake handshake;
 
@@ -59,8 +56,9 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         this.playerInjector = playerInjector;
         // 密钥对只交给握手使用，本类无需保留
         KeyPair rsaKeyPair = LoginFrames.generateKeyPair();
-        // 控制动作仍由本类实现（涉及连接生命周期），验证器只负责决定走哪个分支
-        this.verifier = new PremiumVerifier(plugin, dataService, dataManager, mojangClient,
+        // 控制动作仍由本类实现（涉及连接生命周期），验证器只负责决定走哪个分支。
+        // 验证器随后只被交给握手，故无需持有为字段。
+        PremiumVerifier verifier = new PremiumVerifier(plugin, dataService, dataManager, mojangClient,
                 new PremiumVerifier.ResultHandler() {
                     @Override
                     public void proceedWithLogin(Channel channel, User user, SessionContext session,
@@ -69,8 +67,8 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                     }
 
                     @Override
-                    public void kick(Channel channel, User user, SessionContext session) {
-                        ConnectionHandler.this.kickOnEventLoop(channel, user, session);
+                    public void kick(Channel channel, User user) {
+                        ConnectionHandler.this.kickOnEventLoop(channel, user);
                     }
 
                     @Override
@@ -96,7 +94,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
     /** 踢出连接：委托 {@link LoginFrames#kick} 发送 Disconnect 并关闭 channel，随后清理会话 */
     // EventLoop 为长生命周期资源，不应关闭；此处仅借用其事件循环调度
     @SuppressWarnings("resource")
-    private void kickOnEventLoop(Channel channel, User user, SessionContext session) {
+    private void kickOnEventLoop(Channel channel, User user) {
         channel.eventLoop().execute(() -> {
             if (channel.isActive()) {
                 kick(channel, user, HowSAuth.legacy(I18n.get("listener.premium_unavailable")));

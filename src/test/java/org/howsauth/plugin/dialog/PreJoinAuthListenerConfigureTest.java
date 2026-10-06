@@ -49,6 +49,9 @@ import java.util.concurrent.TimeUnit;
  *       残留的 pending2fa 会让下次连接的密码玩家跳过密码验证）。</li>
  * </ul>
  */
+// AsyncPlayerConnectionConfigureEvent 等配置阶段连接 API 标注为 @ApiStatus.Internal：
+// 本测试必须构造该事件并实现 PlayerConfigurationConnection，无法回避这些类型，故整类抑制。
+@SuppressWarnings("UnstableApiUsage")
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 class PreJoinAuthListenerConfigureTest {
 
@@ -58,9 +61,9 @@ class PreJoinAuthListenerConfigureTest {
         private final String locale;
         final List<String> disconnects = new ArrayList<>();
 
-        FakeConnection(PlayerProfile profile, String locale) {
+        FakeConnection(PlayerProfile profile) {
             this.profile = profile;
-            this.locale = locale;
+            this.locale = "zh_CN";
         }
 
         @Override
@@ -175,7 +178,7 @@ class PreJoinAuthListenerConfigureTest {
     }
 
     private FakeConnection connection(String name, UUID uuid) {
-        return new FakeConnection(org.bukkit.Bukkit.createProfile(uuid, name), "zh_CN");
+        return new FakeConnection(org.bukkit.Bukkit.createProfile(uuid, name));
     }
 
     /** 驱动一次配置阶段事件 */

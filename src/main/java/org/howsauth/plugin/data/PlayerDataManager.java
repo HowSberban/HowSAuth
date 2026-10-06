@@ -215,7 +215,8 @@ public final class PlayerDataManager implements AutoCloseable {
     /** 批量 upsert，整批一个事务；成功返回 true，失败返回 false */
     private boolean upsertBatchSync(List<PlayerData> list) {
         try {
-            return database.upsertRows(list);
+            database.upsertRows(list);
+            return true;
         } catch (SQLException e) {
             plugin.getLogger().severe(I18n.get("log.save_all_failed", e.getMessage()));
             if (Debug.on()) {

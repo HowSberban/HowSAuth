@@ -62,7 +62,7 @@ class ConnectionHandlerLoginStartTest {
 
     /** 无会话的 EncryptionResponse（非正版流程）：放行且不取消包 */
     @Test
-    void encryptionResponseWithoutSessionPassesThrough() throws Exception {
+    void encryptionResponseWithoutSessionPassesThrough() {
         FakeClient client = LoginEventScaffold.newClient("NoSession");
 
         PacketReceiveEvent event = LoginEventScaffold.encryptionResponse(client);
@@ -74,7 +74,7 @@ class ConnectionHandlerLoginStartTest {
 
     /** 会话阶段不匹配的 EncryptionResponse：放行且不取消包 */
     @Test
-    void encryptionResponseWithWrongStagePassesThrough() throws Exception {
+    void encryptionResponseWithWrongStagePassesThrough() {
         FakeClient client = LoginEventScaffold.newClient("WrongStage");
         SessionContext session = new SessionContext();
         session.username("WrongStage");
@@ -90,7 +90,7 @@ class ConnectionHandlerLoginStartTest {
 
     /** 阶段匹配时会取消包（阻止服务端在 state=HELLO 下处理，否则会因状态不匹配抛异常） */
     @Test
-    void encryptionResponseAtExpectedStageIsCancelled() throws Exception {
+    void encryptionResponseAtExpectedStageIsCancelled() {
         FakeClient client = LoginEventScaffold.newClient("ExpectedStage");
         SessionContext session = new SessionContext();
         session.username("ExpectedStage");

@@ -9,7 +9,6 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.data.PlayerData;
 import org.howsauth.plugin.data.PlayerDataManager;
-import org.howsauth.plugin.premium.DataService;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
