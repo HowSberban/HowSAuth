@@ -4,6 +4,7 @@ import com.mojang.brigadier.Command;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.tree.LiteralCommandNode;
+import org.howsauth.plugin.OfflineUuids;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.data.PlayerData;
@@ -72,7 +73,7 @@ public final class PremiumCommand {
             // 无密码且无 2FA 时降级后账号将无法登录，仅警告不阻止（管理员强制操作）
             // 须在迁移前判定：executeDowngrade 会把记录移到离线 UUID，之后按旧 UUID 查询必为空
             boolean noLoginMethod = plugin.accounts().isPasswordless(data.uuid()) && !plugin.twoFactor().hasTotpSecret(data.uuid());
-            plugin.accounts().executeDowngrade(data.uuid(), DataService.offlineUuid(data.name()), data.name());
+            plugin.accounts().executeDowngrade(data.uuid(), OfflineUuids.of(data.name()), data.name());
             if (noLoginMethod) {
                 sender.sendMessage(I18n.msg("premium.no_login_method", sender, targetName));
             }

@@ -1,6 +1,7 @@
 package org.howsauth.plugin.premium;
 
 import org.howsauth.plugin.Debug;
+import org.howsauth.plugin.OfflineUuids;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
 import org.howsauth.plugin.data.PlayerData;
@@ -45,7 +46,7 @@ public final class DataService {
      */
     public ProfileResult getProfile(String name) {
         // 1. 计算离线 UUID 并查询
-        UUID offlineUuid = offlineUuid(name);
+        UUID offlineUuid = OfflineUuids.of(name);
         PlayerData offlineData = dataManager.getPlayer(offlineUuid);
         if (offlineData != null) {
             if (Debug.on()) {
@@ -137,11 +138,6 @@ public final class DataService {
      */
     public void clearPremiumFallbackConfirmed(String ip, String name) {
         premiumFallbackConfirmed.remove(cacheKey(ip, name));
-    }
-
-    /** 计算离线 UUID（原版离线模式：UUID.nameUUIDFromBytes("OfflinePlayer:" + name)） */
-    public static UUID offlineUuid(String name) {
-        return UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private static String cacheKey(String ip, String name) {

@@ -31,7 +31,6 @@ import java.util.concurrent.TimeUnit;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 class PlayerDatabaseUpsertTest {
 
-    private static final int GROUND = 64;
 
     private MockBukkitHarness env;
 

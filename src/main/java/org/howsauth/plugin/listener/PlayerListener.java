@@ -353,9 +353,8 @@ public final class PlayerListener implements Listener {
 
         var conn = event.getConnection();
         java.util.UUID uuid = conn.getProfile().getId();
-        // 代理协议下地址可能未解析（getAddress() 返回 null），判空避免 NPE
-        var clientAddr = conn.getClientAddress().getAddress();
-        String ip = clientAddr != null ? clientAddr.getHostAddress() : null;
+        // 代理协议下地址可能未解析（getAddress() 返回 null），统一走 SessionStore.ipOf 判空
+        String ip = SessionStore.ipOf(conn.getClientAddress());
 
         // 会话命中（免输密码）的玩家直接在退出位置出生，避免后续传送
         // 登录需 2FA 的除外：验证完成前不放行到退出位置（/2fa 验证后再传送）；

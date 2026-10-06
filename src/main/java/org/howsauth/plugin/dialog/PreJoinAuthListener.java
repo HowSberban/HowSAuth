@@ -334,8 +334,7 @@ public final class PreJoinAuthListener implements Listener {
     }
 
     private static String clientIp(PlayerConfigurationConnection conn) {
-        var address = conn.getClientAddress().getAddress();
-        return address != null ? address.getHostAddress() : null;
+        return org.howsauth.plugin.auth.SessionStore.ipOf(conn.getClientAddress());
     }
 
     // ===== 窗口展示与确认回调（仅做线程安全操作：重弹/断连/闭锁） =====

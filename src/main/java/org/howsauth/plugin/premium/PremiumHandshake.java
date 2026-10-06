@@ -8,6 +8,7 @@ import com.github.retrooper.packetevents.wrapper.login.server.WrapperLoginServer
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
+import org.howsauth.plugin.OfflineUuids;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
@@ -91,7 +92,7 @@ final class PremiumHandshake {
         }
 
         if (Debug.on()) {
-            UUID displayId = profile.exists() ? profile.uuid() : DataService.offlineUuid(username);
+            UUID displayId = profile.exists() ? profile.uuid() : OfflineUuids.of(username);
             Debug.log("premium", "login start %s (%s) upgrade=%s", username,
                     Debug.shortId(displayId), upgradeAttempt);
         }
@@ -101,7 +102,7 @@ final class PremiumHandshake {
         // 此时迁移确保后续配置阶段认证读到离线账号
         if (profile.exists() && profile.premium()
                 && plugin.accounts().hasPendingDowngrade(profile.uuid())) {
-            plugin.accounts().executeDowngrade(profile.uuid(), DataService.offlineUuid(username), username);
+            plugin.accounts().executeDowngrade(profile.uuid(), OfflineUuids.of(username), username);
             return;
         }
 

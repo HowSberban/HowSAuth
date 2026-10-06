@@ -1,11 +1,11 @@
 package org.howsauth.plugin.data;
 
+import org.howsauth.plugin.OfflineUuids;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.bukkit.Bukkit;
 
-import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -446,7 +446,7 @@ public final class PlayerDataManager implements AutoCloseable {
         if (name == null) return null;
         UUID uuid = premiumNameIndex.get(name.toLowerCase());
         if (uuid != null) return uuid;
-        UUID offlineUuid = offlineUuidOf(name);
+        UUID offlineUuid = OfflineUuids.of(name);
         return players.containsKey(offlineUuid) ? offlineUuid : null;
     }
 
@@ -456,11 +456,6 @@ public final class PlayerDataManager implements AutoCloseable {
      */
     public boolean hasAccountByName(String name) {
         return findUuidByName(name) != null;
-    }
-
-    /** 原版离线模式 UUID 推导（与 DataService.offlineUuid 同式，数据层不依赖 premium 模块故内联定义） */
-    private static UUID offlineUuidOf(String name) {
-        return UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(StandardCharsets.UTF_8));
     }
 
     /** 是否为正版账号（premium=1） */

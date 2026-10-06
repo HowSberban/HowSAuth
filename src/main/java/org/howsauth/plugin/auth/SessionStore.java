@@ -63,6 +63,18 @@ public final class SessionStore {
     public static String clientIp(Player player) {
         if (player == null) return null;
         var socketAddress = player.getAddress();
+        return socketAddress == null ? null : ipOf(socketAddress);
+    }
+
+    /**
+     * 从网络地址提取 IP 字符串。
+     * <p>
+     * 配置阶段的连接只有 {@code InetSocketAddress}（尚无 {@link Player} 实体），
+     * 故 IP 提取的核心逻辑放在这里，供 {@link #clientIp(Player)} 与配置阶段监听器共用。
+     *
+     * @return 地址未解析完成（代理协议下可能发生）时返回 null
+     */
+    public static String ipOf(java.net.InetSocketAddress socketAddress) {
         if (socketAddress == null) return null;
         var address = socketAddress.getAddress();
         return address != null ? address.getHostAddress() : null;

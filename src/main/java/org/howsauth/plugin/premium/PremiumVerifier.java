@@ -2,6 +2,7 @@ package org.howsauth.plugin.premium;
 
 import com.github.retrooper.packetevents.protocol.player.User;
 import io.netty.channel.Channel;
+import org.howsauth.plugin.OfflineUuids;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.data.PlayerData;
@@ -125,7 +126,7 @@ final class PremiumVerifier {
         } else {
             // /premium 强制标记的账号首次正版验证进服：存量记录仍是离线 UUID（仅 premium=1），
             // 同样迁移到正版 UUID 并保留退出位置等数据，避免与新建记录并存
-            PlayerData pending = dataManager.getPlayer(DataService.offlineUuid(username));
+            PlayerData pending = dataManager.getPlayer(OfflineUuids.of(username));
             if (pending != null && pending.premium()) {
                 // 目标正版 UUID 已有正版记录时保留原记录数据，跳过原版数据迁移（防止离线号文件覆盖正版身份数据）
                 if (dataService.migrateToPremium(pending.uuid(), uuid, username, session.ip(), properties)) {
@@ -169,7 +170,7 @@ final class PremiumVerifier {
         if (data != null && data.premium()) return data;
         // /premium 强制标记的账号记录仍在离线 UUID 上（名字未写入正版索引），按离线 UUID 定位，
         // 使验证失败时同样能走密码回退（与正常正版账号行为一致）
-        data = dataManager.getPlayer(DataService.offlineUuid(username));
+        data = dataManager.getPlayer(OfflineUuids.of(username));
         return data != null && data.premium() ? data : null;
     }
 }
