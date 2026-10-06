@@ -18,6 +18,7 @@ import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Vector;
 import org.howsauth.plugin.HowSAuth;
+import org.howsauth.plugin.pearl.PearlSnapshotCodec.PearlSnapshot;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 
@@ -26,7 +27,6 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -37,10 +37,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** 暂存离线或尚未通过认证玩家的末影珍珠。 */
 public final class PendingPearlManager implements Listener {
 
-    /** 珍珠快照（包内可见：供单测使用） */
-    record PearlSnapshot(UUID pearlId, boolean legacy, String world,
-                         double x, double y, double z, double vx, double vy, double vz) {}
-
     private final HowSAuth plugin;
     private final PearlOwnerResolver ownerResolver;
     private final File file;
@@ -49,7 +45,6 @@ public final class PendingPearlManager implements Listener {
     private final Map<UUID, Long> handledPearls = new ConcurrentHashMap<>();
     private final AtomicBoolean saveScheduled = new AtomicBoolean();
     private final AtomicBoolean saveRequested = new AtomicBoolean();
-    private static final double STATE_MATCH_EPSILON = 1e-6;
     private static final long HANDLED_PEARL_TTL_MILLIS = TimeUnit.SECONDS.toMillis(30);
     private static final long SAVE_COALESCE_DELAY_MILLIS = 100;
     private volatile boolean lastPearlEnabled;
@@ -224,7 +219,7 @@ public final class PendingPearlManager implements Listener {
                     updated.set(i, snapshot);
                     return List.copyOf(updated);
                 }
-                if (existing.legacy() && sameState(existing, worldName, loc, vel)) {
+                if (existing.legacy() && PearlSnapshotCodec.sameState(existing, worldName, loc, vel)) {
                     updated.set(i, snapshot);
                     return List.copyOf(updated);
                 }
@@ -248,16 +243,6 @@ public final class PendingPearlManager implements Listener {
             // 读取失败按无珍珠处理：该接口在部分实现/环境下不可用，而珍珠恢复属辅助功能，不得打断退出与登录流程
             return List.of();
         }
-    }
-
-    private static boolean sameState(PearlSnapshot snapshot, String world, Location loc, Vector vel) {
-        return snapshot.world().equals(world)
-                && Math.abs(snapshot.x() - loc.getX()) < STATE_MATCH_EPSILON
-                && Math.abs(snapshot.y() - loc.getY()) < STATE_MATCH_EPSILON
-                && Math.abs(snapshot.z() - loc.getZ()) < STATE_MATCH_EPSILON
-                && Math.abs(snapshot.vx() - vel.getX()) < STATE_MATCH_EPSILON
-                && Math.abs(snapshot.vy() - vel.getY()) < STATE_MATCH_EPSILON
-                && Math.abs(snapshot.vz() - vel.getZ()) < STATE_MATCH_EPSILON;
     }
 
     private void removePearl(EnderPearl pearl) {
@@ -317,7 +302,7 @@ public final class PendingPearlManager implements Listener {
                     UUID uuid = UUID.fromString(key);
                     List<PearlSnapshot> snapshots = new ArrayList<>();
                     for (Map<?, ?> map : yaml.getMapList(key)) {
-                        PearlSnapshot snapshot = parseSnapshot(map);
+                        PearlSnapshot snapshot = PearlSnapshotCodec.parseSnapshot(map);
                         if (snapshot != null) snapshots.add(snapshot);
                     }
                     if (!snapshots.isEmpty()) pending.put(uuid, List.copyOf(snapshots));
@@ -331,54 +316,7 @@ public final class PendingPearlManager implements Listener {
     }
 
     /** 解析快照（包内可见：供单测使用）；world 缺失或非字符串时返回 null */
-    static PearlSnapshot parseSnapshot(Map<?, ?> map) {
-        Object worldValue = map.get("world");
-        if (!(worldValue instanceof String world)) return null;
-        Object pearlIdValue = map.get("pearlId");
-        UUID pearlId = null;
-        boolean legacy = pearlIdValue == null || Boolean.TRUE.equals(map.get("legacy"));
-        if (pearlIdValue instanceof String id) {
-            try {
-                pearlId = UUID.fromString(id);
-            } catch (IllegalArgumentException ignored) {
-                legacy = true;
-            }
-        }
-        return new PearlSnapshot(pearlId, legacy, world,
-                number(map.get("x")), number(map.get("y")), number(map.get("z")),
-                number(map.get("vx")), number(map.get("vy")), number(map.get("vz")));
-    }
-
     /** 快照列表转 YAML 映射（包内可见：供单测使用） */
-    static List<Map<String, Object>> serializeSnapshots(List<PearlSnapshot> snapshots) {
-        List<Map<String, Object>> maps = new ArrayList<>(snapshots.size());
-        for (PearlSnapshot snapshot : snapshots) {
-            maps.add(serializeSnapshot(snapshot));
-        }
-        return maps;
-    }
-
-    private static Map<String, Object> serializeSnapshot(PearlSnapshot snapshot) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        if (snapshot.pearlId() != null) {
-            map.put("pearlId", snapshot.pearlId().toString());
-        } else if (snapshot.legacy()) {
-            map.put("legacy", true);
-        }
-        map.put("world", snapshot.world());
-        map.put("x", snapshot.x());
-        map.put("y", snapshot.y());
-        map.put("z", snapshot.z());
-        map.put("vx", snapshot.vx());
-        map.put("vy", snapshot.vy());
-        map.put("vz", snapshot.vz());
-        return map;
-    }
-
-    private static double number(Object value) {
-        return value instanceof Number n ? n.doubleValue() : 0;
-    }
-
     private void save() {
         if (shuttingDown) return;
         saveRequested.set(true);
@@ -413,7 +351,7 @@ public final class PendingPearlManager implements Listener {
     private synchronized void saveSync() {
         YamlConfiguration yaml = new YamlConfiguration();
         for (Map.Entry<UUID, List<PearlSnapshot>> entry : pending.entrySet()) {
-            yaml.set(entry.getKey().toString(), serializeSnapshots(entry.getValue()));
+            yaml.set(entry.getKey().toString(), PearlSnapshotCodec.serializeSnapshots(entry.getValue()));
         }
         try {
             yaml.save(tempFile);

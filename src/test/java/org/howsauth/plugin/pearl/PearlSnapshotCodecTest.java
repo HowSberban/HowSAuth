@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import org.howsauth.plugin.pearl.PendingPearlManager.PearlSnapshot;
+import org.howsauth.plugin.pearl.PearlSnapshotCodec.PearlSnapshot;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -31,7 +31,7 @@ class PearlSnapshotCodecTest {
     void serializesModernSnapshotWithPearlId() {
         PearlSnapshot snapshot = new PearlSnapshot(PEARL_ID, false, WORLD, 1.5, 64.0, -2.25, 0.1, 0.2, 0.3);
 
-        List<Map<String, Object>> maps = PendingPearlManager.serializeSnapshots(List.of(snapshot));
+        List<Map<String, Object>> maps = PearlSnapshotCodec.serializeSnapshots(List.of(snapshot));
 
         assertEquals(1, maps.size(), "exactly 1 snapshot record must be written");
         Map<String, Object> map = maps.getFirst();
@@ -51,7 +51,7 @@ class PearlSnapshotCodecTest {
     void serializesLegacySnapshotWithLegacyFlag() {
         PearlSnapshot snapshot = new PearlSnapshot(null, true, WORLD, 0, 0, 0, 0, 0, 0);
 
-        Map<String, Object> map = PendingPearlManager.serializeSnapshots(List.of(snapshot)).getFirst();
+        Map<String, Object> map = PearlSnapshotCodec.serializeSnapshots(List.of(snapshot)).getFirst();
 
         assertFalse(map.containsKey("pearlId"), "a legacy entry without an id must not write pearlId");
         assertEquals(Boolean.TRUE, map.get("legacy"), "a legacy entry must write the legacy flag");
@@ -62,8 +62,8 @@ class PearlSnapshotCodecTest {
     void roundTripPreservesEveryField() {
         PearlSnapshot original = new PearlSnapshot(PEARL_ID, false, WORLD, 12.5, 70.25, -30.75, -0.5, 0.25, 1.5);
 
-        PearlSnapshot parsed = PendingPearlManager.parseSnapshot(
-                PendingPearlManager.serializeSnapshots(List.of(original)).getFirst());
+        PearlSnapshot parsed = PearlSnapshotCodec.parseSnapshot(
+                PearlSnapshotCodec.serializeSnapshots(List.of(original)).getFirst());
 
         assertEquals(original, parsed, "round-tripped snapshot must equal the original (record equality)");
     }
@@ -77,7 +77,7 @@ class PearlSnapshotCodecTest {
         map.put("y", 2.0);
         map.put("z", 3.0);
 
-        PearlSnapshot parsed = PendingPearlManager.parseSnapshot(map);
+        PearlSnapshot parsed = PearlSnapshotCodec.parseSnapshot(map);
 
         assertNotNull(parsed, "a legacy entry with a world must be parsed");
         assertNull(parsed.pearlId(), "a legacy entry has no id");
@@ -92,7 +92,7 @@ class PearlSnapshotCodecTest {
         map.put("pearlId", "not-a-uuid");
         map.put("world", WORLD);
 
-        PearlSnapshot parsed = PendingPearlManager.parseSnapshot(map);
+        PearlSnapshot parsed = PearlSnapshotCodec.parseSnapshot(map);
 
         assertNotNull(parsed, "an entry with a world and a corrupt id must be parsed as legacy");
         assertNull(parsed.pearlId(), "an invalid id must be discarded");
@@ -102,10 +102,10 @@ class PearlSnapshotCodecTest {
     /** 缺少 world（或类型不对）的记录整条丢弃，返回 null */
     @Test
     void rejectsEntryWithoutUsableWorld() {
-        assertNull(PendingPearlManager.parseSnapshot(new LinkedHashMap<>()), "a missing world field must be discarded");
+        assertNull(PearlSnapshotCodec.parseSnapshot(new LinkedHashMap<>()), "a missing world field must be discarded");
         Map<String, Object> wrongType = new LinkedHashMap<>();
         wrongType.put("world", 123);
-        assertNull(PendingPearlManager.parseSnapshot(wrongType), "a non-string world must be discarded");
+        assertNull(PearlSnapshotCodec.parseSnapshot(wrongType), "a non-string world must be discarded");
     }
 
     /** 数值字段缺失时按 0 处理，不应抛异常 */
@@ -115,7 +115,7 @@ class PearlSnapshotCodecTest {
         map.put("world", WORLD);
         map.put("legacy", true);
 
-        PearlSnapshot parsed = PendingPearlManager.parseSnapshot(map);
+        PearlSnapshot parsed = PearlSnapshotCodec.parseSnapshot(map);
 
         assertNotNull(parsed, "an entry with only a world must be parsed");
         assertEquals(0.0, parsed.x(), "missing x must default to 0");
@@ -132,7 +132,7 @@ class PearlSnapshotCodecTest {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("world", WORLD);
 
-        PearlSnapshot parsed = PendingPearlManager.parseSnapshot(map);
+        PearlSnapshot parsed = PearlSnapshotCodec.parseSnapshot(map);
 
         assertNotNull(parsed, "an entry without id or flag must still be parsed");
         assertNull(parsed.pearlId(), "no id");
@@ -147,7 +147,7 @@ class PearlSnapshotCodecTest {
         snapshots.add(new PearlSnapshot(PEARL_ID, false, WORLD, 1, 1, 1, 0, 0, 0));
         snapshots.add(new PearlSnapshot(secondId, false, "nether", 2, 2, 2, 0, 0, 0));
 
-        List<Map<String, Object>> maps = PendingPearlManager.serializeSnapshots(snapshots);
+        List<Map<String, Object>> maps = PearlSnapshotCodec.serializeSnapshots(snapshots);
 
         assertEquals(2, maps.size(), "exactly 2 records must be written");
         assertEquals(PEARL_ID.toString(), maps.getFirst().get("pearlId"), "order must match the input order");
