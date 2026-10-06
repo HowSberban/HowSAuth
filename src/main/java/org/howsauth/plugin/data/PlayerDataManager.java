@@ -236,7 +236,7 @@ public final class PlayerDataManager implements AutoCloseable {
         PlayerData data = players.get(uuid);
         if (data != null) {
             if (Debug.on()) {
-                Debug.log("db", "save now: %s", uuid.toString().substring(0, 8));
+                Debug.log("db", "save now: %s", Debug.shortId(uuid));
             }
             saveNow(data);
         }
@@ -414,7 +414,7 @@ public final class PlayerDataManager implements AutoCloseable {
                 long count = players.values().stream().filter(d -> ip.equals(d.ip())).count();
                 if (count >= maxAccounts) {
                     if (Debug.on()) {
-                        Debug.log("db", "create player %s rejected: ip account limit reached", uuid.toString().substring(0, 8));
+                        Debug.log("db", "create player %s rejected: ip account limit reached", Debug.shortId(uuid));
                     }
                     return null;
                 }
@@ -623,7 +623,7 @@ public final class PlayerDataManager implements AutoCloseable {
         if (premium == null) return false;
         if (Debug.on()) {
             Debug.log("db", "migrate premium->offline: %s",
-                    premium.name() != null ? premium.name() : premiumUuid.toString().substring(0, 8));
+                    premium.name() != null ? premium.name() : Debug.shortId(premiumUuid));
         }
         if (premium.name() != null) {
             premiumNameIndex.remove(premium.name().toLowerCase());
@@ -709,7 +709,7 @@ public final class PlayerDataManager implements AutoCloseable {
 
     public void removePlayer(UUID uuid) {
         if (Debug.on()) {
-            Debug.log("db", "remove player: %s", uuid.toString().substring(0, 8));
+            Debug.log("db", "remove player: %s", Debug.shortId(uuid));
         }
         PlayerData data = players.remove(uuid);
         if (data != null && data.name() != null) {

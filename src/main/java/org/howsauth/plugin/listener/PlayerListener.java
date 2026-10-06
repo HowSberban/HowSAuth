@@ -275,7 +275,7 @@ public final class PlayerListener implements Listener {
         if (Debug.on()) {
             Debug.log("flow", "register success for %s: finishing (clear blindness)",
                     event.getPlayer() != null ? event.getPlayer().getName()
-                            : event.getUuid().toString().substring(0, 8));
+                            : Debug.shortId(event.getUuid()));
         }
         if (event.getPlayer() != null) {
             clearLoginBlindness(event.getPlayer());
@@ -469,7 +469,7 @@ public final class PlayerListener implements Listener {
             Location logoutLoc = locations.get(uuid);
             if (logoutLoc != null) {
                 if (Debug.on()) {
-                    Debug.log("flow", "spawn %s: logout location (login session hit)", uuid.toString().substring(0, 8));
+                    Debug.log("flow", "spawn %s: logout location (login session hit)", Debug.shortId(uuid));
                 }
                 event.setSpawnLocation(logoutLoc);
                 return;
@@ -482,12 +482,12 @@ public final class PlayerListener implements Listener {
             Location logoutLoc = locations.get(uuid);
             if (logoutLoc != null) {
                 if (Debug.on()) {
-                    Debug.log("flow", "spawn %s: logout location (pre-join completed)", uuid.toString().substring(0, 8));
+                    Debug.log("flow", "spawn %s: logout location (pre-join completed)", Debug.shortId(uuid));
                 }
                 event.setSpawnLocation(logoutLoc);
             } else if (Debug.on()) {
                 Debug.log("flow", "spawn %s: pre-join completed, no logout location (default spawn)",
-                        uuid.toString().substring(0, 8));
+                        Debug.shortId(uuid));
             }
             // 已认证：登录前未接收任何世界信息，无需坐标保护
             return;

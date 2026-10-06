@@ -156,7 +156,7 @@ public final class AuthManager {
                 + " spectator=" + sessions.spectatorPendingCount() + " loginTimeout=" + sessions.loginTimeoutStartedCount());
         for (Player player : Bukkit.getOnlinePlayers()) {
             UUID uuid = player.getUniqueId();
-            lines.add("  " + player.getName() + "(" + uuid.toString().substring(0, 8) + ")"
+            lines.add("  " + player.getName() + "(" + Debug.shortId(uuid) + ")"
                     + sessions.describe(uuid)
                     + " pending2fa=" + twoFactor.isPending(uuid)
                     + " loginSession=" + sessions.hasLoginSessionRecord(uuid)

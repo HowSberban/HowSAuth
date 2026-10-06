@@ -122,7 +122,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         if (Debug.on()) {
             UUID displayId = profile.exists() ? profile.uuid() : DataService.offlineUuid(username);
             Debug.log("premium", "login start %s (%s) upgrade=%s", username,
-                    displayId.toString().substring(0, 8), upgradeAttempt);
+                    Debug.shortId(displayId), upgradeAttempt);
         }
 
         // 降级中：正版玩家已提交降级请求 → 迁移账号数据到离线 UUID 后放行，走服务端原生
@@ -347,7 +347,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                         plugin.accounts().clearUpgradePending(session.offlineUuid());
                         if (Debug.on()) {
                             Debug.log("premium", "upgrade success for %s: migrated offline account to premium uuid %s",
-                                    username, uuid.toString().substring(0, 8));
+                                    username, Debug.shortId(uuid));
                         }
                     } else {
                         // /premium 强制标记的账号首次正版验证进服：存量记录仍是离线 UUID（仅 premium=1），
@@ -369,7 +369,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
 
                     if (Debug.on()) {
                         Debug.log("premium", "premium verified for %s: entering as premium uuid %s (upgrade=%s)",
-                                username, uuid.toString().substring(0, 8), session.isUpgradeAttempt());
+                                username, Debug.shortId(uuid), session.isUpgradeAttempt());
                     }
 
                     // 13. 进入游戏（异步触发 AsyncPlayerPreLoginEvent + 推进 state）

@@ -109,7 +109,7 @@ public final class SessionStore {
         loginSessions.put(uuid, new LoginSession(ip, System.currentTimeMillis()));
         if (Debug.on()) {
             Debug.log("session", "login session established for %s (ttl %s min)",
-                    uuid.toString().substring(0, 8), configManager.sessionExpireMinutes());
+                    Debug.shortId(uuid), configManager.sessionExpireMinutes());
         }
     }
 
@@ -128,7 +128,7 @@ public final class SessionStore {
     public boolean hasSession(UUID uuid, String ip) {
         if (!configManager.sessionEnabled()) {
             if (Debug.on()) {
-                Debug.log("session", "login session miss for %s: session disabled", uuid.toString().substring(0, 8));
+                Debug.log("session", "login session miss for %s: session disabled", Debug.shortId(uuid));
             }
             return false;
         }
@@ -139,14 +139,14 @@ public final class SessionStore {
         if (s == null) return false;
         if (!s.ip().equals(ip)) {
             if (Debug.on()) {
-                Debug.log("session", "login session miss for %s: ip mismatch", uuid.toString().substring(0, 8));
+                Debug.log("session", "login session miss for %s: ip mismatch", Debug.shortId(uuid));
             }
             return false;
         }
         // 固定窗口不滑动：命中登录不刷新建立时间，到期后需重新验证
         long expireMillis = TimeUnit.MINUTES.toMillis(configManager.sessionExpireMinutes());
         if (Debug.on()) {
-            Debug.log("session", "login session for %s: %s", uuid.toString().substring(0, 8),
+            Debug.log("session", "login session for %s: %s", Debug.shortId(uuid),
                     System.currentTimeMillis() - s.establishedAt() < expireMillis ? "hit" : "expired");
         }
         return System.currentTimeMillis() - s.establishedAt() < expireMillis;

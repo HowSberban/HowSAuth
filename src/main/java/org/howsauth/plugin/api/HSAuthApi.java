@@ -194,13 +194,13 @@ public final class HSAuthApi {
     public boolean forceLogout(@NotNull UUID uuid) {
         if (!tryAcquire(uuid)) {
             if (Debug.on()) {
-                Debug.log("api", "force logout %s: rejected (rate limit)", uuid.toString().substring(0, 8));
+                Debug.log("api", "force logout %s: rejected (rate limit)", Debug.shortId(uuid));
             }
             return false;
         }
         boolean result = authManager.loginFlow().forceLogout(uuid);
         if (Debug.on()) {
-            Debug.log("api", "force logout %s: %s", uuid.toString().substring(0, 8), result ? "success" : "not logged in");
+            Debug.log("api", "force logout %s: %s", Debug.shortId(uuid), result ? "success" : "not logged in");
         }
         return result;
     }
@@ -244,14 +244,14 @@ public final class HSAuthApi {
     public boolean forceRegister(@NotNull UUID uuid, @NotNull String password) {
         if (!tryAcquire(uuid)) {
             if (Debug.on()) {
-                Debug.log("api", "force register %s: rejected (rate limit)", uuid.toString().substring(0, 8));
+                Debug.log("api", "force register %s: rejected (rate limit)", Debug.shortId(uuid));
             }
             return false;
         }
         // UUID 反推名字：上过服务器的离线玩家有名字记录，从未上过则返回 null（跳过同名检查）
         boolean result = authManager.accounts().forceRegister(uuid, Bukkit.getOfflinePlayer(uuid).getName(), password);
         if (Debug.on()) {
-            Debug.log("api", "force register %s: %s", uuid.toString().substring(0, 8),
+            Debug.log("api", "force register %s: %s", Debug.shortId(uuid),
                     result ? "success" : "failed (account already exists)");
         }
         return result;
@@ -265,13 +265,13 @@ public final class HSAuthApi {
     public boolean unregister(@NotNull UUID uuid) {
         if (!tryAcquire(uuid)) {
             if (Debug.on()) {
-                Debug.log("api", "unregister %s: rejected (rate limit)", uuid.toString().substring(0, 8));
+                Debug.log("api", "unregister %s: rejected (rate limit)", Debug.shortId(uuid));
             }
             return false;
         }
         boolean result = authManager.accounts().unregister(uuid);
         if (Debug.on()) {
-            Debug.log("api", "unregister %s: %s", uuid.toString().substring(0, 8), result ? "success" : "no account");
+            Debug.log("api", "unregister %s: %s", Debug.shortId(uuid), result ? "success" : "no account");
         }
         return result;
     }
@@ -329,13 +329,13 @@ public final class HSAuthApi {
     public boolean changePassword(@NotNull UUID uuid, @NotNull String newPassword) {
         if (!tryAcquire(uuid)) {
             if (Debug.on()) {
-                Debug.log("api", "change password %s: rejected (rate limit)", uuid.toString().substring(0, 8));
+                Debug.log("api", "change password %s: rejected (rate limit)", Debug.shortId(uuid));
             }
             return false;
         }
         boolean result = authManager.loginFlow().forceChangePassword(uuid, newPassword);
         if (Debug.on()) {
-            Debug.log("api", "change password %s: %s", uuid.toString().substring(0, 8), result ? "success" : "no account");
+            Debug.log("api", "change password %s: %s", Debug.shortId(uuid), result ? "success" : "no account");
         }
         return result;
     }

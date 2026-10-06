@@ -240,7 +240,7 @@ public final class PendingPearlManager implements Listener {
         removePearl(pearl);
         if (Debug.on()) {
             List<PearlSnapshot> stored = pending.get(owner);
-            Debug.log("pearl", "absorb pearl for %s (stored %s)", owner.toString().substring(0, 8),
+            Debug.log("pearl", "absorb pearl for %s (stored %s)", Debug.shortId(owner),
                     stored == null ? 0 : stored.size());
         }
     }

@@ -134,8 +134,8 @@ public final class TwoFactorAuth {
     PlayerData verifyCode(UUID uuid, Player player, String code, String ip) {
         if (!pending2fa.remove(uuid)) {
             if (Debug.on()) {
-                Debug.log("2fa", "verify %s: rejected (not pending2fa 2fa)",
-                        player != null ? player.getName() : uuid.toString().substring(0, 8));
+                Debug.log("2fa", "verify %s: rejected (not pending 2fa)",
+                        who(uuid, player));
             }
             return null;
         }
@@ -143,7 +143,7 @@ public final class TwoFactorAuth {
         if (data == null || data.totpSecret() == null) {
             if (Debug.on()) {
                 Debug.log("2fa", "verify %s: rejected (no secret)",
-                        player != null ? player.getName() : uuid.toString().substring(0, 8));
+                        who(uuid, player));
             }
             return null;
         }
@@ -153,7 +153,7 @@ public final class TwoFactorAuth {
         if (counter == null || counter <= used2faCounters.getOrDefault(uuid, Long.MIN_VALUE)) {
             if (Debug.on()) {
                 Debug.log("2fa", "verify %s: rejected (%s)",
-                        player != null ? player.getName() : uuid.toString().substring(0, 8),
+                        who(uuid, player),
                         counter == null ? "invalid code" : "replay");
             }
             failProtection.recordFailure(uuid, player);
@@ -165,9 +165,15 @@ public final class TwoFactorAuth {
         markSession(uuid, ip);
         if (Debug.on()) {
             Debug.log("2fa", "verify %s: passed",
-                    player != null ? player.getName() : uuid.toString().substring(0, 8));
+                    who(uuid, player));
         }
         return data;
+    }
+
+    /** 日志用标识：在线验证用玩家名，配置阶段（无 Player 对象）用 UUID 短标识。
+     *  纯函数，须在 {@code if (Debug.on())} 守卫内调用 */
+    private static String who(UUID uuid, Player player) {
+        return player != null ? player.getName() : Debug.shortId(uuid);
     }
 
     // ===== 绑定与解绑 =====
@@ -197,7 +203,7 @@ public final class TwoFactorAuth {
         String secret = pending2faSecret.get(uuid);
         if (secret == null) {
             if (Debug.on()) {
-                Debug.log("2fa", "confirm %s: rejected (no pending2fa secret)", player.getName());
+                Debug.log("2fa", "confirm %s: rejected (no pending secret)", player.getName());
             }
             return false;
         }
@@ -267,7 +273,7 @@ public final class TwoFactorAuth {
         PlayerData data = dataManager.getPlayer(uuid);
         if (data == null || data.totpSecret() == null) {
             if (Debug.on()) {
-                Debug.log("2fa", "reset %s: failed (not enabled or no account)", uuid.toString().substring(0, 8));
+                Debug.log("2fa", "reset %s: failed (not enabled or no account)", Debug.shortId(uuid));
             }
             return false;
         }
@@ -280,7 +286,7 @@ public final class TwoFactorAuth {
         // 关键操作立即持久化，防止断电丢失
         dataManager.saveNow(uuid);
         if (Debug.on()) {
-            Debug.log("2fa", "reset %s: reset by admin", uuid.toString().substring(0, 8));
+            Debug.log("2fa", "reset %s: reset by admin", Debug.shortId(uuid));
         }
         return true;
     }

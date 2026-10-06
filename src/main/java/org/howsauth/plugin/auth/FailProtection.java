@@ -62,7 +62,7 @@ public final class FailProtection {
             // 达到阈值，设置踢出期
             if (Debug.on()) {
                 Debug.log("auth", "kick %s: %s consecutive failures, banned %ss",
-                        player != null ? player.getName() : uuid.toString().substring(0, 8),
+                        player != null ? player.getName() : Debug.shortId(uuid),
                         attempts[0], configManager.failKickDuration());
             }
             kickUntil.put(uuid, now + configManager.failKickDuration() * 1000L);

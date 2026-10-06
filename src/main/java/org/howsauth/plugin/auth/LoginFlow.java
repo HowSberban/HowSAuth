@@ -161,7 +161,7 @@ public final class LoginFlow {
             long remaining = failProtection.getKickRemaining(uuid);
             if (Debug.on()) {
                 Debug.log("auth", "login config %s: %s (kick %ss remaining)",
-                        uuid.toString().substring(0, 8), AuthManager.LoginResult.FAILED, remaining);
+                        Debug.shortId(uuid), AuthManager.LoginResult.FAILED, remaining);
             }
             done.accept(AuthManager.LoginResult.FAILED, remaining);
             return;
@@ -169,7 +169,7 @@ public final class LoginFlow {
         PlayerData data = dataManager.getPlayer(uuid);
         if (data == null) {
             if (Debug.on()) {
-                Debug.log("auth", "login config %s: %s (no account)", uuid.toString().substring(0, 8), AuthManager.LoginResult.FAILED);
+                Debug.log("auth", "login config %s: %s (no account)", Debug.shortId(uuid), AuthManager.LoginResult.FAILED);
             }
             done.accept(AuthManager.LoginResult.FAILED, 0L);
             return;
@@ -185,10 +185,10 @@ public final class LoginFlow {
                 if (Debug.on()) {
                     if (remaining > 0) {
                         Debug.log("auth", "login config %s: %s (wrong password, kick %ss remaining)",
-                                uuid.toString().substring(0, 8), AuthManager.LoginResult.FAILED, remaining);
+                                Debug.shortId(uuid), AuthManager.LoginResult.FAILED, remaining);
                     } else {
                         Debug.log("auth", "login config %s: %s (wrong password)",
-                                uuid.toString().substring(0, 8), AuthManager.LoginResult.FAILED);
+                                Debug.shortId(uuid), AuthManager.LoginResult.FAILED);
                     }
                 }
                 done.accept(AuthManager.LoginResult.FAILED, remaining);
@@ -198,12 +198,12 @@ public final class LoginFlow {
                 if (twoFactor.requiresAtLogin(uuid, ip)) {
                     twoFactor.markPending(uuid);
                     if (Debug.on()) {
-                        Debug.log("auth", "login config %s: %s", uuid.toString().substring(0, 8), AuthManager.LoginResult.NEED_2FA);
+                        Debug.log("auth", "login config %s: %s", Debug.shortId(uuid), AuthManager.LoginResult.NEED_2FA);
                     }
                     done.accept(AuthManager.LoginResult.NEED_2FA, 0L);
                 } else {
                     if (Debug.on()) {
-                        Debug.log("auth", "login config %s: %s", uuid.toString().substring(0, 8), AuthManager.LoginResult.SUCCESS);
+                        Debug.log("auth", "login config %s: %s", Debug.shortId(uuid), AuthManager.LoginResult.SUCCESS);
                     }
                     done.accept(AuthManager.LoginResult.SUCCESS, 0L);
                 }

@@ -125,7 +125,7 @@ public final class PreJoinAuthListener implements Listener {
             if (plugin.getConfigManager().rejectNoAuthAccount()) {
                 if (Debug.on()) {
                     Debug.log("dialog", "pre-join %s: no usable login method, disconnect",
-                            uuid.toString().substring(0, 8));
+                            Debug.shortId(uuid));
                 }
                 conn.disconnect(I18n.msgForLocale("prelogin.account_locked", resolveLocale(conn)));
                 return;
@@ -152,7 +152,7 @@ public final class PreJoinAuthListener implements Listener {
         if (!supportsDialogs(uuid)) {
             if (Debug.on()) {
                 Debug.log("dialog", "pre-join %s: dialogs unsupported, fallback to chat",
-                        uuid.toString().substring(0, 8));
+                        Debug.shortId(uuid));
             }
             return;
         }
@@ -164,7 +164,7 @@ public final class PreJoinAuthListener implements Listener {
             if (autoLogin) {
                 if (Debug.on()) {
                     Debug.log("dialog", "pre-join %s: auto login (premium/session), pass",
-                            uuid.toString().substring(0, 8));
+                            Debug.shortId(uuid));
                 }
                 return;
             }
@@ -173,7 +173,7 @@ public final class PreJoinAuthListener implements Listener {
             if (accounts.isPasswordless(uuid) && twoFactor.hasSession(uuid, ip)) {
                 if (Debug.on()) {
                     Debug.log("dialog", "pre-join %s: passwordless 2FA session, mark login",
-                            uuid.toString().substring(0, 8));
+                            Debug.shortId(uuid));
                 }
                 outcomes.put(uuid, AuthOutcome.LOGIN);
                 return;
@@ -197,7 +197,7 @@ public final class PreJoinAuthListener implements Listener {
             if (Debug.on()) {
                 String type = (autoLogin || (isLogin && accounts.isPasswordless(uuid))) ? "2fa"
                         : isLogin ? "login" : "register";
-                Debug.log("dialog", "pre-join %s: show %s dialog", uuid.toString().substring(0, 8), type);
+                Debug.log("dialog", "pre-join %s: show %s dialog", Debug.shortId(uuid), type);
             }
             // 免密（正版/IP）或无密码账户：跳过密码窗口，直接验证验证码
             if (autoLogin || (isLogin && accounts.isPasswordless(uuid))) {
@@ -225,7 +225,7 @@ public final class PreJoinAuthListener implements Listener {
                 if (current && session.success && !session.kicked && !session.fallback) {
                     outcomes.put(uuid, session.registered ? AuthOutcome.REGISTER : AuthOutcome.LOGIN);
                     if (Debug.on()) {
-                        Debug.log("dialog", "record pre-join result for %s: %s", uuid.toString().substring(0, 8),
+                        Debug.log("dialog", "record pre-join result for %s: %s", Debug.shortId(uuid),
                                 session.registered ? "REGISTER" : "LOGIN");
                     }
                 }
@@ -309,7 +309,7 @@ public final class PreJoinAuthListener implements Listener {
 
     private void showLogin(Session session, UUID uuid, String locale, Component error) {
         if (Debug.on()) {
-            Debug.log("dialog", "show login dialog for %s", uuid.toString().substring(0, 8));
+            Debug.log("dialog", "show login dialog for %s", Debug.shortId(uuid));
         }
         showDialog(session, dialogManager.buildLoginDialog(locale, error,
                 loginConfirm(session, uuid, locale), cancel(session, uuid, locale)));
@@ -317,7 +317,7 @@ public final class PreJoinAuthListener implements Listener {
 
     private void showRegister(Session session, UUID uuid, String locale, Component error) {
         if (Debug.on()) {
-            Debug.log("dialog", "show register dialog for %s", uuid.toString().substring(0, 8));
+            Debug.log("dialog", "show register dialog for %s", Debug.shortId(uuid));
         }
         showDialog(session, dialogManager.buildRegisterDialog(locale, error,
                 registerConfirm(session, uuid, locale), cancel(session, uuid, locale)));
@@ -325,7 +325,7 @@ public final class PreJoinAuthListener implements Listener {
 
     private void show2fa(Session session, UUID uuid, String locale, Component error) {
         if (Debug.on()) {
-            Debug.log("dialog", "show 2fa dialog for %s", uuid.toString().substring(0, 8));
+            Debug.log("dialog", "show 2fa dialog for %s", Debug.shortId(uuid));
         }
         showDialog(session, dialogManager.build2faDialog(locale, error,
                 twoFaConfirm(session, uuid, locale), cancel(session, uuid, locale)));
@@ -336,7 +336,7 @@ public final class PreJoinAuthListener implements Listener {
         return (response, audience) -> {
             if (configSessions.get(uuid) != session) return;
             if (Debug.on()) {
-                Debug.log("dialog", "cancel dialog for %s: disconnecting", uuid.toString().substring(0, 8));
+                Debug.log("dialog", "cancel dialog for %s: disconnecting", Debug.shortId(uuid));
             }
             session.kicked = true;
             session.latch.countDown();
@@ -367,7 +367,7 @@ public final class PreJoinAuthListener implements Listener {
             loginFlow.loginConfigAsync(uuid, password, clientIp(session.connection), (result, kickSeconds) -> {
                 if (configSessions.get(uuid) != session) return;
                 if (Debug.on()) {
-                    Debug.log("dialog", "login dialog confirm for %s: %s", uuid.toString().substring(0, 8), result);
+                    Debug.log("dialog", "login dialog confirm for %s: %s", Debug.shortId(uuid), result);
                 }
                 switch (result) {
                     case SUCCESS -> {
@@ -420,7 +420,7 @@ public final class PreJoinAuthListener implements Listener {
                 if (configSessions.get(uuid) != session) return;
                 if (accounts.registerConfig(uuid, name, password, ip)) {
                     if (Debug.on()) {
-                        Debug.log("dialog", "register dialog confirm for %s: success", uuid.toString().substring(0, 8));
+                        Debug.log("dialog", "register dialog confirm for %s: success", Debug.shortId(uuid));
                     }
                     session.registered = true;
                     session.success = true;
@@ -429,12 +429,12 @@ public final class PreJoinAuthListener implements Listener {
                     // 同 IP 注册数量已达上限：精确提示（连接层已拦已满 IP，此处兜底并发/延迟场景）
                     if (Debug.on()) {
                         Debug.log("dialog", "register dialog confirm for %s: failed (ip limit)",
-                                uuid.toString().substring(0, 8));
+                                Debug.shortId(uuid));
                     }
                     showRegister(session, uuid, locale, I18n.msgForLocale("register.ip_limit", locale, plugin.getConfigManager().maxAccountsPerIp()));
                 } else {
                     if (Debug.on()) {
-                        Debug.log("dialog", "register dialog confirm for %s: failed", uuid.toString().substring(0, 8));
+                        Debug.log("dialog", "register dialog confirm for %s: failed", Debug.shortId(uuid));
                     }
                     showRegister(session, uuid, locale, DialogManager.text(locale, "register.failed"));
                 }
@@ -472,13 +472,13 @@ public final class PreJoinAuthListener implements Listener {
             }
             if (loginFlow.verify2faConfig(uuid, code, clientIp(session.connection))) {
                 if (Debug.on()) {
-                    Debug.log("dialog", "2fa dialog confirm for %s: success", uuid.toString().substring(0, 8));
+                    Debug.log("dialog", "2fa dialog confirm for %s: success", Debug.shortId(uuid));
                 }
                 session.success = true;
                 session.latch.countDown();
             } else {
                 if (Debug.on()) {
-                    Debug.log("dialog", "2fa dialog confirm for %s: failed", uuid.toString().substring(0, 8));
+                    Debug.log("dialog", "2fa dialog confirm for %s: failed", Debug.shortId(uuid));
                 }
                 show2fa(session, uuid, locale, DialogManager.text(locale, "2fa.confirm_incorrect"));
             }

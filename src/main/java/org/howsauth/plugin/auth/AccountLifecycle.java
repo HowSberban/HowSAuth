@@ -219,7 +219,7 @@ public final class AccountLifecycle {
     public boolean unregister(UUID uuid) {
         if (!dataManager.hasAccount(uuid)) {
             if (Debug.on()) {
-                Debug.log("auth", "unregister %s: failed (no account)", uuid.toString().substring(0, 8));
+                Debug.log("auth", "unregister %s: failed (no account)", Debug.shortId(uuid));
             }
             return false;
         }
@@ -245,14 +245,14 @@ public final class AccountLifecycle {
                 // 玩家在线：标记后由 PlayerQuitEvent 删除（避免文件锁冲突）
                 if (Debug.on()) {
                     Debug.log("auth", "unregister %s: account removed, vanilla data delete deferred to quit",
-                            uuid.toString().substring(0, 8));
+                            Debug.shortId(uuid));
                 }
                 sessions.addPendingDatDelete(uuid);
             } else {
                 // 玩家离线：无文件锁，直接删除
                 if (Debug.on()) {
                     Debug.log("auth", "unregister %s: account removed, vanilla data deleted immediately",
-                            uuid.toString().substring(0, 8));
+                            Debug.shortId(uuid));
                 }
                 deletePlayerDataWithRetry(uuid);
             }
@@ -261,7 +261,7 @@ public final class AccountLifecycle {
         } else {
             if (Debug.on()) {
                 Debug.log("auth", "unregister %s: account removed, vanilla data kept (real-unreg off)",
-                        uuid.toString().substring(0, 8));
+                        Debug.shortId(uuid));
             }
         }
         events.unregister(uuid);
@@ -279,7 +279,7 @@ public final class AccountLifecycle {
     public void tryDeletePlayerDataOnQuit(UUID uuid) {
         if (!sessions.consumePendingDatDelete(uuid)) return;
         if (Debug.on()) {
-            Debug.log("db", "delete vanilla data on quit: %s queued", uuid.toString().substring(0, 8));
+            Debug.log("db", "delete vanilla data on quit: %s queued", Debug.shortId(uuid));
         }
         Bukkit.getAsyncScheduler().runNow(plugin, task -> deletePlayerDataWithRetry(uuid));
     }
@@ -310,7 +310,7 @@ public final class AccountLifecycle {
             if (elapsed >= 5000) {
                 plugin.getLogger().warning(I18n.get("log.delete_player_data_failed", uuid));
                 if (Debug.on()) {
-                    Debug.log("db", "delete vanilla data for %s: failed after retries", uuid.toString().substring(0, 8));
+                    Debug.log("db", "delete vanilla data for %s: failed after retries", Debug.shortId(uuid));
                 }
                 return;
             }
