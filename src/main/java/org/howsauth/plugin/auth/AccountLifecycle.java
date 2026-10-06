@@ -228,12 +228,13 @@ public final class AccountLifecycle {
                 }
                 sessions.addPendingDatDelete(uuid);
             } else {
-                // 玩家离线：无文件锁，直接删除
+                // 玩家离线：无文件锁，立即安排删除（异步：删除含等待 .dat 保存完成的重试循环，
+                // 本方法可能由命令/API 在主线程调用，不得在此阻塞）
                 if (Debug.on()) {
-                    Debug.log("auth", "unregister %s: account removed, vanilla data deleted immediately",
+                    Debug.log("auth", "unregister %s: account removed, vanilla data delete scheduled",
                             Debug.shortId(uuid));
                 }
-                playerFiles.retryDelete(uuid);
+                playerFiles.deleteAsync(uuid);
             }
             // 顺手清理已过期的踢出记录、失败计数和注销拒绝重连记录，防止批量注销时累积
             expiredStateCleanup.run();

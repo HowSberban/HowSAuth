@@ -7,6 +7,7 @@ import org.howsauth.plugin.data.PlayerDataManager;
 import org.howsauth.plugin.data.PlayerData;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.Player;
 
@@ -20,8 +21,9 @@ import java.util.concurrent.ThreadLocalRandom;
  * 位置与游戏模式本身持久化在 {@link PlayerData}，本类不自有集合；过渡期标记
  * （无敌/旁观待恢复）由 {@link SessionStore} 持有。
  * <p>
- * <b>线程契约</b>：{@link #preloadChunk} 与 {@link #isBlockSolidBelow} 可在异步/pre-login
- * 阶段调用（前者 fire-and-forget 绝不阻塞，后者用 ChunkSnapshot 快照读取）；
+ * <b>线程契约</b>：{@link #preloadChunk} 为异步 fire-and-forget、绝不阻塞（pre-login 阶段调用）；
+ * {@link #setSpectator} 与 {@link #isBlockSolidBelow} 在玩家区域线程同步执行（仅读已加载区块，
+ * 未加载则按"悬空"保守处理，不触发加载）；
  * {@code setGameMode} 一律经玩家调度器执行，保证 Folia 下在玩家区域线程调用。
  */
 public final class LogoutLocation {
@@ -144,8 +146,8 @@ public final class LogoutLocation {
      * <p>
      * 悬空判定受 advanced.dangling-check 控制：false（默认）时不执行判定，整段处理跳过、本方法直接返回，
      * 玩家保持原游戏模式；true 时才走 {@link #isBlockSolidBelow} 判定。
-     * 悬空检查通过 ChunkSnapshot 读取（快照线程安全），任意线程可安全访问，
-     * 避免 Folia 下在非所属区域线程读取退出位置所在世界（可能为其它世界或其它区域）的方块。
+     * 悬空判定只读**本服务器已加载**的区块：未加载按"悬空"保守处理，绝不触发加载或等待，
+     * 因此不会在 Folia 下为读取外部区域方块而阻塞玩家区域线程。
      * 最终 setGameMode 使用玩家调度器执行，保证 Folia 下在玩家区域线程调用（非线程安全）。
      */
     public void setSpectator(Player player) {
@@ -162,18 +164,17 @@ public final class LogoutLocation {
         player.getScheduler().run(plugin, task -> player.setGameMode(org.bukkit.GameMode.SPECTATOR), null);
     }
 
-    /** 判断退出位置正下方方块是否固体（用于悬空检查）。快照读取线程安全，可在任意线程调用 */
+    /** 判断退出位置正下方方块是否固体（用于悬空检查） */
     private static boolean isBlockSolidBelow(Location loc) {
         World world = loc.getWorld();
         int y = loc.getBlockY() - 1;
         if (y <= world.getMinHeight() || y >= world.getMaxHeight()) return false;
-        // 区块未加载时不等待（pre-login 预载通常已命中），按"悬空"保守处理：
-        // 强制旁观，登录成功后 onLoginSuccess 照常恢复原游戏模式；
-        // 等待期玩家移动被 onMove 拦下、伤害被 onDamage 拦下，无风险
+        // 区块未加载时按"悬空"保守处理（不加载、不等待）：强制旁观，
+        // 登录成功后 onLoginSuccess 照常恢复原游戏模式；
+        // 等待期玩家移动被 onMove 拦下、伤害被 onDamage 拦下，无风险。
+        // pre-login 的 preloadChunk 通常已把该区块加载好，故这里一般能读到真实方块。
         if (!world.isChunkLoaded(loc.getBlockX() >> 4, loc.getBlockZ() >> 4)) return false;
-        org.bukkit.ChunkSnapshot snap = world.getChunkAtAsyncUrgently(
-                loc.getBlockX() >> 4, loc.getBlockZ() >> 4).join().getChunkSnapshot();
-        return snap.getBlockData(loc.getBlockX() & 15, y, loc.getBlockZ() & 15).getMaterial().isSolid();
+        return loc.getBlock().getRelative(BlockFace.DOWN).getType().isSolid();
     }
 
     /**

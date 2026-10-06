@@ -47,6 +47,8 @@ public final class PendingPearlManager implements Listener {
     private final AtomicBoolean saveRequested = new AtomicBoolean();
     private static final long HANDLED_PEARL_TTL_MILLIS = TimeUnit.SECONDS.toMillis(30);
     private static final long SAVE_COALESCE_DELAY_MILLIS = 100;
+    // 已处理珍珠记录的清理周期（秒）：去重标记过期后必须移除，否则 Map 无界增长
+    private static final int CLEANUP_PERIOD_SECONDS = 30;
     private volatile boolean lastPearlEnabled;
     private volatile boolean pearlStateInitialized;
     private volatile boolean shuttingDown;
@@ -60,7 +62,7 @@ public final class PendingPearlManager implements Listener {
         this.tempFile = new File(plugin.getDataFolder(), "pearls.dat.tmp");
         load();
         handledCleanupTask = Bukkit.getAsyncScheduler().runAtFixedRate(plugin,
-                task -> cleanupHandledPearls(), 30, 30, TimeUnit.SECONDS);
+                task -> cleanupHandledPearls(), CLEANUP_PERIOD_SECONDS, CLEANUP_PERIOD_SECONDS, TimeUnit.SECONDS);
         refresh();
     }
 

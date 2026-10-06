@@ -33,12 +33,6 @@ final class PlayerDatabase implements AutoCloseable {
     /** 表名：运行时由 {@link #initTable()} 创建，静态 SQL 检查解析不到该表 */
     private static final String TABLE = "players";
 
-    // REPLACE INTO 在 SQLite 与 MySQL 均支持：主键存在则先 DELETE 再 INSERT，否则直接 INSERT
-    // 表 players 在运行时创建，故此处的 SQL 字面量抑制 SqlResolve（与 PlayerDataManager 一致）
-    @SuppressWarnings("SqlResolve")
-    private static final String SQL_UPSERT =
-            "REPLACE INTO players (uuid, name, password_hash, ip, last_login, logout_location, premium, properties, game_mode, totp_secret, last_active) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     @SuppressWarnings("SqlResolve")
     private static final String SQL_DELETE = "DELETE FROM players WHERE uuid = ?";
     @SuppressWarnings("SqlResolve")
@@ -48,11 +42,51 @@ final class PlayerDatabase implements AutoCloseable {
     private static final String SQL_SELECT_ALL =
             "SELECT uuid, name, password_hash, ip, last_login, logout_location, premium, properties, game_mode, totp_secret, last_active FROM players";
 
+    /** upsert 语句的列清单与取值占位符（两种方言共用） */
+    private static final String UPSERT_COLUMNS =
+            "(uuid, name, password_hash, ip, last_login, logout_location, premium, properties, game_mode, totp_secret, last_active)";
+    private static final String UPSERT_VALUES = "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+    /**
+     * 显式 upsert：主键冲突时只更新列，不做删除重建。
+     * <p>
+     * 刻意不用 {@code REPLACE INTO}——其语义是"冲突则先 DELETE 再 INSERT"，
+     * 一旦语句漏列（新增字段未同步加入），该列会被静默重置为默认值而不报错。
+     * SQLite 用 {@code ON CONFLICT ... DO UPDATE}（excluded 伪表），
+     * MySQL 用 {@code ON DUPLICATE KEY UPDATE}（VALUES(col)），故按方言在构造时定稿。
+     */
+    @SuppressWarnings("SqlResolve")
+    private static String upsertSqlSqlite() {
+        return "INSERT INTO " + TABLE + " " + UPSERT_COLUMNS + " " + UPSERT_VALUES
+                + " ON CONFLICT(uuid) DO UPDATE SET "
+                + "name = excluded.name, password_hash = excluded.password_hash, ip = excluded.ip, "
+                + "last_login = excluded.last_login, logout_location = excluded.logout_location, "
+                + "premium = excluded.premium, properties = excluded.properties, "
+                + "game_mode = excluded.game_mode, totp_secret = excluded.totp_secret, "
+                + "last_active = excluded.last_active";
+    }
+
+    /** MySQL 方言的 upsert（MySQL 无 excluded 伪表，用 VALUES(col)） */
+    @SuppressWarnings("SqlResolve")
+    private static String upsertSqlMySql() {
+        return "INSERT INTO " + TABLE + " " + UPSERT_COLUMNS + " " + UPSERT_VALUES
+                + " ON DUPLICATE KEY UPDATE "
+                + "name = VALUES(name), password_hash = VALUES(password_hash), ip = VALUES(ip), "
+                + "last_login = VALUES(last_login), logout_location = VALUES(logout_location), "
+                + "premium = VALUES(premium), properties = VALUES(properties), "
+                + "game_mode = VALUES(game_mode), totp_secret = VALUES(totp_secret), "
+                + "last_active = VALUES(last_active)";
+    }
+
     private final HowSAuth plugin;
     private final HikariDataSource dataSource;
+    // upsert 语句按方言在构造时定稿，之后只读
+    private final String sqlUpsert;
 
     PlayerDatabase(HowSAuth plugin) {
         this.plugin = plugin;
+        boolean mySql = "mysql".equals(plugin.config().database().type());
+        this.sqlUpsert = mySql ? upsertSqlMySql() : upsertSqlSqlite();
         this.dataSource = openDataSource(plugin);
         initTable();
     }
@@ -176,7 +210,7 @@ final class PlayerDatabase implements AutoCloseable {
     boolean upsertRows(List<PlayerData> list) throws SQLException {
         try (Connection conn = dataSource.getConnection()) {
             conn.setAutoCommit(false);
-            try (PreparedStatement ps = conn.prepareStatement(SQL_UPSERT)) {
+            try (PreparedStatement ps = conn.prepareStatement(sqlUpsert)) {
                 for (PlayerData data : list) {
                     bindPlayerData(ps, data);
                     ps.addBatch();
@@ -226,9 +260,9 @@ final class PlayerDatabase implements AutoCloseable {
         }
     }
 
-    /** 在同一事务连接内写入一条完整玩家记录（REPLACE INTO）。 */
+    /** 在同一事务连接内写入一条完整玩家记录（显式 upsert，按方言） */
     void upsertRow(Connection conn, PlayerData data) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(SQL_UPSERT)) {
+        try (PreparedStatement ps = conn.prepareStatement(sqlUpsert)) {
             bindPlayerData(ps, data);
             ps.executeUpdate();
         }

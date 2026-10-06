@@ -17,10 +17,18 @@ import java.util.UUID;
  * 故此从 {@link AccountLifecycle} 独立出来：账号逻辑的改动不牵连文件路径处理，
  * 世界目录结构（26.1+ 的 players/ 布局）也只在此处感知。
  * <p>
- * <b>线程契约</b>：所有删除/迁移都在异步调度器上执行（阻塞文件 IO 与重试 sleep），
- * 调用方不阻塞；删除采用重试机制以等待服务端写完 .dat 后再删，避免被回写覆盖。
+ * <b>线程契约</b>：本类所有公开入口都在异步调度器上执行真正的文件 IO 与重试 sleep，
+ * 调用方不会被阻塞；阻塞式的重试循环 {@code retryDelete} 为私有，只由本类内部调度。
  */
 public final class PlayerFiles {
+
+    // 删除重试时序：首次等服务器把 .dat 保存完，之后密集重试，总时长封顶
+    /** 首次重试前的等待（毫秒）：等服务器完成 .dat 保存 */
+    private static final long DELETE_FIRST_DELAY_MS = 1000L;
+    /** 首次之后的重试间隔（毫秒） */
+    private static final long DELETE_RETRY_DELAY_MS = 300L;
+    /** 重试总时长上限（毫秒）：超过即放弃并告警 */
+    private static final long DELETE_RETRY_WINDOW_MS = 5000L;
 
     private final HowSAuth plugin;
     private final ConfigManager configManager;
@@ -55,8 +63,9 @@ public final class PlayerFiles {
     /**
      * 在 PlayerQuitEvent 中调用：异步重试删除玩家 .dat 文件。
      * 玩家被踢出后服务器仍会将其数据保存到 .dat，早于保存完成的删除会被覆盖回写。
-     * 采用重试机制：首次延迟 1000ms（等保存完成）后尝试，文件仍存在则每 300ms 重试，
-     * 5 秒内持续尝试，确保服务器完成保存后能可靠删除。
+     * 采用重试机制：首次延迟 {@link #DELETE_FIRST_DELAY_MS}（等保存完成）后尝试，
+     * 文件仍存在则每 {@link #DELETE_RETRY_DELAY_MS} 重试，
+     * {@link #DELETE_RETRY_WINDOW_MS} 内持续尝试，确保服务器完成保存后能可靠删除。
      */
     public void deleteOnQuit(UUID uuid) {
         if (!sessions.consumePendingDatDelete(uuid)) return;
@@ -76,20 +85,27 @@ public final class PlayerFiles {
         Bukkit.getAsyncScheduler().runNow(plugin, task -> retryDelete(uuid));
     }
 
-    /** 重试删除玩家数据，5 秒内持续尝试（首次 1000ms，后续每 300ms） */
+    /**
+     * 重试删除玩家原版数据，{@link #DELETE_RETRY_WINDOW_MS} 内持续尝试。
+     * <p>
+     * <b>会阻塞调用线程（最坏 {@link #DELETE_RETRY_WINDOW_MS}）</b>，因此只允许从异步线程调用。
+     * 本类的公开入口 {@link #deleteOnQuit}/{@link #deleteAsync} 已自行调度到异步线程，
+     * 调用方无需也不得直接调用本方法。
+     */
     @SuppressWarnings("BusyWait")
-    void retryDelete(UUID uuid) {
+    private void retryDelete(UUID uuid) {
         long elapsed = 0;
         while (true) {
+            long delay = elapsed == 0 ? DELETE_FIRST_DELAY_MS : DELETE_RETRY_DELAY_MS;
             try {
-                Thread.sleep(elapsed == 0 ? 1000 : 300);
+                Thread.sleep(delay);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
             }
-            elapsed += elapsed == 0 ? 1000 : 300;
+            elapsed += delay;
             if (delete(uuid)) return;
-            if (elapsed >= 5000) {
+            if (elapsed >= DELETE_RETRY_WINDOW_MS) {
                 plugin.getLogger().warning(I18n.get("log.delete_player_data_failed", uuid));
                 if (Debug.on()) {
                     Debug.log("db", "delete vanilla data for %s: failed after retries", Debug.shortId(uuid));

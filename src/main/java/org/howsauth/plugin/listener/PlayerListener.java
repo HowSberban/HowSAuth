@@ -11,6 +11,7 @@ import org.howsauth.plugin.auth.FailProtection;
 import org.howsauth.plugin.auth.LogoutLocation;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.TwoFactorAuth;
+import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.api.event.HSAuthLoginEvent;
 import org.howsauth.plugin.api.event.HSAuthRegisterEvent;
 import org.howsauth.plugin.dialog.PreJoinAuthListener;
@@ -56,6 +57,8 @@ public final class PlayerListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPreLogin(AsyncPlayerPreLoginEvent event) {
         var uuid = event.getUniqueId();
+        // 取一次配置快照：本方法多处读配置，reload 换掉领域对象时避免读到新旧混合的值
+        ConfigManager config = plugin.config();
 
         // 数据库加载失败（fail-closed）：缓存为空会把所有玩家误判为未注册，拒绝进入直至恢复
         if (plugin.playerData().isLoadFailed()) {
@@ -80,7 +83,7 @@ public final class PlayerListener implements Listener {
 
         // 有账号但无任何可用登录方式（无密码/未绑 2FA/非正版）。
         // 配置开启时在连接阶段直接拦截；关闭时放行，由 beginAuthFlow 挂起（永远无法通过，超时踢出）
-        if (plugin.config().protectionMisc().rejectNoAuthAccount()
+        if (config.protectionMisc().rejectNoAuthAccount()
                 && accounts.hasNoUsableLoginMethod(uuid)) {
             if (Debug.on()) {
                 Debug.log("flow", "prelogin reject %s: no usable login method", event.getName());
@@ -104,16 +107,16 @@ public final class PlayerListener implements Listener {
         // 同 IP 已达上限时仅在连接层拦截无账号新玩家，避免名额已满的 IP 涌入未注册玩家；
         // max-accounts-per-ip.reject-join 关闭时放行进服，由注册动作精确判定（共享 IP 环境友好）
         // 已达上限判定内部已处理 max<=0，无需在此重复判断
-        if (plugin.config().register().ipLimitRejectJoin()
+        if (config.register().ipLimitRejectJoin()
                 && !accounts.hasAccount(uuid)
                 && accounts.isIpAccountLimitReached(event.getAddress().getHostAddress())) {
             if (Debug.on()) {
                 Debug.log("flow", "prelogin reject %s: ip account limit reached (max %s)",
-                        event.getName(), plugin.config().register().maxAccountsPerIp());
+                        event.getName(), config.register().maxAccountsPerIp());
             }
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER,
                     I18n.msg("register.ip_limit",
-                            plugin.config().register().maxAccountsPerIp()));
+                            config.register().maxAccountsPerIp()));
         }
 
         // 放行玩家异步预载退出位置区块：fire-and-forget，不阻塞、不影响放行判定
@@ -220,7 +223,6 @@ public final class PlayerListener implements Listener {
         reminders.schedule(player, needsLogin);
         scheduleLoginTimeout(player, needsLogin);
     }
-
     /**
      * 登录前失明：开关开启则施加无限时长失明（无颗粒无图标，重复挂起幂等），
      * 关闭则移除——reload 经 refreshPendingPlayers 重新挂起时按新配置双向同步，
@@ -404,8 +406,10 @@ public final class PlayerListener implements Listener {
     /** 启动登录/注册超时踢出任务（onJoin 和 forceRegister 共用，重复调用会自动作废旧任务）
      *  @param needsLogin true = 登录超时（login.timeout），false = 注册超时（register.timeout） */
     public void scheduleLoginTimeout(Player player, boolean needsLogin) {
-        int timeout = plugin.config().login().timeout();
-        if (!needsLogin) timeout = plugin.config().login().registerTimeout();
+        // 取一次配置快照：两个分支读同一领域，避免读到新旧混合的超时值
+        ConfigManager config = plugin.config();
+        int timeout = config.login().timeout();
+        if (!needsLogin) timeout = config.login().registerTimeout();
         if (timeout <= 0) return;
 
         // 记录启动时间，触发时校验是否为最新任务（forceRegister 重启超时后旧任务自动失效）

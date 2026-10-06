@@ -37,6 +37,10 @@ public final class PlayerDataManager implements AutoCloseable {
     private final Map<UUID, Integer> flushFailures = new ConcurrentHashMap<>();
     // 批量落库最大重试次数
     private static final int MAX_FLUSH_RETRY = 3;
+    // 数据库加载失败后的自动重试周期（秒）
+    private static final int LOAD_RETRY_PERIOD_SECONDS = 10;
+    // 关服/等待写队列排空的等待上限（秒）：超时后强制关停，避免卡住关服
+    private static final int DB_DRAIN_TIMEOUT_SECONDS = 30;
     // 正版玩家名索引：name(小写) → uuid，用于 getByName 快速查找，避免 O(n) 遍历
     private final Map<String, UUID> premiumNameIndex = new ConcurrentHashMap<>();
     // 数据库全量加载是否失败：失败期间 fail-closed，拒绝新玩家进入（空缓存会把所有玩家误判为未注册）
@@ -96,7 +100,7 @@ public final class PlayerDataManager implements AutoCloseable {
             }
             plugin.getLogger().warning(I18n.get("log.load_retry"));
             load();
-        }, 10, 10, TimeUnit.SECONDS);
+        }, LOAD_RETRY_PERIOD_SECONDS, LOAD_RETRY_PERIOD_SECONDS, TimeUnit.SECONDS);
     }
 
     /** 数据库是否处于加载失败状态（fail-closed：玩家数据不可见，调用方应拒绝进入） */
@@ -180,7 +184,7 @@ public final class PlayerDataManager implements AutoCloseable {
         dirty.clear();
         dbWriteExecutor.shutdown();
         try {
-            if (!dbWriteExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+            if (!dbWriteExecutor.awaitTermination(DB_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 // 超时未排空（DB 严重卡顿）：丢弃剩余任务（旧快照晚于全量保存落库会回退数据），最终状态由全量保存覆盖
                 plugin.getLogger().severe(I18n.get("log.db_write_queue_timeout"));
                 dbWriteExecutor.shutdownNow();
@@ -198,13 +202,13 @@ public final class PlayerDataManager implements AutoCloseable {
     public void awaitPendingWrites() {
         try {
             dbWriteExecutor.submit(() -> {
-            }).get(30, TimeUnit.SECONDS);
+            }).get(DB_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (RejectedExecutionException e) {
             // 队列已关闭（saveSync/close 之后）：不存在在途写入需要等待
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (ExecutionException | TimeoutException e) {
-            plugin.getLogger().warning(I18n.get("log.db_write_await_timeout", 30));
+            plugin.getLogger().warning(I18n.get("log.db_write_await_timeout", DB_DRAIN_TIMEOUT_SECONDS));
         }
     }
 
@@ -532,7 +536,7 @@ public final class PlayerDataManager implements AutoCloseable {
     public void close() {
         dbWriteExecutor.shutdown();
         try {
-            if (!dbWriteExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+            if (!dbWriteExecutor.awaitTermination(DB_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 // 超时未排空：丢弃剩余任务，防止关闭数据源后在途任务获取连接失败刷错误日志
                 plugin.getLogger().severe(I18n.get("log.db_write_queue_timeout"));
                 dbWriteExecutor.shutdownNow();

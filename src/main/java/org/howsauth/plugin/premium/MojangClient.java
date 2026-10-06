@@ -51,6 +51,14 @@ public final class MojangClient {
     // 熔断冷却封顶（毫秒）
     private static final long BREAKER_MAX_COOLDOWN_MS = 300_000L;
 
+    // 下列三个超时同值但含义不同，故各自具名而非合并：
+    // 1) TCP 建连超时，只约束握手阶段，不含请求/响应
+    private static final int CONNECT_TIMEOUT_SECONDS = 5;
+    // 2) 后台探测请求的响应超时：探测不占线程，但要限制单个探测的寿命
+    private static final int PROBE_TIMEOUT_SECONDS = 5;
+    // 3) 插件禁用时等待在途验证收尾的时间，超时则强制关停线程池
+    private static final int SHUTDOWN_WAIT_SECONDS = 5;
+
     /** 验证端点：唯一 key + HTTP 客户端（绑定出站代理或直连）+ 目标服务器基础 URL + 日志描述 */
     private record Endpoint(String key, HttpClient client, String baseUrl, String description) {}
 
@@ -163,9 +171,9 @@ public final class MojangClient {
         }
     }
 
-    /** 构建 HttpClient：统一 5 秒连接超时，proxy 为 null 时直连 */
+    /** 构建 HttpClient：统一连接超时（CONNECT_TIMEOUT_SECONDS），proxy 为 null 时直连 */
     private static HttpClient newHttpClient(ProxySelector proxy) {
-        HttpClient.Builder builder = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5));
+        HttpClient.Builder builder = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS));
         return proxy == null ? builder.build() : builder.proxy(proxy).build();
     }
 
@@ -180,7 +188,7 @@ public final class MojangClient {
         httpExecutor.shutdown();
         try {
             // 等待在途验证完成，避免旧实例的回调打到已注销的监听器
-            if (!httpExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+            if (!httpExecutor.awaitTermination(SHUTDOWN_WAIT_SECONDS, TimeUnit.SECONDS)) {
                 httpExecutor.shutdownNow();
             }
         } catch (InterruptedException e) {
@@ -215,7 +223,7 @@ public final class MojangClient {
         if (!b.probing.compareAndSet(false, true)) return;
         HttpRequest request = HttpRequest.newBuilder(URI.create(
                         endpoint.baseUrl() + HAS_JOINED_PATH + "probe&serverId=probe"))
-                .timeout(Duration.ofSeconds(5))
+                .timeout(Duration.ofSeconds(PROBE_TIMEOUT_SECONDS))
                 .header("User-Agent", USER_AGENT)
                 .GET()
                 .build();

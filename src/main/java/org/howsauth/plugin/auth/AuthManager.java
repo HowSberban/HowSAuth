@@ -31,6 +31,9 @@ import java.util.concurrent.TimeUnit;
  */
 public final class AuthManager {
 
+    /** 过期状态（2FA 临时密钥、登录/2FA 会话、校验中标记）的清理周期（秒）：懒清理的兜底 */
+    private static final int CLEANUP_PERIOD_SECONDS = 30;
+
     /** 登录结果 */
     public enum LoginResult {
         /** 登录成功 */
@@ -69,7 +72,7 @@ public final class AuthManager {
         Bukkit.getAsyncScheduler().runAtFixedRate(plugin, task -> {
             twoFactor.cleanupExpiredSecrets();
             cleanupExpiredStates();
-        }, 1, 30, TimeUnit.SECONDS);
+        }, CLEANUP_PERIOD_SECONDS, CLEANUP_PERIOD_SECONDS, TimeUnit.SECONDS);
     }
 
     // ===== 协作服务访问器 =====
