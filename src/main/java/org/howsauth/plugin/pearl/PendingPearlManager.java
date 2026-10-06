@@ -22,7 +22,6 @@ import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 
 import java.io.File;
-import java.lang.reflect.Method;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -30,12 +29,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 
 /** 暂存离线或尚未通过认证玩家的末影珍珠。 */
 public final class PendingPearlManager implements Listener {
@@ -45,19 +42,16 @@ public final class PendingPearlManager implements Listener {
                          double x, double y, double z, double vx, double vy, double vz) {}
 
     private final HowSAuth plugin;
+    private final PearlOwnerResolver ownerResolver;
     private final File file;
     private final File tempFile;
     private final Map<UUID, List<PearlSnapshot>> pending = new ConcurrentHashMap<>();
     private final Map<UUID, Long> handledPearls = new ConcurrentHashMap<>();
-    private final Map<Class<?>, Optional<Method>> handleMethods = new ConcurrentHashMap<>();
-    private final Map<Class<?>, Optional<Method>> ownerUuidMethods = new ConcurrentHashMap<>();
     private final AtomicBoolean saveScheduled = new AtomicBoolean();
     private final AtomicBoolean saveRequested = new AtomicBoolean();
     private static final double STATE_MATCH_EPSILON = 1e-6;
-    private static final long OWNER_WARNING_INTERVAL_MILLIS = TimeUnit.MINUTES.toMillis(1);
     private static final long HANDLED_PEARL_TTL_MILLIS = TimeUnit.SECONDS.toMillis(30);
     private static final long SAVE_COALESCE_DELAY_MILLIS = 100;
-    private static final AtomicLong lastOwnerWarningAt = new AtomicLong();
     private volatile boolean lastPearlEnabled;
     private volatile boolean pearlStateInitialized;
     private volatile boolean shuttingDown;
@@ -66,6 +60,7 @@ public final class PendingPearlManager implements Listener {
 
     public PendingPearlManager(HowSAuth plugin) {
         this.plugin = plugin;
+        this.ownerResolver = new PearlOwnerResolver(plugin);
         this.file = new File(plugin.getDataFolder(), "pearls.dat");
         this.tempFile = new File(plugin.getDataFolder(), "pearls.dat.tmp");
         load();
@@ -107,12 +102,12 @@ public final class PendingPearlManager implements Listener {
         if (!(event.getEntity() instanceof EnderPearl pearl)) return;
         if (!plugin.getConfigManager().pearlEnabled()) return;
         if (handledPearls.remove(pearl.getUniqueId()) != null) return;
-        UUID owner = resolveOwner(pearl);
+        UUID owner = ownerResolver.resolve(pearl);
         if (owner == null) {
-            warnOwnerResolutionFailure(pearl);
+            ownerResolver.warnResolutionFailure(pearl);
             return;
         }
-        if (isAuthenticatedOwner(owner)) return;
+        if (ownerResolver.isAuthenticated(owner)) return;
         absorb(pearl, owner);
         save();
     }
@@ -120,19 +115,19 @@ public final class PendingPearlManager implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onEntityAddToWorld(EntityAddToWorldEvent event) {
         if (!(event.getEntity() instanceof EnderPearl pearl)) return;
-        UUID owner = resolveOwner(pearl);
+        UUID owner = ownerResolver.resolve(pearl);
         if (!plugin.getConfigManager().pearlEnabled()) {
             // 开关关闭时仍清理未登录玩家的恢复珍珠，但不能干扰已登录玩家的正常投掷。
             if (owner == null) return;
-            if (isAuthenticatedOwner(owner)) return;
+            if (ownerResolver.isAuthenticated(owner)) return;
             removePearl(pearl);
             return;
         }
         if (owner == null) {
-            warnOwnerResolutionFailure(pearl);
+            ownerResolver.warnResolutionFailure(pearl);
             return;
         }
-        if (isAuthenticatedOwner(owner)) return;
+        if (ownerResolver.isAuthenticated(owner)) return;
         absorb(pearl, owner);
         save();
     }
@@ -242,53 +237,6 @@ public final class PendingPearlManager implements Listener {
             List<PearlSnapshot> stored = pending.get(owner);
             Debug.log("pearl", "absorb pearl for %s (stored %s)", Debug.shortId(owner),
                     stored == null ? 0 : stored.size());
-        }
-    }
-
-    private UUID resolveOwner(EnderPearl pearl) {
-        if (pearl.getShooter() instanceof Player player) {
-            return player.getUniqueId();
-        }
-        return readOwnerUuid(pearl);
-    }
-
-    private boolean isAuthenticatedOwner(UUID owner) {
-        Player player = Bukkit.getPlayer(owner);
-        return player != null && plugin.sessions().isLoggedIn(player);
-    }
-
-    private UUID readOwnerUuid(EnderPearl pearl) {
-        try {
-            Optional<Method> handleMethod = handleMethods.computeIfAbsent(
-                    pearl.getClass(), type -> findMethod(type, "getHandle"));
-            if (handleMethod.isEmpty()) return null;
-            Object handle = handleMethod.get().invoke(pearl);
-            Optional<Method> ownerMethod = ownerUuidMethods.computeIfAbsent(
-                    handle.getClass(), type -> findMethod(type, "getOwnerUUID"));
-            if (ownerMethod.isEmpty()) return null;
-            return (UUID) ownerMethod.get().invoke(handle);
-        } catch (ReflectiveOperationException | RuntimeException e) {
-            return null;
-        }
-    }
-
-    private static Optional<Method> findMethod(Class<?> type, String name) {
-        try {
-            return Optional.of(type.getMethod(name));
-        } catch (ReflectiveOperationException | RuntimeException e) {
-            return Optional.empty();
-        }
-    }
-
-    private void warnOwnerResolutionFailure(EnderPearl pearl) {
-        long now = System.currentTimeMillis();
-        while (true) {
-            long previous = lastOwnerWarningAt.get();
-            if (now - previous < OWNER_WARNING_INTERVAL_MILLIS) return;
-            if (lastOwnerWarningAt.compareAndSet(previous, now)) {
-                plugin.getLogger().warning(I18n.get("log.pearl_owner_resolve_failed", pearl.getUniqueId()));
-                return;
-            }
         }
     }
 
