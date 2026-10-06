@@ -31,12 +31,12 @@ import java.util.Locale;
  * <p>
  * 全部处理器与认证流程同用 {@link EventPriority#LOWEST}，保持拦截先于其它监听器的既有次序。
  */
-public final class UnauthenticatedRestrictionListener implements Listener {
+public final class GuestListener implements Listener {
 
     private final ConfigManager configManager;
     private final SessionStore sessions;
 
-    public UnauthenticatedRestrictionListener(ConfigManager configManager, SessionStore sessions) {
+    public GuestListener(ConfigManager configManager, SessionStore sessions) {
         this.configManager = configManager;
         this.sessions = sessions;
     }

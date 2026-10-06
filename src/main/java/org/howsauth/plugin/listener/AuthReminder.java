@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 任务自管理：玩家登录/注册成功或下线后自动取消并清理 BossBar；玩家退出时由调用方
  * 显式调 {@link #hide} 与 {@link #cancelTask}（退出瞬间玩家调度器已 retired，任务内分支不再执行）。
  */
-public final class AuthReminderService {
+public final class AuthReminder {
 
     private final HowSAuth plugin;
     private final SessionStore sessions;
@@ -34,7 +34,7 @@ public final class AuthReminderService {
     // 活跃的提醒任务：重新挂起（reload）时取消旧任务，避免新旧任务并行重复提醒
     private final Map<UUID, ScheduledTask> reminderTasks = new ConcurrentHashMap<>();
 
-    public AuthReminderService(HowSAuth plugin, SessionStore sessions,
+    public AuthReminder(HowSAuth plugin, SessionStore sessions,
                                AccountLifecycle accounts, TwoFactorAuth twoFactor) {
         this.plugin = plugin;
         this.sessions = sessions;

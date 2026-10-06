@@ -41,7 +41,7 @@ class QuitFlowRegressionTest {
         plugin = env.plugin();
         sessions = env.sessions();
         // 监听器与登录收尾依赖的插件字段由 onEnable 装配，测试不触发 onEnable 需按同样次序注入
-        // （退出阶段经 plugin.vanillaData() 删原版数据，故 authManager 字段必须先就位）
+        // （退出阶段经 plugin.playerFiles() 删原版数据，故 authManager 字段必须先就位）
         MockBukkitHarness.inject(HowSAuth.class, "authManager", plugin, env.auth());
         PlayerListener playerListener = new PlayerListener(plugin, sessions, env.failProtection(), env.twoFactor(), env.locations(), env.accounts(), env.loginFlow(), env.authReminder());
         MockBukkitHarness.inject(HowSAuth.class, "playerListener", plugin, playerListener);

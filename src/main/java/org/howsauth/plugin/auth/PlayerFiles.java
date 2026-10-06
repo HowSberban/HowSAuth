@@ -20,7 +20,7 @@ import java.util.UUID;
  * <b>线程契约</b>：所有删除/迁移都在异步调度器上执行（阻塞文件 IO 与重试 sleep），
  * 调用方不阻塞；删除采用重试机制以等待服务端写完 .dat 后再删，避免被回写覆盖。
  */
-public final class VanillaPlayerData {
+public final class PlayerFiles {
 
     private final HowSAuth plugin;
     private final ConfigManager configManager;
@@ -28,7 +28,7 @@ public final class VanillaPlayerData {
     // 缓存世界结构类型：26.1+ 采用新结构（players/data + dimensions/minecraft/overworld）
     private final boolean newWorldStructure;
 
-    VanillaPlayerData(HowSAuth plugin, ConfigManager configManager, SessionStore sessions) {
+    PlayerFiles(HowSAuth plugin, ConfigManager configManager, SessionStore sessions) {
         this.plugin = plugin;
         this.configManager = configManager;
         this.sessions = sessions;

@@ -36,11 +36,11 @@ public final class PlayerListener implements Listener {
     private final LogoutLocation locations;
     private final AccountLifecycle accounts;
     private final LoginFlow loginFlow;
-    private final AuthReminderService reminders;
+    private final AuthReminder reminders;
 
     public PlayerListener(HowSAuth plugin, SessionStore sessions,
                           FailProtection failProtection, TwoFactorAuth twoFactor, LogoutLocation locations,
-                          AccountLifecycle accounts, LoginFlow loginFlow, AuthReminderService reminders) {
+                          AccountLifecycle accounts, LoginFlow loginFlow, AuthReminder reminders) {
         this.plugin = plugin;
         this.sessions = sessions;
         this.failProtection = failProtection;
@@ -447,7 +447,7 @@ public final class PlayerListener implements Listener {
         // 清理提醒任务引用（任务随玩家调度器 retired 不再执行，防止 Map 残留）
         reminders.cancelTask(player.getUniqueId());
         // 注销玩家退出时删除原版 .dat（服务器已保存并释放文件锁）
-        plugin.vanillaData().deleteOnQuit(player.getUniqueId());
+        plugin.playerFiles().deleteOnQuit(player.getUniqueId());
     }
 
     /**

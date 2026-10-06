@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 反射方法按 {@code Class} 缓存（{@link ConcurrentHashMap#computeIfAbsent}），空结果同样缓存，
  * 避免每次珍珠落地都重复查找；缓存值为 {@code Optional.empty()} 表示该类确实没有该方法。
  */
-final class PearlOwnerResolver {
+final class OwnerResolver {
 
     private final HowSAuth plugin;
     // 反射方法缓存：类 -> getHandle()/getOwnerUUID()，空结果同样入缓存
@@ -34,7 +34,7 @@ final class PearlOwnerResolver {
     private static final long OWNER_WARNING_INTERVAL_MILLIS = TimeUnit.MINUTES.toMillis(1);
     private static final AtomicLong lastOwnerWarningAt = new AtomicLong();
 
-    PearlOwnerResolver(HowSAuth plugin) {
+    OwnerResolver(HowSAuth plugin) {
         this.plugin = plugin;
     }
 

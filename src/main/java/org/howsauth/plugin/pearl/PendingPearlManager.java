@@ -18,7 +18,7 @@ import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Vector;
 import org.howsauth.plugin.HowSAuth;
-import org.howsauth.plugin.pearl.PearlSnapshotCodec.PearlSnapshot;
+import org.howsauth.plugin.pearl.SnapshotCodec.PearlSnapshot;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 
@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class PendingPearlManager implements Listener {
 
     private final HowSAuth plugin;
-    private final PearlOwnerResolver ownerResolver;
+    private final OwnerResolver ownerResolver;
     private final File file;
     private final File tempFile;
     private final Map<UUID, List<PearlSnapshot>> pending = new ConcurrentHashMap<>();
@@ -55,7 +55,7 @@ public final class PendingPearlManager implements Listener {
 
     public PendingPearlManager(HowSAuth plugin) {
         this.plugin = plugin;
-        this.ownerResolver = new PearlOwnerResolver(plugin);
+        this.ownerResolver = new OwnerResolver(plugin);
         this.file = new File(plugin.getDataFolder(), "pearls.dat");
         this.tempFile = new File(plugin.getDataFolder(), "pearls.dat.tmp");
         load();
@@ -219,7 +219,7 @@ public final class PendingPearlManager implements Listener {
                     updated.set(i, snapshot);
                     return List.copyOf(updated);
                 }
-                if (existing.legacy() && PearlSnapshotCodec.sameState(existing, worldName, loc, vel)) {
+                if (existing.legacy() && SnapshotCodec.sameState(existing, worldName, loc, vel)) {
                     updated.set(i, snapshot);
                     return List.copyOf(updated);
                 }
@@ -302,7 +302,7 @@ public final class PendingPearlManager implements Listener {
                     UUID uuid = UUID.fromString(key);
                     List<PearlSnapshot> snapshots = new ArrayList<>();
                     for (Map<?, ?> map : yaml.getMapList(key)) {
-                        PearlSnapshot snapshot = PearlSnapshotCodec.parseSnapshot(map);
+                        PearlSnapshot snapshot = SnapshotCodec.parseSnapshot(map);
                         if (snapshot != null) snapshots.add(snapshot);
                     }
                     if (!snapshots.isEmpty()) pending.put(uuid, List.copyOf(snapshots));
@@ -351,7 +351,7 @@ public final class PendingPearlManager implements Listener {
     private synchronized void saveSync() {
         YamlConfiguration yaml = new YamlConfiguration();
         for (Map.Entry<UUID, List<PearlSnapshot>> entry : pending.entrySet()) {
-            yaml.set(entry.getKey().toString(), PearlSnapshotCodec.serializeSnapshots(entry.getValue()));
+            yaml.set(entry.getKey().toString(), SnapshotCodec.serializeSnapshots(entry.getValue()));
         }
         try {
             yaml.save(tempFile);

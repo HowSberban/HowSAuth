@@ -16,14 +16,14 @@ import java.util.UUID;
  * 位置/速度的（带容差的）同一性比较。零实例状态，故从 {@link PendingPearlManager}
  * 独立出来——持久化格式的改动不再触碰珍珠生命周期逻辑，反之亦然。
  * <p>
- * 编解码方法为包内可见：供 {@code PearlSnapshotCodecTest} 直接单测。
+ * 编解码方法为包内可见：供 {@code SnapshotCodecTest} 直接单测。
  */
-final class PearlSnapshotCodec {
+final class SnapshotCodec {
 
     /** 位置/速度比较容差：浮点经历 YAML 往返后允许的误差 */
     private static final double STATE_MATCH_EPSILON = 1e-6;
 
-    private PearlSnapshotCodec() {
+    private SnapshotCodec() {
     }
 
     /** 珍珠快照（包内可见：供单测使用） */

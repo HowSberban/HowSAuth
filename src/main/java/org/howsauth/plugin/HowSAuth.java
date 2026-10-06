@@ -12,17 +12,17 @@ import org.howsauth.plugin.auth.LoginFlow;
 import org.howsauth.plugin.auth.LogoutLocation;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.TwoFactorAuth;
-import org.howsauth.plugin.auth.VanillaPlayerData;
+import org.howsauth.plugin.auth.PlayerFiles;
 import org.howsauth.plugin.command.*;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
 import org.howsauth.plugin.dialog.DialogManager;
 import org.howsauth.plugin.dialog.PreJoinAuthListener;
 import org.howsauth.plugin.hook.HSAuthExpansion;
-import org.howsauth.plugin.listener.AuthReminderService;
+import org.howsauth.plugin.listener.AuthReminder;
 import org.howsauth.plugin.listener.JoinQuitMessageService;
 import org.howsauth.plugin.listener.PlayerListener;
-import org.howsauth.plugin.listener.UnauthenticatedRestrictionListener;
+import org.howsauth.plugin.listener.GuestListener;
 import org.howsauth.plugin.packet.InventoryPacketListener;
 import org.howsauth.plugin.pearl.PendingPearlManager;
 import org.howsauth.plugin.premium.ConnectionHandler;
@@ -44,7 +44,7 @@ public class HowSAuth extends JavaPlugin {
     private AuthManager authManager;
     private PlayerListener playerListener;
     // 未登录提示的周期提醒与提示文案：认证流程与提醒共用，故由插件持有
-    private AuthReminderService authReminderService;
+    private AuthReminder authReminder;
     // 飞行末影珍珠保管：统一接管退出/进入/返还路径，防止未登录玩家被珍珠传送
     private PendingPearlManager pendingPearlManager;
     // Dialog API 构建器：开关关闭或服务端不支持（<1.21.11）时为 null，pre-join 与游戏内 2FA 绑定均回退
@@ -177,15 +177,15 @@ public class HowSAuth extends JavaPlugin {
 
     private void registerListeners() {
         // 未登录提示的周期提醒与提示文案（认证流程与提醒共用文案口径，故先构造再注入）
-        this.authReminderService = new AuthReminderService(this, authManager.sessions(),
+        this.authReminder = new AuthReminder(this, authManager.sessions(),
                 authManager.accounts(), authManager.twoFactor());
         playerListener = new PlayerListener(this, authManager.sessions(), authManager.failProtection(),
                 authManager.twoFactor(), authManager.locations(), authManager.accounts(),
-                authManager.loginFlow(), authReminderService);
+                authManager.loginFlow(), authReminder);
         getServer().getPluginManager().registerEvents(playerListener, this);
         // 未登录行为限制：独立监听器（只依赖配置与登录态，与认证流程无耦合）
         getServer().getPluginManager().registerEvents(
-                new UnauthenticatedRestrictionListener(configManager, authManager.sessions()), this);
+                new GuestListener(configManager, authManager.sessions()), this);
         // 末影珍珠保管：独立监听器（接管飞行珍珠，登录后按配置返还）
         pendingPearlManager = new PendingPearlManager(this);
         getServer().getPluginManager().registerEvents(pendingPearlManager, this);
@@ -255,8 +255,8 @@ public class HowSAuth extends JavaPlugin {
     }
 
     /** 原版玩家数据文件（.dat/advancements/stats）的删除与迁移 */
-    public VanillaPlayerData vanillaData() {
-        return authManager.vanillaData();
+    public PlayerFiles playerFiles() {
+        return authManager.playerFiles();
     }
 
     /** 登录/注册编排（密码校验、2FA 转接、登录收尾、密码操作），AuthManager 拆分后的协作服务 */
@@ -269,8 +269,8 @@ public class HowSAuth extends JavaPlugin {
     }
 
     /** 未登录提示的周期提醒（LoginFlow 登录收尾时需隐藏提示；认证流程共用其文案口径） */
-    public AuthReminderService authReminder() {
-        return authReminderService;
+    public AuthReminder authReminder() {
+        return authReminder;
     }
 
     public PendingPearlManager getPendingPearlManager() {

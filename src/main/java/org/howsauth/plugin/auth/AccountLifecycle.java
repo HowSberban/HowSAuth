@@ -37,7 +37,7 @@ public final class AccountLifecycle {
     private final FailProtection failProtection;
     private final TwoFactorAuth twoFactor;
     // 原版玩家数据文件（.dat/advancements/stats）的删除与迁移：注销流程的收尾步骤
-    private final VanillaPlayerData vanillaData;
+    private final PlayerFiles playerFiles;
     // 组装根提供的"清理全部服务过期状态"回调（批量注销时顺手清理，防止累积）
     private final Runnable expiredStateCleanup;
 
@@ -53,7 +53,7 @@ public final class AccountLifecycle {
 
     AccountLifecycle(HowSAuth plugin, PlayerDataManager dataManager, ConfigManager configManager,
                      AuthEvents events, SessionStore sessions, FailProtection failProtection,
-                     TwoFactorAuth twoFactor, VanillaPlayerData vanillaData, Runnable expiredStateCleanup) {
+                     TwoFactorAuth twoFactor, PlayerFiles playerFiles, Runnable expiredStateCleanup) {
         this.plugin = plugin;
         this.dataManager = dataManager;
         this.configManager = configManager;
@@ -61,7 +61,7 @@ public final class AccountLifecycle {
         this.sessions = sessions;
         this.failProtection = failProtection;
         this.twoFactor = twoFactor;
-        this.vanillaData = vanillaData;
+        this.playerFiles = playerFiles;
         this.expiredStateCleanup = expiredStateCleanup;
     }
 
@@ -233,7 +233,7 @@ public final class AccountLifecycle {
                     Debug.log("auth", "unregister %s: account removed, vanilla data deleted immediately",
                             Debug.shortId(uuid));
                 }
-                vanillaData.deleteWithRetry(uuid);
+                playerFiles.deleteWithRetry(uuid);
             }
             // 顺手清理已过期的踢出记录、失败计数和注销拒绝重连记录，防止批量注销时累积
             expiredStateCleanup.run();
@@ -296,7 +296,7 @@ public final class AccountLifecycle {
      */
     public void executeDowngrade(UUID premiumUuid, UUID offlineUuid, String name) {
         if (!dataManager.migrateToOffline(premiumUuid, offlineUuid)) return;
-        vanillaData.migrateAsync(premiumUuid, offlineUuid);
+        playerFiles.migrateAsync(premiumUuid, offlineUuid);
         pendingDowngrade.remove(premiumUuid);
         premiumFallback.remove(premiumUuid);
         plugin.getLogger().info(I18n.get("log.downgrade_migrated", name));
