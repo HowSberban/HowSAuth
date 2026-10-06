@@ -59,6 +59,14 @@ dependencies {
     testRuntimeOnly("com.github.retrooper:packetevents-spigot:2.13.0")
     testRuntimeOnly("com.mojang:authlib:9.0.75")
     testRuntimeOnly("me.clip:placeholderapi:2.11.6")
+    // ConnectionHandler 直接使用未 shaded 的 io.netty.*（正式运行时由 Paper 服务端提供）。
+    // main 的 compileOnly 能解析到它们，但 compileOnly 不进入测试类路径，
+    // 于是测试加载该类时报 NoClassDefFoundError: io/netty/channel/ChannelHandler —— 故测试需显式声明。
+    // 版本与 packetevents 传递进来的 netty 一致，避免测试运行时出现两份 netty。
+    testImplementation("io.netty:netty-transport:4.1.138.Final")
+    testImplementation("io.netty:netty-buffer:4.1.138.Final")
+    testImplementation("io.netty:netty-common:4.1.138.Final")
+    testImplementation("io.netty:netty-handler:4.1.138.Final")
 }
 
 tasks.named('test') {

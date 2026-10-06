@@ -78,7 +78,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         this.mojangClient = mojangClient;
         this.playerInjector = playerInjector;
         this.dataManager = dataManager;
-        this.rsaKeyPair = generateKeyPair();
+        this.rsaKeyPair = LoginFrames.generateKeyPair();
         this.publicKeyEncoded = rsaKeyPair.getPublic().getEncoded();
     }
 
@@ -104,7 +104,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         String username = wrapper.getUsername();
 
         // 获取玩家 IP
-        String ip = extractIp(channel);
+        String ip = LoginFrames.extractIp(channel);
         if (ip == null) {
             return; // 无法获取 IP，放行让服务端处理
         }
@@ -297,7 +297,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
             removeDetector(channel);
 
             // 11. 计算服务器哈希并异步调用 hasJoined
-            String serverHash = computeServerHash(sharedSecret, publicKeyEncoded);
+            String serverHash = LoginFrames.computeServerHash(sharedSecret, publicKeyEncoded);
             String username = session.username();
 
             mojangClient.hasJoined(serverHash, username).thenAccept(premiumProfile -> {
@@ -414,27 +414,6 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         });
     }
 
-    /** 从 channel 提取玩家真实 IP。
-     *  服务器开启 proxies.proxy-protocol（frp/nginx 内网穿透）时 channel.remoteAddress 是隧道入口地址，
-     *  真实 IP 存于 NMS Connection，优先反射读取其 getRemoteAddress()（与 Bukkit 各事件返回的地址一致）；
-     *  未开启或反射失败时回退 channel.remoteAddress。 */
-    private static String extractIp(Channel channel) {
-        Object connection = channel.pipeline().get("packet_handler");
-        if (connection != null) {
-            try {
-                Object remote = connection.getClass().getMethod("getRemoteAddress").invoke(connection);
-                if (remote instanceof InetSocketAddress isa && isa.getAddress() != null) {
-                    return isa.getAddress().getHostAddress();
-                }
-            } catch (ReflectiveOperationException ignored) {
-                // 该 NMS 版本无此方法，回退 channel.remoteAddress
-            }
-        }
-        if (channel.remoteAddress() instanceof InetSocketAddress addr) {
-            return addr.getAddress().getHostAddress();
-        }
-        return null;
-    }
 
     /**
      * 正版账户是否允许密码回退：回退开关开启，且（有密码，或无密码但拒绝开关关闭——放行无凭据玩家）。
@@ -493,39 +472,16 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         }));
     }
 
+
+
+
     /**
-     * 计算 Mojang 服务器哈希：十六进制( SHA-1( serverId("") + sharedSecret + publicKey ) )
-     * 使用 new BigInteger(digest)（不带 signum=1），与 vanilla Minecraft 一致：
-     * 若 digest 首字节 >= 0x80，结果为负数（如 "-abc123..."），客户端也用相同方式计算。
+     * 踢出连接：委托 {@link LoginFrames#kick} 发送 Disconnect 并延迟关闭 channel，
+     * 随后清理会话。会话属于本类持有，故清理由此处的 cleanupSession 完成
+     * （cleanupSession 幂等，重复调用安全）。
      */
-    private static String computeServerHash(byte[] sharedSecret, byte[] publicKey) {
-        try {
-            MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
-            // serverId 为空字符串，update 空数组是 no-op，直接跳过
-            sha1.update(sharedSecret);
-            sha1.update(publicKey);
-            byte[] digest = sha1.digest();
-            return new java.math.BigInteger(digest).toString(16);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to compute server hash", e);
-        }
-    }
-
-    /** 经已加密通道发送 Disconnect 包（直接发送 Component，保留其他插件设置的消息样式） */
-    private void sendDisconnect(User user, net.kyori.adventure.text.Component message) {
-        WrapperLoginServerDisconnect disconnect = new WrapperLoginServerDisconnect(message);
-        user.sendPacket(disconnect);
-    }
-
-    /** 踢出连接：发送 Disconnect 后延迟关闭 channel（恶意客户端可无视 Disconnect 保持连接），并清理会话 */
-    // EventLoop 为 channel 长生命周期资源，不应关闭；借用其调度延迟关闭任务
-    @SuppressWarnings("resource")
     private void kick(Channel channel, User user, net.kyori.adventure.text.Component message) {
-        if (Debug.on()) {
-            Debug.log("premium", "kick %s: disconnect sent, closing channel in 5s", user.getName());
-        }
-        sendDisconnect(user, message);
-        channel.eventLoop().schedule(() -> { channel.close(); }, 5, TimeUnit.SECONDS);
+        LoginFrames.kick(channel, user, message);
         cleanupSession(channel);
     }
 
@@ -547,14 +503,4 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         removeDetector(channel);
     }
 
-    /** 生成 RSA 2048 密钥对（启动时一次，所有连接复用） */
-    private static KeyPair generateKeyPair() {
-        try {
-            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
-            gen.initialize(2048);
-            return gen.generateKeyPair();
-        } catch (Exception e) {
-            throw new RuntimeException(I18n.get("log.premium_keypair_failed"), e);
-        }
-    }
 }
