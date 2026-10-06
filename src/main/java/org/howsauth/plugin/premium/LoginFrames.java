@@ -12,14 +12,10 @@ import java.net.InetSocketAddress;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
-import java.util.concurrent.TimeUnit;
 
 /**
- * 登录阶段的"帧级"工具：与会话状态无关的收发与计算。
- * <p>
- * 从 {@link ConnectionHandler} 抽出，只包含无实例状态的操作——提取 IP、生成 RSA 密钥对、
- * 计算 Mojang 会话哈希、发送 Disconnect、踢出连接。把这些放在一处的好处是：
- * 会话/状态机（{@link ConnectionHandler}）不必再混入这些纯 I/O 细节。
+ * 登录阶段的"帧级"工具：与会话状态无关的收发与计算——提取 IP、生成 RSA 密钥对、
+ * 计算 Mojang 会话哈希、发送 Disconnect、踢出连接。
  */
 final class LoginFrames {
 
@@ -84,16 +80,19 @@ final class LoginFrames {
     }
 
     /**
-     * 踢出连接：发送 Disconnect 后延迟关闭 channel（恶意客户端可无视 Disconnect 保持连接）。
+     * 踢出连接：发送 Disconnect 后立即关闭 channel，不让已被拒绝的连接继续存活。
+     * <p>
+     * 包在 {@code user.sendPacket(...)} 内即已 writeAndFlush 写出，且本插件未设置
+     * {@code SO_LINGER}，关闭是优雅关闭——内核会保留发送缓冲区的数据并负责重传，
+     * 因此立刻 close 不会丢失踢出理由。
+     * <p>
      * 会话清理由调用方负责（会话注册表在 ConnectionHandler 手中）。
      */
-    // EventLoop 为 channel 长生命周期资源，不应关闭；借用其调度延迟关闭任务
-    @SuppressWarnings("resource")
     static void kick(Channel channel, User user, Component message) {
         if (Debug.on()) {
-            Debug.log("premium", "kick %s: disconnect sent, closing channel in 5s", user.getName());
+            Debug.log("premium", "kick %s: disconnect sent, closing channel", user.getName());
         }
         sendDisconnect(user, message);
-        channel.eventLoop().schedule(() -> { channel.close(); }, 5, TimeUnit.SECONDS);
+        channel.close();
     }
 }

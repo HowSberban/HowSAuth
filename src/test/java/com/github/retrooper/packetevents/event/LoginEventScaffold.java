@@ -1,7 +1,6 @@
 package com.github.retrooper.packetevents.event;
 
 import com.github.retrooper.packetevents.PacketEventsTestSupport;
-import com.github.retrooper.packetevents.PacketEventsTestSupport.RecordingProtocolManager;
 import com.github.retrooper.packetevents.protocol.ConnectionState;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.player.ClientVersion;
@@ -15,27 +14,13 @@ import java.lang.reflect.Method;
 import java.util.UUID;
 
 /**
- * 登录阶段事件仿真脚手架（测试专用）。
+ * 登录阶段事件仿真脚手架（测试专用）：用真实 {@code EmbeddedChannel}（真 pipeline + 内联 EventLoop）
+ * 与真实 {@code User} 驱动握手代码，出站包记入 {@link RecordingProtocolManager} 供断言。
  * <p>
- * 让 login 阶段的握手逻辑可测，而无需真实服务端：
- * <ul>
- *   <li><b>Channel</b>：真实 {@link EmbeddedChannel}——自带完整 pipeline（断开检测器的 install/remove 可用）
- *       与内联执行的 EmbeddedEventLoop，故 {@code eventLoop().execute(...)} 立即跑完，
- *       不需要等待，也就不会引入时序漂移。</li>
- *   <li><b>User</b>：真实 {@code User}。它能被构造的前提是先装好
- *       {@link PacketEventsTestSupport}（否则 {@code getAPI()} 为 null 会在静态初始化处炸掉）。</li>
- *   <li><b>出站包</b>：由 {@link RecordingProtocolManager} 记录，测试可断言服务端到底发了什么。</li>
- * </ul>
- * 生产代码不受影响：本类只存在于测试源集。
+ * 真实 {@code User} 的构造前提是先装好 {@link PacketEventsTestSupport}。
  * <p>
- * <b>已知限制（未解决）</b>：直接构造 LoginStart 包体交给生产代码里的
- * {@code WrapperLoginClientLoginStart} 解析会失败——它会报
- * {@code "The received string length is longer than maximum allowed (11 > 16)"}（该消息的两个数字含义与字面相反，
- * 实际是"长度 11 超过上限 16"）。已确认包体本身正确（VarInt 长度前缀 + UTF-8 用户名，首字节 0x0B、次字节 'O'），
- * 且与 readerIndex 被推进无关（每次解析前都归零仍失败）。
- * 因此**凡是要走到 LoginStart 包体解析的用例目前都无法覆盖**：
- * 只能测"解析之前"或"解析之后不经包体"的分支（见 ConnectionHandlerLoginStartTest 及 ConnectionHandlerHashTest）。
- * 继续排查需要读 packetevents 的 readString 实现与其版本相关的上限判定。
+ * 限制：需要经生产代码的 wrapper 解析包体的分支（如 LoginStart 的用户名）当前无法覆盖，
+ * 只测解析之前或不经包体的分支。
  */
 public final class LoginEventScaffold {
 
