@@ -1,8 +1,6 @@
 package org.howsauth.plugin.listener;
 
-import io.papermc.paper.event.player.AsyncChatEvent;
 import io.papermc.paper.event.player.AsyncPlayerSpawnLocationEvent;
-import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.Bukkit;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
@@ -20,23 +18,12 @@ import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.block.BlockBreakEvent;
-import org.bukkit.event.block.BlockPlaceEvent;
-import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.entity.EntityTargetEvent;
-import org.bukkit.event.entity.FoodLevelChangeEvent;
-import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.*;
 
-import java.util.Locale;
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 // AsyncPlayerSpawnLocationEvent 等 Paper API 标记为 @ApiStatus.Experimental，实际已稳定可用
 @SuppressWarnings("UnstableApiUsage")
@@ -49,13 +36,11 @@ public final class PlayerListener implements Listener {
     private final LogoutLocation locations;
     private final AccountLifecycle accounts;
     private final LoginFlow loginFlow;
-    // 活跃的提醒 BossBar：登录成功/玩家退出时立即隐藏（不等下一个任务周期）
-    private final Map<UUID, net.kyori.adventure.bossbar.BossBar> reminderBars = new ConcurrentHashMap<>();
-    // 活跃的提醒任务：重新挂起（reload）时取消旧任务，避免新旧任务并行重复提醒
-    private final Map<UUID, ScheduledTask> reminderTasks = new ConcurrentHashMap<>();
+    private final AuthReminderService reminders;
 
     public PlayerListener(HowSAuth plugin, SessionStore sessions,
-                          FailProtection failProtection, TwoFactorAuth twoFactor, LogoutLocation locations, AccountLifecycle accounts, LoginFlow loginFlow) {
+                          FailProtection failProtection, TwoFactorAuth twoFactor, LogoutLocation locations,
+                          AccountLifecycle accounts, LoginFlow loginFlow, AuthReminderService reminders) {
         this.plugin = plugin;
         this.sessions = sessions;
         this.failProtection = failProtection;
@@ -63,6 +48,7 @@ public final class PlayerListener implements Listener {
         this.locations = locations;
         this.accounts = accounts;
         this.loginFlow = loginFlow;
+        this.reminders = reminders;
     }
 
     // 在玩家加入世界前拦截：踢出期玩家、同一 IP 账号数量超限
@@ -225,7 +211,7 @@ public final class PlayerListener implements Listener {
         locations.setSpectator(player);
         applyLoginBlindness(player);
         player.sendMessage(I18n.msg(messageKey, player));
-        scheduleReminder(player, needsLogin);
+        reminders.schedule(player, needsLogin);
         scheduleLoginTimeout(player, needsLogin);
     }
 
@@ -323,108 +309,9 @@ public final class PlayerListener implements Listener {
         }
         if (Debug.on()) {
             Debug.log("flow", "auth flow %s: suspend with prompt %s (hasAccount=%s)",
-                    player.getName(), authPromptKey(uuid, hasAccount), hasAccount);
+                    player.getName(), reminders.promptKey(uuid, hasAccount), hasAccount);
         }
-        suspend(player, authPromptKey(uuid, hasAccount), hasAccount);
-    }
-
-    /**
-     * 挂起提示文案选择：首次挂起与周期提醒共用，防止两类提示口径不一致。
-     * 注册 → 待 2FA → 无密码（无可用登录方式细分联系管理员）→ 密码登录。
-     */
-    private String authPromptKey(UUID uuid, boolean needsLogin) {
-        if (!needsLogin) return "listener.please_register";
-        if (twoFactor.isPending(uuid)) return "login.need_2fa";
-        return accounts.isPasswordless(uuid)
-                ? (accounts.hasNoUsableLoginMethod(uuid)
-                        ? "login.passwordless_no_auth" : "login.passwordless_prompt")
-                : "listener.please_login";
-    }
-
-    /**
-     * 周期性重发登录/注册提示，防止玩家没看到。
-     * 任务自管理：玩家登录/注册成功或下线后自动取消。
-     * 提示方式由 login.remind-method 配置：chat / title / actionbar / bossbar。
-     * @param needsLogin true = 发送登录提示，false = 发送注册提示
-     */
-    public void scheduleReminder(Player player, boolean needsLogin) {
-        int interval = plugin.getConfigManager().loginRemindInterval();
-        if (interval <= 0) return;
-        long periodTicks = interval * 20L;
-        UUID uuid = player.getUniqueId();
-        // 取消旧提醒任务（refreshPendingPlayers 重新挂起时避免新旧任务并行重复提醒）
-        ScheduledTask old = reminderTasks.remove(uuid);
-        if (old != null) old.cancel();
-        // Paper 1.20+ 统一调度器 API，兼容 Folia
-        // 玩家调度器已退休（退出瞬间与 reload 挂起竞态）时返回 null，null 不允许入 Map
-        ScheduledTask task = player.getScheduler().runAtFixedRate(plugin, scheduledTask -> {
-            if (!player.isOnline()) {
-                reminderTasks.remove(uuid);
-                hideReminderBar(player);
-                scheduledTask.cancel();
-                return;
-            }
-            boolean done = needsLogin ? sessions.isLoggedIn(player) : accounts.hasAccount(player);
-            if (done) {
-                reminderTasks.remove(uuid);
-                hideReminderBar(player);
-                scheduledTask.cancel();
-                return;
-            }
-            sendReminder(player, needsLogin);
-        }, null, periodTicks, periodTicks);
-        if (task != null) {
-            reminderTasks.put(uuid, task);
-        }
-    }
-
-    /** 按配置方式发送登录/注册提醒（bossbar 引用统一由 reminderBars 持有） */
-    private void sendReminder(Player player, boolean needsLogin) {
-        // 提示文案与首次挂起共用同一选择逻辑（authPromptKey），保证周期提醒口径一致
-        String key = authPromptKey(player.getUniqueId(), needsLogin);
-        String method = plugin.getConfigManager().loginRemindMethod();
-        switch (method) {
-            case "title" -> player.showTitle(net.kyori.adventure.title.Title.title(
-                    I18n.msg(key, player),
-                    net.kyori.adventure.text.Component.empty(),
-                    net.kyori.adventure.title.Title.Times.times(
-                            java.time.Duration.ofMillis(500),
-                            java.time.Duration.ofMillis(2000),
-                            java.time.Duration.ofMillis(500))));
-            case "actionbar" -> player.sendActionBar(I18n.msg(key, player));
-            case "bossbar" -> {
-                net.kyori.adventure.bossbar.BossBar bar = reminderBars.get(player.getUniqueId());
-                if (bar == null) {
-                    net.kyori.adventure.text.Component text = I18n.msg(key, player);
-                    bar = net.kyori.adventure.bossbar.BossBar.bossBar(
-                            text, 1.0f,
-                            net.kyori.adventure.bossbar.BossBar.Color.YELLOW,
-                            net.kyori.adventure.bossbar.BossBar.Overlay.PROGRESS);
-                    player.showBossBar(bar);
-                    reminderBars.put(player.getUniqueId(), bar);
-                } else {
-                    bar.name(I18n.msg(key, player));
-                }
-            }
-            default -> player.sendMessage(I18n.msg(key, player));
-        }
-    }
-
-    /** 隐藏并移除提醒 BossBar（登录成功、玩家退出、任务自检清理时调用；非 bossbar 方式时为空操作） */
-    public void hideReminderBar(Player player) {
-        net.kyori.adventure.bossbar.BossBar bar = reminderBars.remove(player.getUniqueId());
-        if (bar != null) {
-            player.hideBossBar(bar);
-        }
-    }
-
-    /** 清理所有提醒 BossBar（refreshPendingPlayers 重新挂起前调用，防止旧 BossBar 悬挂到玩家登录才消失） */
-    private void clearReminderBars() {
-        reminderBars.forEach((uuid, bar) -> {
-            Player player = Bukkit.getPlayer(uuid);
-            if (player != null) player.hideBossBar(bar);
-        });
-        reminderBars.clear();
+        suspend(player, reminders.promptKey(uuid, hasAccount), hasAccount);
     }
 
     /**
@@ -432,7 +319,7 @@ public final class PlayerListener implements Listener {
      * 逐玩家切回其区域线程执行（Folia：管理员与目标玩家可能不在同一区域线程）。
      */
     public void refreshPendingPlayers() {
-        clearReminderBars();
+        reminders.clearAll();
         int suspended = 0;
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (sessions.isLoggedIn(player)) continue;
@@ -556,9 +443,9 @@ public final class PlayerListener implements Listener {
             clearLoginBlindness(player);
         }
         // 立即清理提醒 BossBar：玩家调度器随退出 retired，任务内的清理分支不再执行
-        hideReminderBar(player);
+        reminders.hide(player);
         // 清理提醒任务引用（任务随玩家调度器 retired 不再执行，防止 Map 残留）
-        reminderTasks.remove(player.getUniqueId());
+        reminders.cancelTask(player.getUniqueId());
         // 注销玩家退出时删除原版 .dat（服务器已保存并释放文件锁）
         accounts.tryDeletePlayerDataOnQuit(player.getUniqueId());
     }
@@ -575,235 +462,5 @@ public final class PlayerListener implements Listener {
             Debug.log("flow", "quit cleanup for %s: clearing session state (MONITOR, after message decision)", event.getPlayer().getName());
         }
         loginFlow.clearSession(event.getPlayer());
-    }
-
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onMove(PlayerMoveEvent event) {
-        if (!plugin.getConfigManager().preventMove()) return;
-
-        Player player = event.getPlayer();
-        if (sessions.isLoggedIn(player)) return;
-
-        // Paper API 保证 getTo() 非 null（@NullMarked）
-        // 使用 setTo() 而非 setCancelled(true)：
-        //   1. 避免客户端与服务端位置不同步导致的画面卡顿
-        //   2. 使用精确坐标比较（getX/Y/Z），避免方块坐标精度不足被绕过
-        Location from = event.getFrom();
-        Location to = event.getTo();
-        boolean positionChanged = from.getX() != to.getX()
-                || from.getY() != to.getY()
-                || from.getZ() != to.getZ();
-        boolean lookChanged = from.getYaw() != to.getYaw()
-                || from.getPitch() != to.getPitch();
-
-        boolean preventLook = plugin.getConfigManager().preventLook();
-        if (preventLook) {
-            // 禁止位置和视角变化：全部回滚到 from
-            if (positionChanged || lookChanged) {
-                event.setTo(from);
-            }
-        } else {
-            // 仅禁止位置移动：直接改 to 的坐标（复用对象，避免热路径逐次分配），保留其视角（yaw/pitch）
-            if (positionChanged) {
-                to.setX(from.getX());
-                to.setY(from.getY());
-                to.setZ(from.getZ());
-                event.setTo(to);
-            }
-        }
-    }
-
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onChat(AsyncChatEvent event) {
-        if (!plugin.getConfigManager().preventChat()) return;
-
-        Player player = event.getPlayer();
-        if (!sessions.isLoggedIn(player)) {
-            if (Debug.on()) {
-                Debug.log("flow", "blocked chat for %s (not logged in)", player.getName());
-            }
-            event.setCancelled(true);
-            player.sendMessage(I18n.msg("listener.must_login", player));
-        }
-    }
-
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onCommand(PlayerCommandPreprocessEvent event) {
-        if (!plugin.getConfigManager().preventCommand()) return;
-
-        Player player = event.getPlayer();
-        if (sessions.isLoggedIn(player)) return;
-
-        // 提取命令名（去掉前导 / 和参数），统一小写匹配
-        String message = event.getMessage();
-        if (message.startsWith("/")) message = message.substring(1);
-        int space = message.indexOf(' ');
-        String commandName = (space > 0 ? message.substring(0, space) : message).toLowerCase(Locale.ROOT);
-        // 剥离命令命名空间前缀（/hsauth:login 与 /login 是同一命令，否则无法经命名空间形式登录）
-        int colon = commandName.indexOf(':');
-        if (colon >= 0) commandName = commandName.substring(colon + 1);
-
-        // 白名单内的命令允许执行
-        if (plugin.getConfigManager().commandWhitelist().contains(commandName)) {
-            return;
-        }
-
-        if (Debug.on()) {
-            Debug.log("cmd", "blocked command for %s: /%s", player.getName(), commandName);
-        }
-        event.setCancelled(true);
-        player.sendMessage(I18n.msg("listener.must_login", player));
-    }
-
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onBlockBreak(BlockBreakEvent event) {
-        if (plugin.getConfigManager().preventWorldInteraction()
-                && !sessions.isLoggedIn(event.getPlayer())) {
-            event.setCancelled(true);
-        }
-    }
-
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onBlockPlace(BlockPlaceEvent event) {
-        if (plugin.getConfigManager().preventWorldInteraction()
-                && !sessions.isLoggedIn(event.getPlayer())) {
-            event.setCancelled(true);
-        }
-    }
-
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onDamage(EntityDamageEvent event) {
-        if (!plugin.getConfigManager().preventWorldInteraction()) return;
-        if (event.getEntity() instanceof Player player) {
-            // 未登录玩家或传送过渡期玩家不受伤害
-            if (!sessions.isLoggedIn(player) || sessions.isInvulnerablePending(player)) {
-                event.setCancelled(true);
-                return;
-            }
-        }
-        // 未登录玩家不可伤害任何实体（左键攻击不经过交互事件，须拦攻击者一侧）
-        if (event instanceof org.bukkit.event.entity.EntityDamageByEntityEvent byEntity) {
-            // 直接近战：damager 为玩家，拦未登录者
-            if (byEntity.getDamager() instanceof Player damager && !sessions.isLoggedIn(damager)) {
-                event.setCancelled(true);
-                return;
-            }
-            // 投射物：damager 为投射物实体，归因到射击者（箭离弦后射击者注销时仍可命中）
-            if (byEntity.getDamager() instanceof Projectile projectile
-                    && projectile.getShooter() instanceof Player shooter
-                    && !sessions.isLoggedIn(shooter)) {
-                event.setCancelled(true);
-            }
-        }
-    }
-
-    // 阻止怪物锁定未登录玩家（怪物不会朝玩家移动或试图攻击）
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onEntityTarget(EntityTargetEvent event) {
-        if (!plugin.getConfigManager().preventWorldInteraction()) return;
-        if (event.getTarget() instanceof Player player
-                && !sessions.isLoggedIn(player)) {
-            event.setCancelled(true);
-        }
-    }
-
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onFoodChange(FoodLevelChangeEvent event) {
-        if (plugin.getConfigManager().preventWorldInteraction()
-                && event.getEntity() instanceof Player player
-                && !sessions.isLoggedIn(player)) {
-            event.setCancelled(true);
-        }
-    }
-
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onDropItem(PlayerDropItemEvent event) {
-        if (plugin.getConfigManager().preventWorldInteraction()
-                && !sessions.isLoggedIn(event.getPlayer())) {
-            event.setCancelled(true);
-        }
-    }
-
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onPickupItem(PlayerAttemptPickupItemEvent event) {
-        if (plugin.getConfigManager().preventWorldInteraction()
-                && !sessions.isLoggedIn(event.getPlayer())) {
-            event.setCancelled(true);
-        }
-    }
-
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onInteract(PlayerInteractEvent event) {
-        if (plugin.getConfigManager().preventWorldInteraction()
-                && !sessions.isLoggedIn(event.getPlayer())) {
-            event.setCancelled(true);
-        }
-    }
-
-    // 实体交互（右键实体：村民交易、上马、喂食等）：未登录玩家保持原游戏模式时可打开交易界面窥视
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onInteractEntity(PlayerInteractEntityEvent event) {
-        if (plugin.getConfigManager().preventWorldInteraction()
-                && !sessions.isLoggedIn(event.getPlayer())) {
-            event.setCancelled(true);
-        }
-    }
-
-    // 禁止未登录的旁观玩家附身实体：附身后镜头跟随目标实体移动，可窥视他人位置（绕过坐标保护）。
-    // Paper 1.21.11 已移除 PlayerSpectateEntityEvent，附身改由 cause=SPECTATE 的传送事件表达
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onSpectateTeleport(PlayerTeleportEvent event) {
-        if (event.getCause() != PlayerTeleportEvent.TeleportCause.SPECTATE) return;
-        if (plugin.getConfigManager().preventWorldInteraction()
-                && !sessions.isLoggedIn(event.getPlayer())) {
-            event.setCancelled(true);
-        }
-    }
-
-    // 容器点击（含创造模式）
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onInventoryClick(InventoryClickEvent event) {
-        if (!plugin.getConfigManager().preventInventory()) return;
-        if (event.getWhoClicked() instanceof Player player
-                && !sessions.isLoggedIn(player)) {
-            event.setCancelled(true);
-        }
-    }
-
-    // 容器拖拽
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onInventoryDrag(InventoryDragEvent event) {
-        if (!plugin.getConfigManager().preventInventory()) return;
-        if (event.getWhoClicked() instanceof Player player
-                && !sessions.isLoggedIn(player)) {
-            event.setCancelled(true);
-        }
-    }
-
-    // 传送门
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onPortal(PlayerPortalEvent event) {
-        if (!plugin.getConfigManager().preventWorldInteraction()) return;
-        if (!sessions.isLoggedIn(event.getPlayer())) {
-            event.setCancelled(true);
-        }
-    }
-
-    // 物品消耗（进食、喝药水等）
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onItemConsume(PlayerItemConsumeEvent event) {
-        if (!plugin.getConfigManager().preventInventory()) return;
-        if (!sessions.isLoggedIn(event.getPlayer())) {
-            event.setCancelled(true);
-        }
-    }
-
-    // 副手切换
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onSwapHandItems(PlayerSwapHandItemsEvent event) {
-        if (!plugin.getConfigManager().preventInventory()) return;
-        if (!sessions.isLoggedIn(event.getPlayer())) {
-            event.setCancelled(true);
-        }
     }
 }

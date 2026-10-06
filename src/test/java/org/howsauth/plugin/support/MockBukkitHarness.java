@@ -23,6 +23,7 @@ import org.howsauth.plugin.auth.LogoutLocation;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.Totp;
 import org.howsauth.plugin.auth.TwoFactorAuth;
+import org.howsauth.plugin.listener.AuthReminderService;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
 import org.jetbrains.annotations.NotNull;
@@ -69,6 +70,8 @@ public final class MockBukkitHarness implements AutoCloseable {
     private final PlayerDataManager data;
     private final AuthManager auth;
     private final MutableClock clock;
+    // 未登录提示提醒服务：按需构造（见 authReminder()），生产由 onEnable 装配
+    private AuthReminderService authReminderService;
 
     private MockBukkitHarness(Path tempDir, ServerMock server, HowSAuth plugin, ConfigManager config,
                               PlayerDataManager data, AuthManager auth, MutableClock clock) {
@@ -182,6 +185,18 @@ public final class MockBukkitHarness implements AutoCloseable {
     /** 登录/注册编排：AuthManager 拆分后登录流程由该服务持有 */
     public LoginFlow loginFlow() {
         return auth.loginFlow();
+    }
+
+    /**
+     * 未登录提示的周期提醒：生产由 onEnable 装配。测试不触发 onEnable，
+     * 故此处按同样次序构造并回填 HowSAuth 字段（LoginFlow 登录收尾会经 plugin.authReminder() 隐藏提示）。
+     */
+    public AuthReminderService authReminder() {
+        if (authReminderService == null) {
+            authReminderService = new AuthReminderService(plugin, sessions(), accounts(), twoFactor());
+            inject(HowSAuth.class, "authReminderService", plugin, authReminderService);
+        }
+        return authReminderService;
     }
 
     /** 注册一个使用同步实体调度器的玩家（addPasswordAsync 等依赖 player.getScheduler()） */

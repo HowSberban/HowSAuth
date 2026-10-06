@@ -528,7 +528,7 @@ public final class LoginFlow {
     public void onLoginSuccess(Player player) {
         player.getScheduler().run(plugin, task -> {
             // 立即隐藏提醒 BossBar（不等下一个提醒周期；非 bossbar 方式时为空操作）
-            plugin.getPlayerListener().hideReminderBar(player);
+            plugin.authReminder().hide(player);
             // 返还退出时保管的飞行末影珍珠（无记录时为空操作）
             plugin.getPendingPearlManager().returnPearls(player);
             // 仅对被设为旁观的玩家恢复游戏模式
