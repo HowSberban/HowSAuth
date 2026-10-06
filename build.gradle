@@ -56,7 +56,9 @@ dependencies {
     testRuntimeOnly("org.mindrot:jbcrypt:0.4")
     testRuntimeOnly("com.zaxxer:HikariCP:5.1.0")
     testRuntimeOnly("org.slf4j:slf4j-nop:2.0.13")
-    testRuntimeOnly("com.github.retrooper:packetevents-spigot:2.13.0")
+    // packetevents 需要同时可编译：握手事件的测试脚手架要构造 PacketReceiveEvent 及其协议类型
+    // （testRuntimeOnly 只进运行期，测试源码编译期看不到这些类）
+    testImplementation("com.github.retrooper:packetevents-spigot:2.13.0")
     testRuntimeOnly("com.mojang:authlib:9.0.75")
     testRuntimeOnly("me.clip:placeholderapi:2.11.6")
     // ConnectionHandler 直接使用未 shaded 的 io.netty.*（正式运行时由 Paper 服务端提供）。

@@ -7,7 +7,6 @@ import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.player.User;
 import com.github.retrooper.packetevents.wrapper.login.client.WrapperLoginClientEncryptionResponse;
 import com.github.retrooper.packetevents.wrapper.login.client.WrapperLoginClientLoginStart;
-import com.github.retrooper.packetevents.wrapper.login.server.WrapperLoginServerDisconnect;
 import com.github.retrooper.packetevents.wrapper.login.server.WrapperLoginServerEncryptionRequest;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
@@ -20,10 +19,7 @@ import org.howsauth.plugin.data.PlayerData;
 import org.howsauth.plugin.data.PlayerDataManager;
 
 import javax.crypto.Cipher;
-import java.net.InetSocketAddress;
 import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.Map;
