@@ -4,7 +4,7 @@ import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
-import org.howsauth.plugin.data.PlayerDataManager.PlayerData;
+import org.howsauth.plugin.data.PlayerData;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.block.data.BlockData;
@@ -71,7 +71,7 @@ public final class LogoutLocation {
             }
             return;
         }
-        data.logoutLocation(PlayerDataManager.serializeLocation(player.getLocation()));
+        data.logoutLocation(PlayerData.serializeLocation(player.getLocation()));
         data.gameMode(player.getGameMode().name());
     }
 
@@ -104,7 +104,7 @@ public final class LogoutLocation {
     public Location get(UUID uuid) {
         PlayerData data = dataManager.getPlayer(uuid);
         if (data == null) return null;
-        return PlayerDataManager.deserializeLocation(data.logoutLocation());
+        return PlayerData.deserializeLocation(data.logoutLocation());
     }
 
     /**

@@ -167,11 +167,11 @@ public class HowSAuth extends JavaPlugin {
             UnregisterCommand unregisterCommand;
             commands.register("unregister", I18n.get("command.desc.unregister"), List.of(), unregisterCommand = new UnregisterCommand(this));
             authManager.accounts().setUnregisterConfirmInvalidator(unregisterCommand::clearPendingConfirm);
-            commands.register(new PremiumCommand(this).buildNode(), I18n.get("command.desc.premium"), List.of());
+            commands.register(new PremiumCommand(this, playerDataManager).buildNode(), I18n.get("command.desc.premium"), List.of());
             // 2fa 与 hsauth 一样使用 brigadier 原生注册，子命令作为 literal 节点，
             // 客户端在输入空格后能自动显示子命令列表
             commands.register(new TwoFactorCommand(this, dialogManager).buildNode(), I18n.get("command.desc.2fa"), List.of("totp"));
-            commands.register(new HSAuthCommand(this).buildNode(), I18n.get("command.desc.hsauth"), List.of());
+            commands.register(new HSAuthCommand(this, playerDataManager).buildNode(), I18n.get("command.desc.hsauth"), List.of());
         });
     }
 
@@ -210,7 +210,7 @@ public class HowSAuth extends JavaPlugin {
         this.mojangClient = new MojangClient(this);
         this.playerInjector = new PlayerInjector(this);
         PacketEvents.getAPI().getEventManager()
-                .registerListener(new ConnectionHandler(this, dataService, mojangClient, playerInjector));
+                .registerListener(new ConnectionHandler(this, dataService, mojangClient, playerInjector, playerDataManager));
         // 启动时异步探测代理/镜像可用性（不阻塞启动），使用时跳过不可用端点
         if (configManager.premium().enabled() || playerDataManager.hasPremiumAccount()) {
             mojangClient.probeAll();

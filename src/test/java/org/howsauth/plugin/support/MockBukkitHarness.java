@@ -121,6 +121,9 @@ public final class MockBukkitHarness implements AutoCloseable {
             inject(HowSAuth.class, "configManager", plugin, config);
             PlayerDataManager data = new PlayerDataManager(plugin);
             AuthManager auth = new AuthManager(plugin, data, config);
+            // 与 onEnable 一致地注入 AuthManager：plugin.playerFiles()/accounts() 等委托访问器经它取用。
+            // 不注入时这些访问器在测试中恒为 NPE，导致依赖它们的路径（如迁移时删除作废号的原版数据文件）无法覆盖
+            inject(HowSAuth.class, "authManager", plugin, auth);
             // 自定义 WorldMock：补 getWorldFolder（注销删档路径依赖它定位世界目录，MockBukkit 默认未实现）
             server.addWorld(new TestWorldMock(new WorldCreator("world"), tempDir.resolve("world").toFile()));
             // 注入可控时钟：TOTP 周期由测试推进，起点与真实时间一致

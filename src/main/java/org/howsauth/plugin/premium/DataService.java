@@ -3,7 +3,7 @@ package org.howsauth.plugin.premium;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
-import org.howsauth.plugin.data.PlayerDataManager.PlayerData;
+import org.howsauth.plugin.data.PlayerData;
 
 import java.util.List;
 import java.util.Map;

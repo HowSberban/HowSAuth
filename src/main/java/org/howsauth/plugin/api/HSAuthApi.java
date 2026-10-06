@@ -7,6 +7,7 @@ import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.PasswordHash;
+import org.howsauth.plugin.data.PlayerData;
 import org.howsauth.plugin.data.PlayerDataManager;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -287,7 +288,7 @@ public final class HSAuthApi {
     /** 获取玩家上次登录 IP，无记录时返回 null */
     @Nullable
     public String getLastIp(@NotNull UUID uuid) {
-        PlayerDataManager.PlayerData data = dataManager.getPlayer(uuid);
+        PlayerData data = dataManager.getPlayer(uuid);
         return data != null ? data.ip() : null;
     }
 
@@ -296,7 +297,7 @@ public final class HSAuthApi {
      * @return 时间戳，0 表示从未登录或登录已失效
      */
     public long getLastLoginTime(@NotNull UUID uuid) {
-        PlayerDataManager.PlayerData data = dataManager.getPlayer(uuid);
+        PlayerData data = dataManager.getPlayer(uuid);
         return data != null ? data.lastLogin() : 0;
     }
 
@@ -315,7 +316,7 @@ public final class HSAuthApi {
      */
     public boolean checkPassword(@NotNull UUID uuid, @NotNull String password) {
         if (!tryAcquire(uuid)) return false;
-        PlayerDataManager.PlayerData data = dataManager.getPlayer(uuid);
+        PlayerData data = dataManager.getPlayer(uuid);
         if (data == null) return false;
         return PasswordHash.checkPassword(password, data.passwordHash());
     }

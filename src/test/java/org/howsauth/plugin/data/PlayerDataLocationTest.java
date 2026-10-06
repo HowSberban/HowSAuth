@@ -44,10 +44,10 @@ class PlayerDataLocationTest {
         assertNotNull(world, "the test world must exist");
         Location original = new Location(world, 12.5, 64.0, -33.25, 90f, 45f);
 
-        String serialized = PlayerDataManager.serializeLocation(original);
+        String serialized = PlayerData.serializeLocation(original);
         assertEquals("world:12.5:64.0:-33.25:90.0:45.0", serialized, "serialized form must be world:x:y:z:yaw:pitch");
 
-        Location parsed = PlayerDataManager.deserializeLocation(serialized);
+        Location parsed = PlayerData.deserializeLocation(serialized);
         assertNotNull(parsed, "a valid string must be deserializable");
         assertNotNull(parsed.getWorld(), "a world must be resolved");
         assertEquals("world", parsed.getWorld().getName(), "the world name must match");
@@ -62,13 +62,13 @@ class PlayerDataLocationTest {
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void rejectsMalformedInput() {
-        assertNull(PlayerDataManager.deserializeLocation(null), "null must yield null");
-        assertNull(PlayerDataManager.deserializeLocation(""), "an empty string must yield null");
-        assertNull(PlayerDataManager.deserializeLocation("world"), "too few segments must yield null");
-        assertNull(PlayerDataManager.deserializeLocation("world:1:2:3:0"), "5 segments must yield null");
-        assertNull(PlayerDataManager.deserializeLocation("world:1:2:3:0:0:extra"), "7 segments must yield null");
-        assertNull(PlayerDataManager.deserializeLocation("missing-world:1:2:3:0:0"), "a missing world must yield null");
-        assertNull(PlayerDataManager.deserializeLocation("world:a:b:c:0:0"), "non-numeric coordinates must yield null");
-        assertNull(PlayerDataManager.deserializeLocation("world:1:2:3:x:y"), "non-numeric rotation must yield null");
+        assertNull(PlayerData.deserializeLocation(null), "null must yield null");
+        assertNull(PlayerData.deserializeLocation(""), "an empty string must yield null");
+        assertNull(PlayerData.deserializeLocation("world"), "too few segments must yield null");
+        assertNull(PlayerData.deserializeLocation("world:1:2:3:0"), "5 segments must yield null");
+        assertNull(PlayerData.deserializeLocation("world:1:2:3:0:0:extra"), "7 segments must yield null");
+        assertNull(PlayerData.deserializeLocation("missing-world:1:2:3:0:0"), "a missing world must yield null");
+        assertNull(PlayerData.deserializeLocation("world:a:b:c:0:0"), "non-numeric coordinates must yield null");
+        assertNull(PlayerData.deserializeLocation("world:1:2:3:x:y"), "non-numeric rotation must yield null");
     }
 }

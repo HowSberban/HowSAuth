@@ -14,6 +14,7 @@ import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.config.LoginConfig;
 import org.howsauth.plugin.config.PasswordConfig;
 import org.howsauth.plugin.config.RegisterConfig;
+import org.howsauth.plugin.data.PlayerData;
 import org.howsauth.plugin.data.PlayerDataManager;
 import org.howsauth.plugin.support.MockBukkitHarness;
 import org.howsauth.plugin.support.MockBukkitHarness.TestPlayerMock;
@@ -459,7 +460,7 @@ class LongRunStabilityTest {
         env.flushAndAwaitDbWrites();
         try (PlayerDataManager restarted = new PlayerDataManager(plugin)) {
             assertTrue(restarted.hasAccount(uuid), "registration must be persisted");
-            PlayerDataManager.PlayerData reloaded = restarted.getPlayer(uuid);
+            PlayerData reloaded = restarted.getPlayer(uuid);
             assertNotNull(reloaded, "reloaded data must expose the account");
             assertNull(reloaded.totpSecret(), "unbound 2FA state must be persisted");
         }

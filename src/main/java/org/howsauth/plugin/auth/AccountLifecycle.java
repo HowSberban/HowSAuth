@@ -5,7 +5,7 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
-import org.howsauth.plugin.data.PlayerDataManager.PlayerData;
+import org.howsauth.plugin.data.PlayerData;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 

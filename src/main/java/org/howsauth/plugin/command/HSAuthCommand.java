@@ -12,7 +12,8 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.PasswordValidator;
-import org.howsauth.plugin.data.PlayerDataManager.PlayerData;
+import org.howsauth.plugin.data.PlayerData;
+import org.howsauth.plugin.data.PlayerDataManager;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.CommandSender;
@@ -33,6 +34,8 @@ import static io.papermc.paper.command.brigadier.Commands.literal;
 public final class HSAuthCommand {
 
     private final HowSAuth plugin;
+    // 账号数据直接注入：本类多处查询账号，持有整个 plugin 会让依赖变模糊
+    private final PlayerDataManager dataManager;
     /** 在线玩家名补全（不依赖实例状态，static） */
     private static final SuggestionProvider<io.papermc.paper.command.brigadier.CommandSourceStack> SUGGEST_PLAYERS =
             (context, builder) -> {
@@ -47,13 +50,15 @@ public final class HSAuthCommand {
             };
     private final SuggestionProvider<io.papermc.paper.command.brigadier.CommandSourceStack> SUGGEST_ALL_PLAYERS;
 
-    public HSAuthCommand(HowSAuth plugin) {
+    public HSAuthCommand(HowSAuth plugin, PlayerDataManager dataManager) {
         this.plugin = plugin;
-        this.SUGGEST_ALL_PLAYERS = suggestAllPlayers(plugin);
+        this.dataManager = dataManager;
+        this.SUGGEST_ALL_PLAYERS = suggestAllPlayers(dataManager);
     }
 
-    /** 补全：在线玩家 + 已注册的离线玩家（大小写不敏感前缀匹配） */
-    public static SuggestionProvider<io.papermc.paper.command.brigadier.CommandSourceStack> suggestAllPlayers(HowSAuth plugin) {
+    /** 补全：在线玩家 + 已注册的离线玩家（大小写不敏感前缀匹配）。static，供其它命令复用。 */
+    public static SuggestionProvider<io.papermc.paper.command.brigadier.CommandSourceStack> suggestAllPlayers(
+            PlayerDataManager dataManager) {
         return (context, builder) -> {
             String remaining = builder.getRemaining().toLowerCase(Locale.ROOT);
             // 先添加在线玩家
@@ -64,7 +69,7 @@ public final class HSAuthCommand {
                 }
             }
             // 再添加已注册的离线玩家
-            for (UUID uuid : plugin.playerData().getAllUuids()) {
+            for (UUID uuid : dataManager.getAllUuids()) {
                 if (Bukkit.getPlayer(uuid) != null) continue;
                 OfflinePlayer offline = Bukkit.getOfflinePlayer(uuid);
                 String name = offline.getName();
@@ -198,7 +203,7 @@ public final class HSAuthCommand {
         // 异步执行：getOfflinePlayer 可能阻塞网络查询（Folia 兼容）
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
             UUID targetUuid = resolveTargetUuid(targetName);
-            PlayerData data = plugin.playerData().getPlayer(targetUuid);
+            PlayerData data = dataManager.getPlayer(targetUuid);
             if (data == null) {
                 if (Debug.on()) {
                     Debug.log("cmd", "accounts by %s for %s: not found", sender.getName(), targetName);
@@ -216,7 +221,7 @@ public final class HSAuthCommand {
             }
 
             // 查找同 IP 的所有账号
-            List<PlayerData> sameIpAccounts = plugin.playerData().findByIp(ip);
+            List<PlayerData> sameIpAccounts = dataManager.findByIp(ip);
             // 排除目标玩家自身，输出其他账号名
             List<String> otherNames = sameIpAccounts.stream()
                     .filter(d -> !d.uuid().equals(targetUuid))
@@ -327,8 +332,8 @@ public final class HSAuthCommand {
         UUID uuid = Bukkit.getOfflinePlayer(targetName).getUniqueId();
         // 离线模式下 getOfflinePlayer 返回离线 UUID，与正版账号存储的正版 UUID 不匹配，
         // 不回溯会对正版玩家误报"账号不存在"
-        if (!plugin.playerData().hasAccount(uuid)) {
-            PlayerData premium = plugin.playerData().getByName(targetName);
+        if (!dataManager.hasAccount(uuid)) {
+            PlayerData premium = dataManager.getByName(targetName);
             if (premium != null) uuid = premium.uuid();
         }
         return uuid;
@@ -432,7 +437,7 @@ public final class HSAuthCommand {
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
             // 以数据库记录解析账号：getOfflinePlayer 走 usercache，同名可能缓存到与账号无关的 UUID
             // （玩家改名或正版/离线缓存混杂时），导致删错或漏删账号
-            UUID targetUuid = plugin.playerData().findUuidByName(targetName);
+            UUID targetUuid = dataManager.findUuidByName(targetName);
             if (targetUuid == null || !plugin.accounts().unregister(targetUuid)) {
                 if (Debug.on()) {
                     Debug.log("cmd", "unreg by %s for %s: not found", sender.getName(), targetName);

@@ -1,22 +1,12 @@
 package org.howsauth.plugin.data;
 
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.bukkit.Bukkit;
-import org.bukkit.Location;
-import org.bukkit.World;
 
-import java.io.File;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -29,14 +19,16 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.stream.Collectors;
 
-// 表 players 在运行时由 initTable() 创建，静态分析无法解析
+// 表 players 在运行时由 PlayerDatabase 创建，静态分析无法解析
 @SuppressWarnings("SqlResolve")
 public final class PlayerDataManager implements AutoCloseable {
 
     private final HowSAuth plugin;
-    private final HikariDataSource dataSource;
+    // 连接池与全部表级 SQL 集中在 PlayerDatabase
+    private final PlayerDatabase database;
+    // 账号身份迁移（离线↔正版）：需要同时操控缓存、名字索引与写队列，故独立成类
+    private final AccountMigration migration;
     // 内存缓存：启动时全量加载，运行时读操作走缓存，写操作标记脏后由周期任务批量落库
     private final Map<UUID, PlayerData> players = new ConcurrentHashMap<>();
     // 脏标记：内存数据已修改但尚未落库的玩家 UUID，由周期任务批量 flush
@@ -63,131 +55,22 @@ public final class PlayerDataManager implements AutoCloseable {
     // IP 注册名额锁：同 IP 计数与建号须在同一临界区内完成，防止并发注册同时通过检查突破上限
     private final Object ipLimitLock = new Object();
 
-    // REPLACE INTO 在 SQLite 与 MySQL 均支持：主键存在则先 DELETE 再 INSERT，否则直接 INSERT
-    private static final String SQL_UPSERT =
-            "REPLACE INTO players (uuid, name, password_hash, ip, last_login, logout_location, premium, properties, game_mode, totp_secret, last_active) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-    private static final String SQL_DELETE = "DELETE FROM players WHERE uuid = ?";
-    private static final String SQL_UPDATE_PREMIUM =
-            "UPDATE players SET premium = ?, properties = ?, name = ? WHERE uuid = ?";
-
     public PlayerDataManager(HowSAuth plugin) {
         this.plugin = plugin;
-        this.dataSource = createDataSource(plugin);
-        initTable();
+        this.database = new PlayerDatabase(plugin);
+        this.migration = new AccountMigration(plugin, this, database);
         load();
-    }
-
-    private HikariDataSource createDataSource(HowSAuth plugin) {
-        var cm = plugin.config();
-        HikariConfig config = new HikariConfig();
-        config.setPoolName("HowSAuth-DB");
-
-        if ("mysql".equals(cm.database().type())) {
-            // 拼接 MySQL JDBC URL 与连接参数
-            StringBuilder url = new StringBuilder()
-                    .append("jdbc:mysql://")
-                    .append(cm.database().host())
-                    .append(":")
-                    .append(cm.database().port())
-                    .append("/")
-                    .append(cm.database().database());
-            if (!cm.database().params().isEmpty()) {
-                String query = cm.database().params().entrySet().stream()
-                        .map(e -> e.getKey() + "=" + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8))
-                        .collect(Collectors.joining("&"));
-                url.append("?").append(query);
-            }
-            config.setJdbcUrl(url.toString());
-            config.setUsername(cm.database().username());
-            config.setPassword(cm.database().password());
-            config.setMaximumPoolSize(Math.max(1, cm.database().poolSize()));
-        } else {
-            // SQLite：单连接即可，避免文件锁竞争
-            File dbFile = new File(plugin.getDataFolder(), "players.db");
-            if (!dbFile.getParentFile().exists() && !dbFile.getParentFile().mkdirs()) {
-                plugin.getLogger().warning(I18n.get("log.create_data_dir_failed", dbFile.getParentFile().getAbsolutePath()));
-            }
-            config.setJdbcUrl("jdbc:sqlite:" + dbFile.getAbsolutePath());
-            // SQLite 写入依赖文件锁，多连接会阻塞，强制单连接
-            config.setMaximumPoolSize(1);
-        }
-
-        HikariDataSource ds = new HikariDataSource(config);
-        if (Debug.on()) {
-            Debug.log("db", "datasource init: type=%s poolSize=%s", cm.database().type(), config.getMaximumPoolSize());
-        }
-        return ds;
-    }
-
-    /** 建表（如果不存在）+ 迁移新列 */
-    private void initTable() {
-        try (Connection conn = dataSource.getConnection();
-             Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate(
-                    "CREATE TABLE IF NOT EXISTS players (" +
-                    "  uuid VARCHAR(36) PRIMARY KEY," +
-                    "  name VARCHAR(16)," +
-                    "  password_hash VARCHAR(255) NOT NULL," +
-                    "  ip VARCHAR(45) NOT NULL DEFAULT ''," +
-                    "  last_login BIGINT NOT NULL DEFAULT 0," +
-                    "  logout_location TEXT," +
-                    "  premium BOOLEAN NOT NULL DEFAULT 0," +
-                    "  properties TEXT" +
-                    ")"
-            );
-            // 迁移：为旧表添加新列（ALTER TABLE ADD COLUMN 在列已存在时抛异常，忽略即可）
-            addColumnIfMissing(stmt, conn, "name", "VARCHAR(16)");
-            addColumnIfMissing(stmt, conn, "premium", "BOOLEAN NOT NULL DEFAULT 0");
-            addColumnIfMissing(stmt, conn, "properties", "TEXT");
-            addColumnIfMissing(stmt, conn, "game_mode", "VARCHAR(16)");
-            addColumnIfMissing(stmt, conn, "totp_secret", "VARCHAR(64)");
-            addColumnIfMissing(stmt, conn, "last_active", "BIGINT NOT NULL DEFAULT 0");
-            if (Debug.on()) {
-                Debug.log("db", "schema migration: %s add-column steps applied", 6);
-            }
-        } catch (SQLException e) {
-            plugin.getLogger().severe(I18n.get("log.init_table_failed", e.getMessage()));
-        }
-    }
-
-    /** 安全添加列：若列不存在则执行 ALTER TABLE ADD COLUMN */
-    private void addColumnIfMissing(Statement stmt, Connection conn, String column, String type) {
-        try (ResultSet rs = conn.getMetaData().getColumns(null, null, "players", column)) {
-            if (!rs.next()) {
-                stmt.executeUpdate("ALTER TABLE " + "players" + " ADD COLUMN " + column + " " + type);
-            }
-        } catch (SQLException ignored) {
-            // 列已存在或其他异常，忽略
-        }
     }
 
     /** 启动时全量加载玩家数据到内存缓存；失败时置 fail-closed 标记并自动重试直至成功 */
     public void load() {
         players.clear();
         premiumNameIndex.clear();
-        try (Connection conn = dataSource.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(
-                     "SELECT uuid, name, password_hash, ip, last_login, logout_location, premium, properties, game_mode, totp_secret, last_active FROM players")) {
-            while (rs.next()) {
-                UUID uuid = UUID.fromString(rs.getString("uuid"));
-                PlayerData data = new PlayerData(
-                        uuid,
-                        rs.getString("name"),
-                        rs.getString("password_hash"),
-                        rs.getString("ip"),
-                        rs.getLong("last_login"),
-                        rs.getString("logout_location"),
-                        rs.getBoolean("premium"),
-                        rs.getString("properties"),
-                        rs.getString("game_mode"),
-                        rs.getString("totp_secret"),
-                        rs.getLong("last_active")
-                );
-                players.put(uuid, data);
+        try {
+            for (PlayerData data : database.loadAllRows()) {
+                players.put(data.uuid(), data);
                 if (data.premium() && data.name() != null) {
-                    premiumNameIndex.put(data.name().toLowerCase(), uuid);
+                    premiumNameIndex.put(data.name().toLowerCase(), data.uuid());
                 }
             }
             loadFailed = false;
@@ -327,20 +210,8 @@ public final class PlayerDataManager implements AutoCloseable {
 
     /** 批量 upsert，整批一个事务；成功返回 true，失败返回 false */
     private boolean upsertBatchSync(List<PlayerData> list) {
-        try (Connection conn = dataSource.getConnection()) {
-            conn.setAutoCommit(false);
-            try (PreparedStatement ps = conn.prepareStatement(SQL_UPSERT)) {
-                for (PlayerData data : list) {
-                    bindPlayerData(ps, data);
-                    ps.addBatch();
-                }
-                ps.executeBatch();
-                conn.commit();
-            } catch (SQLException e) {
-                conn.rollback();
-                throw e;
-            }
-            return true;
+        try {
+            return database.upsertRows(list);
         } catch (SQLException e) {
             plugin.getLogger().severe(I18n.get("log.save_all_failed", e.getMessage()));
             if (Debug.on()) {
@@ -353,20 +224,6 @@ public final class PlayerDataManager implements AutoCloseable {
     private void saveAllSync() {
         if (players.isEmpty()) return;
         upsertBatchSync(new ArrayList<>(players.values()));
-    }
-
-    private static void bindPlayerData(PreparedStatement ps, PlayerData data) throws SQLException {
-        ps.setString(1, data.uuid().toString());
-        ps.setString(2, data.name());
-        ps.setString(3, data.passwordHash());
-        ps.setString(4, data.ip());
-        ps.setLong(5, data.lastLogin());
-        ps.setString(6, data.logoutLocation());
-        ps.setBoolean(7, data.premium());
-        ps.setString(8, data.properties());
-        ps.setString(9, data.gameMode());
-        ps.setString(10, data.totpSecret());
-        ps.setLong(11, data.lastActive());
     }
 
     /** 获取所有已注册玩家的 UUID 集合 */
@@ -496,175 +353,81 @@ public final class PlayerDataManager implements AutoCloseable {
 
     /**
      * 将离线账号迁移到正版账号（离线账号升级为正版）。
-     * 用正版 UUID 创建新记录，保留退出位置等数据，密码置空（正版默认无密码），premium=1。
-     * 异步落库：删除离线账号 + 写入正版账号。
-     * 目标正版 UUID 已有正版记录时（改名玩家意外注册同名离线号后升级等场景）：
-     * 保留原正版记录的全部玩家数据（密码/2FA/退出位置/游戏模式，原版 dat/成就/统计也不迁移），
-     * 仅更新名字与皮肤，离线号记录作废删除。
+     * 实现见 {@link AccountMigration}——本方法只做委托，保持对外 API 与返回值语义不变。
      *
-     * @return true 常规迁移完成，调用方应随迁原版玩家数据文件；false 未迁移（离线号不存在或已保留原正版记录），调用方应跳过原版数据迁移
+     * @return true 常规迁移完成，调用方应随迁原版玩家数据文件；false 未迁移（离线号不存在或已保留原正版记录）
      */
     public boolean migrateToPremium(UUID offlineUuid, UUID premiumUuid, String name, String ip, String properties) {
-        PlayerData offline = players.get(offlineUuid);
-        if (offline == null) return false;
-        if (Debug.on()) {
-            Debug.log("db", "migrate offline->premium: %s", name);
-        }
-        // 目标已有正版记录：保留原账号数据，仅换绑名字与皮肤，离线号作废（返回 false 让调用方跳过原版数据迁移）
-        PlayerData existing = players.get(premiumUuid);
-        if (existing != null && existing.premium()) {
-            preserveExistingPremium(offline, offlineUuid, premiumUuid, existing, name, properties);
-            return false;
-        }
-        players.remove(offlineUuid);
-        if (offline.name() != null) {
-            premiumNameIndex.remove(offline.name().toLowerCase());
-        }
-        // 离线记录即将从数据库删除，脏标记不再有意义（防止残留）
-        dirty.remove(offlineUuid);
-        flushFailures.remove(offlineUuid);
-        PlayerData premium = new PlayerData(premiumUuid, name, "",
-                ip != null && !ip.isEmpty() ? ip : offline.ip(),
-                nowEpochSeconds(), offline.logoutLocation(), true, properties, offline.gameMode(),
-                offline.totpSecret(), offline.lastActive());
-        players.put(premiumUuid, premium);
-        premiumNameIndex.put(name.toLowerCase(), premiumUuid);
-        // 迁移事务经串行写队列执行：与 flush/saveNow 的 upsert 保证落库顺序
-        submitDbWrite(() -> {
-            try (Connection conn = dataSource.getConnection()) {
-                // 删除离线记录与写入正版记录须在同一事务，避免中途崩溃导致两记录皆失（账号丢失）
-                conn.setAutoCommit(false);
-                try {
-                    try (PreparedStatement del = conn.prepareStatement(SQL_DELETE)) {
-                        del.setString(1, offlineUuid.toString());
-                        del.executeUpdate();
-                    }
-                    try (PreparedStatement ups = conn.prepareStatement(SQL_UPSERT)) {
-                        bindPlayerData(ups, premium);
-                        ups.executeUpdate();
-                    }
-                    conn.commit();
-                } catch (SQLException e) {
-                    conn.rollback();
-                    throw e;
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().severe(I18n.get("log.migrate_failed", offlineUuid + ": " + e.getMessage()));
-                if (Debug.on()) {
-                    Debug.log("db", "migrate offline->premium failed (transaction): %s", e.getMessage());
-                }
-            }
-        });
-        return true;
-    }
-
-    /**
-     * 目标正版 UUID 已有正版记录时的保留式合并：原正版记录的密码/2FA/退出位置/游戏模式原样保留，
-     * 仅更新名字与皮肤（玩家刚完成新名的正版验证）；离线号记录删除作废。
-     * 原版玩家数据（dat/成就/统计）不迁移，避免以离线号文件覆盖正版身份下的真实数据。
-     */
-    private void preserveExistingPremium(PlayerData offline, UUID offlineUuid, UUID premiumUuid,
-                                         PlayerData premium, String name, String properties) {
-        players.remove(offlineUuid);
-        if (offline.name() != null) {
-            premiumNameIndex.remove(offline.name().toLowerCase());
-        }
-        // 离线记录即将从数据库删除，脏标记不再有意义（防止残留）
-        dirty.remove(offlineUuid);
-        flushFailures.remove(offlineUuid);
-        if (premium.name() != null) {
-            premiumNameIndex.remove(premium.name().toLowerCase());
-        }
-        premium.properties(properties);
-        premium.name(name);
-        premiumNameIndex.put(name.toLowerCase(), premiumUuid);
-        plugin.getLogger().info(I18n.get("log.premium_migrate_preserved", name + " (" + offlineUuid + ")"));
-        // 作废离线号的原版数据文件一并删除（否则同名新玩家注册会继承遗留的背包/成就/统计）
-        plugin.playerFiles().deleteAsync(offlineUuid);
-        submitDbWrite(() -> {
-            try (Connection conn = dataSource.getConnection()) {
-                conn.setAutoCommit(false);
-                try {
-                    try (PreparedStatement del = conn.prepareStatement(SQL_DELETE)) {
-                        del.setString(1, offlineUuid.toString());
-                        del.executeUpdate();
-                    }
-                    // 仅更新 premium/properties/name：密码/2FA/退出位置等以原正版记录为准
-                    try (PreparedStatement ups = conn.prepareStatement(SQL_UPDATE_PREMIUM)) {
-                        ups.setBoolean(1, true);
-                        ups.setString(2, properties);
-                        ups.setString(3, name);
-                        ups.setString(4, premiumUuid.toString());
-                        ups.executeUpdate();
-                    }
-                    conn.commit();
-                } catch (SQLException e) {
-                    conn.rollback();
-                    throw e;
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().severe(I18n.get("log.migrate_failed", offlineUuid + ": " + e.getMessage()));
-                if (Debug.on()) {
-                    Debug.log("db", "merge into existing premium failed: %s", e.getMessage());
-                }
-            }
-        });
+        return migration.migrateToPremium(offlineUuid, premiumUuid, name, ip, properties);
     }
 
     /**
      * 将正版账号迁移回离线账号（正版降级为离线）。
-     * 用离线 UUID 创建新记录，保留密码、2FA 密钥、退出位置等数据，premium=0，清除皮肤 properties。
-     * 异步落库：删除正版记录 + 写入离线记录。
-     * 同名离线账号不可能存在（正版记录存续期间 LoginStart 拦截同名离线连接），不做冲突检查。
-     * 正版记录不存在时返回 false（注销竞态）
+     * 实现见 {@link AccountMigration}——本方法只做委托，保持对外 API 与返回值语义不变。
      */
     public boolean migrateToOffline(UUID premiumUuid, UUID offlineUuid) {
-        PlayerData premium = players.remove(premiumUuid);
-        if (premium == null) return false;
-        if (Debug.on()) {
-            Debug.log("db", "migrate premium->offline: %s",
-                    premium.name() != null ? premium.name() : Debug.shortId(premiumUuid));
-        }
-        if (premium.name() != null) {
-            premiumNameIndex.remove(premium.name().toLowerCase());
-        }
-        // 正版记录即将从数据库删除，脏标记不再有意义（防止残留）
-        dirty.remove(premiumUuid);
-        flushFailures.remove(premiumUuid);
-        PlayerData offline = new PlayerData(offlineUuid, null, premium.passwordHash(), premium.ip(),
-                premium.lastLogin(), premium.logoutLocation(), false, null, premium.gameMode(),
-                premium.totpSecret(), premium.lastActive());
-        players.put(offlineUuid, offline);
-        // 迁移事务经串行写队列执行：与 flush/saveNow 的 upsert 保证落库顺序
-        submitDbWrite(() -> {
-            try (Connection conn = dataSource.getConnection()) {
-                // 删除正版记录与写入离线记录须在同一事务，避免中途崩溃导致两记录皆失（账号丢失）
-                conn.setAutoCommit(false);
-                try {
-                    try (PreparedStatement del = conn.prepareStatement(SQL_DELETE)) {
-                        del.setString(1, premiumUuid.toString());
-                        del.executeUpdate();
-                    }
-                    try (PreparedStatement ups = conn.prepareStatement(SQL_UPSERT)) {
-                        bindPlayerData(ups, offline);
-                        ups.executeUpdate();
-                    }
-                    conn.commit();
-                } catch (SQLException e) {
-                    conn.rollback();
-                    throw e;
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().severe(I18n.get("log.migrate_failed", premiumUuid + ": " + e.getMessage()));
-                if (Debug.on()) {
-                    Debug.log("db", "migrate premium->offline failed: %s", e.getMessage());
-                }
-            }
-        });
-        return true;
+        return migration.migrateToOffline(premiumUuid, offlineUuid);
     }
 
-    /** 按玩家名查询（用于正版验证 LoginStart 阶段，仅返回 premium=1 的记录） */
+    // ===== 供 AccountMigration 使用的缓存钩子 =====
+    // 迁移需要在"同一时刻"同时改动缓存、名字索引、脏标记与写队列；这些动作集中在此，
+    // 让迁移逻辑不必了解缓存的数据结构，也让脏标记/重试计数的清理只写一遍。
+
+    /** 读取缓存中的账号（迁移判定的入口） */
+    PlayerData cached(UUID uuid) {
+        return players.get(uuid);
+    }
+
+    /** 移出缓存并清理落库相关状态：记录即将被删除，脏标记与重试计数不再有意义 */
+    PlayerData take(UUID uuid) {
+        PlayerData data = players.remove(uuid);
+        forget(uuid);
+        return data;
+    }
+
+    /** 丢弃一个缓存记录（不返回），用于迁移中"旧记录作废"的场景 */
+    void discard(UUID uuid, String nameToUnindex) {
+        players.remove(uuid);
+        if (nameToUnindex != null) {
+            premiumNameIndex.remove(nameToUnindex.toLowerCase());
+        }
+        forget(uuid);
+    }
+
+    /** 写入/替换一个缓存记录，并按需建立正版名字索引 */
+    void store(UUID uuid, PlayerData data, String nameToIndex) {
+        players.put(uuid, data);
+        if (nameToIndex != null) {
+            premiumNameIndex.put(nameToIndex.toLowerCase(), uuid);
+        }
+    }
+
+    /** 写入/替换一个缓存记录（不涉名字索引） */
+    void put(UUID uuid, PlayerData data) {
+        players.put(uuid, data);
+    }
+
+    /** 建立正版名字索引 */
+    void index(String name, UUID uuid) {
+        premiumNameIndex.put(name.toLowerCase(), uuid);
+    }
+
+    /** 摘除正版名字索引 */
+    void unindex(String name) {
+        premiumNameIndex.remove(name.toLowerCase());
+    }
+
+    /** 入队一次数据库写任务（迁移事务走这里，保证与 flush/saveNow 的落库顺序） */
+    void submitWrite(Runnable job) {
+        submitDbWrite(job);
+    }
+
+    /** 清理某 UUID 的落库相关状态：脏标记与重试计数 */
+    private void forget(UUID uuid) {
+        dirty.remove(uuid);
+        flushFailures.remove(uuid);
+    }
+
     public PlayerData getByName(String name) {
         if (name == null) return null;
         UUID uuid = premiumNameIndex.get(name.toLowerCase());
@@ -716,14 +479,11 @@ public final class PlayerDataManager implements AutoCloseable {
             premiumNameIndex.remove(data.name().toLowerCase());
         }
         // 清理落库相关状态：账号已删除，脏标记与重试计数不再有意义（防止残留）
-        dirty.remove(uuid);
-        flushFailures.remove(uuid);
+        forget(uuid);
         // 删除经串行写队列执行：内存已先移除，排在前面的在途 upsert 会因执行时复检被跳过
-        submitDbWrite(() -> {
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(SQL_DELETE)) {
-                ps.setString(1, uuid.toString());
-                ps.executeUpdate();
+        submitWrite(() -> {
+            try {
+                database.deleteRow(uuid);
             } catch (SQLException e) {
                 plugin.getLogger().severe(I18n.get("log.delete_player_failed", uuid, e.getMessage()));
                 if (Debug.on()) {
@@ -780,108 +540,8 @@ public final class PlayerDataManager implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        if (dataSource != null && !dataSource.isClosed()) {
-            dataSource.close();
+        if (database != null) {
+            database.close();
         }
-    }
-
-    /**
-     * 将 Location 序列化为字符串，格式: world:x:y:z:yaw:pitch
-     * 用于持久化存储玩家上次退出位置。
-     */
-    public static String serializeLocation(Location loc) {
-        return loc.getWorld().getName() + ":"
-                + loc.getX() + ":" + loc.getY() + ":" + loc.getZ() + ":"
-                + loc.getYaw() + ":" + loc.getPitch();
-    }
-
-    /**
-     * 将序列化的字符串反序列化为 Location。
-     * 如果世界不存在或格式错误，返回 null。
-     */
-    public static Location deserializeLocation(String str) {
-        if (str == null || str.isEmpty()) return null;
-        try {
-            String[] parts = str.split(":");
-            if (parts.length != 6) return null;
-            World world = Bukkit.getWorld(parts[0]);
-            if (world == null) return null;
-            return new Location(world,
-                    Double.parseDouble(parts[1]),
-                    Double.parseDouble(parts[2]),
-                    Double.parseDouble(parts[3]),
-                    Float.parseFloat(parts[4]),
-                    Float.parseFloat(parts[5]));
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    public static final class PlayerData {
-        private final UUID uuid;
-        // volatile 保证可见性：主线程写入后，异步保存线程能读到最新值
-        private volatile String name;
-        private volatile String passwordHash;
-        private volatile String ip;
-        private volatile long lastLogin;
-        // 玩家上次已登录退出时的位置（序列化字符串），用于登录后传送回原位置
-        private volatile String logoutLocation;
-        // 正版标记：true=正版账号（免密），false=离线账号（密码登录）
-        private volatile boolean premium;
-        // 正版玩家皮肤 properties（JSON 字符串，来自 Mojang hasJoined 响应）
-        private volatile String properties;
-        // 玩家上次已登录退出时的游戏模式（名称），用于登录后恢复
-        private volatile String gameMode;
-        // 双因素认证 TOTP 密钥（Base32），null 表示未启用
-        private volatile String totpSecret;
-        // 最后活跃时间（epoch 秒）：登录成功时更新，用于清理不活跃账号
-        private volatile long lastActive;
-
-        public PlayerData(UUID uuid, String name, String passwordHash, String ip, long lastLogin,
-                          String logoutLocation, boolean premium, String properties, String gameMode,
-                          String totpSecret, long lastActive) {
-            this.uuid = uuid;
-            this.name = name;
-            this.passwordHash = passwordHash;
-            this.ip = ip;
-            this.lastLogin = lastLogin;
-            this.logoutLocation = logoutLocation;
-            this.premium = premium;
-            this.properties = properties;
-            this.gameMode = gameMode;
-            this.totpSecret = totpSecret;
-            this.lastActive = lastActive;
-        }
-
-        public UUID uuid() { return uuid; }
-        public String name() { return name; }
-        public void name(String name) { this.name = name; }
-
-        public String passwordHash() { return passwordHash; }
-        public void passwordHash(String hash) { this.passwordHash = hash; }
-
-        public String ip() { return ip; }
-        public void ip(String ip) { this.ip = ip; }
-
-        public long lastLogin() { return lastLogin; }
-        public void lastLogin(long lastLogin) { this.lastLogin = lastLogin; }
-
-        public String logoutLocation() { return logoutLocation; }
-        public void logoutLocation(String logoutLocation) { this.logoutLocation = logoutLocation; }
-
-        public boolean premium() { return premium; }
-        public void premium(boolean premium) { this.premium = premium; }
-
-        public String properties() { return properties; }
-        public void properties(String properties) { this.properties = properties; }
-
-        public String gameMode() { return gameMode; }
-        public void gameMode(String gameMode) { this.gameMode = gameMode; }
-
-        public String totpSecret() { return totpSecret; }
-        public void totpSecret(String totpSecret) { this.totpSecret = totpSecret; }
-
-        public long lastActive() { return lastActive; }
-        public void lastActive(long lastActive) { this.lastActive = lastActive; }
     }
 }

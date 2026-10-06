@@ -6,7 +6,8 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
-import org.howsauth.plugin.data.PlayerDataManager.PlayerData;
+import org.howsauth.plugin.data.PlayerData;
+import org.howsauth.plugin.data.PlayerDataManager;
 import org.howsauth.plugin.premium.DataService;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
@@ -26,9 +27,12 @@ import static io.papermc.paper.command.brigadier.Commands.literal;
 public final class PremiumCommand {
 
     private final HowSAuth plugin;
+    // 账号数据直接注入：本类只用数据层与名字补全，持有整个 plugin 会让依赖变模糊
+    private final PlayerDataManager dataManager;
 
-    public PremiumCommand(HowSAuth plugin) {
+    public PremiumCommand(HowSAuth plugin, PlayerDataManager dataManager) {
         this.plugin = plugin;
+        this.dataManager = dataManager;
     }
 
     /** 构建命令树节点（由 HowSAuth 注册时调用） */
@@ -36,7 +40,7 @@ public final class PremiumCommand {
         return literal("premium")
                 .requires(stack -> stack.getSender().hasPermission("hsauth.admin"))
                 .then(argument("player", StringArgumentType.word())
-                        .suggests(HSAuthCommand.suggestAllPlayers(plugin))
+                        .suggests(HSAuthCommand.suggestAllPlayers(dataManager))
                         .executes(this::execute))
                 .build();
     }
@@ -47,8 +51,8 @@ public final class PremiumCommand {
 
         // 纯内存改标记 + 异步落库，无阻塞 IO，主线程直接执行
         // 先判 null：findUuidByName 对无账号名字返回 null，直接传入 getPlayer 会抛 NPE
-        UUID targetUuid = plugin.playerData().findUuidByName(targetName);
-        PlayerData data = targetUuid == null ? null : plugin.playerData().getPlayer(targetUuid);
+        UUID targetUuid = dataManager.findUuidByName(targetName);
+        PlayerData data = targetUuid == null ? null : dataManager.getPlayer(targetUuid);
         if (data == null) {
             sender.sendMessage(I18n.msg("hsauth.accounts_not_found", sender));
             return Command.SINGLE_SUCCESS;
@@ -75,11 +79,11 @@ public final class PremiumCommand {
             sender.sendMessage(I18n.msg("premium.switched_offline", sender, targetName));
         } else if (data.premium()) {
             // 残留态（管理员此前标记为正版但玩家尚未正版验证进服）：撤销标记回离线
-            plugin.playerData().forceMarkOffline(data.uuid());
+            dataManager.forceMarkOffline(data.uuid());
             sender.sendMessage(I18n.msg("premium.switched_offline", sender, targetName));
         } else {
             // 离线 → 正版：仅标记 premium=1，玩家下次正版验证进服时填充正式记录
-            plugin.playerData().forceMarkPremium(data.uuid());
+            dataManager.forceMarkPremium(data.uuid());
             sender.sendMessage(I18n.msg("premium.switched_premium", sender, targetName));
         }
         return Command.SINGLE_SUCCESS;

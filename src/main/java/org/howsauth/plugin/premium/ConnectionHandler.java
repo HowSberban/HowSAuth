@@ -16,7 +16,8 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.config.ConfigManager;
-import org.howsauth.plugin.data.PlayerDataManager.PlayerData;
+import org.howsauth.plugin.data.PlayerData;
+import org.howsauth.plugin.data.PlayerDataManager;
 
 import javax.crypto.Cipher;
 import java.net.InetSocketAddress;
@@ -55,6 +56,8 @@ public final class ConnectionHandler extends PacketListenerAbstract {
     private final DataService dataService;
     private final MojangClient mojangClient;
     private final PlayerInjector playerInjector;
+    // 账号数据直接注入：握手阶段需按离线 UUID 查已有记录，持有整个 plugin 会让依赖变模糊
+    private final PlayerDataManager dataManager;
     private final KeyPair rsaKeyPair;
     private final byte[] publicKeyEncoded;
 
@@ -68,12 +71,13 @@ public final class ConnectionHandler extends PacketListenerAbstract {
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     public ConnectionHandler(HowSAuth plugin, DataService dataService, MojangClient mojangClient,
-                             PlayerInjector playerInjector) {
+                             PlayerInjector playerInjector, PlayerDataManager dataManager) {
         super(PacketListenerPriority.LOWEST);
         this.plugin = plugin;
         this.dataService = dataService;
         this.mojangClient = mojangClient;
         this.playerInjector = playerInjector;
+        this.dataManager = dataManager;
         this.rsaKeyPair = generateKeyPair();
         this.publicKeyEncoded = rsaKeyPair.getPublic().getEncoded();
     }
@@ -352,7 +356,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                     } else {
                         // /premium 强制标记的账号首次正版验证进服：存量记录仍是离线 UUID（仅 premium=1），
                         // 同样迁移到正版 UUID 并保留退出位置等数据，避免与新建记录并存
-                        PlayerData pending = plugin.playerData().getPlayer(DataService.offlineUuid(username));
+                        PlayerData pending = dataManager.getPlayer(DataService.offlineUuid(username));
                         if (pending != null && pending.premium()) {
                             // 目标正版 UUID 已有正版记录时保留原记录数据，跳过原版数据迁移（防止离线号文件覆盖正版身份数据）
                             if (dataService.migrateToPremium(pending.uuid(), uuid, username, session.ip(), properties)) {
@@ -452,7 +456,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         if (data != null && data.premium()) return data;
         // /premium 强制标记的账号记录仍在离线 UUID 上（名字未写入正版索引），按离线 UUID 定位，
         // 使验证失败时同样能走密码回退（与正常正版账号行为一致）
-        data = plugin.playerData().getPlayer(DataService.offlineUuid(username));
+        data = dataManager.getPlayer(DataService.offlineUuid(username));
         return data != null && data.premium() ? data : null;
     }
 

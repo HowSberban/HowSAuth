@@ -4,7 +4,7 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.howsauth.plugin.config.PasswordConfig;
 import org.howsauth.plugin.config.SettingsConfig;
-import org.howsauth.plugin.data.PlayerDataManager;
+import org.howsauth.plugin.data.PlayerData;
 import org.howsauth.plugin.support.MockBukkitHarness;
 import org.howsauth.plugin.support.MockBukkitHarness.TestPlayerMock;
 import org.junit.jupiter.api.AfterEach;
@@ -170,7 +170,7 @@ class SpectatorChunkProtectionTest {
         assertTrue(env.accounts().forceRegister(uuid, player.getName(), "test-pw"),
                 "force register must create the account");
         Location logout = new Location(world, chunkX * 16 + 8, GROUND_Y, chunkZ * 16 + 8);
-        env.data().getPlayer(uuid).logoutLocation(PlayerDataManager.serializeLocation(logout));
+        env.data().getPlayer(uuid).logoutLocation(PlayerData.serializeLocation(logout));
         return logout;
     }
 }

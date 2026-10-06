@@ -3,7 +3,7 @@ package org.howsauth.plugin.auth;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
-import org.howsauth.plugin.data.PlayerDataManager.PlayerData;
+import org.howsauth.plugin.data.PlayerData;
 import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
