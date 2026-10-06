@@ -181,7 +181,7 @@ public final class PlayerListener implements Listener {
                 player.sendMessage(I18n.msg("login.premium_auto_login", player));
             }
             if (!sessionHit && !pending2fa) {
-                locations.teleportBack(player);
+                teleportBackAfterJoin(player);
             }
             return;
         }
@@ -204,6 +204,22 @@ public final class PlayerListener implements Listener {
             }
         }
         beginAuthFlow(player);
+    }
+
+    /**
+     * 加入流程中的传送回退出位置：延后一个 tick 在玩家区域线程执行。
+     * <p>
+     * 不能在 {@code PlayerJoinEvent} 处理期间直接传送：该事件由服务端在"把玩家加入世界"的过程中触发，
+     * 此刻玩家尚未注册进区块加载器（RegionizedPlayerChunkLoader）。Folia 系服务端（含 Canvas）
+     * 的 {@code teleportAsync} 会立即走 {@code transformForAsyncTeleport} → 移除并重建实体，
+     * 于是抛出 {@code IllegalStateException: Player is already removed from player chunk loader}
+     * 并导致本次加入事件报错。
+     * <p>
+     * {@link LogoutLocation#teleportBack} 的契约本就要求"玩家已在世界中、非 PlayerJoinEvent 期间"调用，
+     * 命令与 2FA 验证等路径满足该前提，可继续直接调用；只有加入流程这几条路径需要延后。
+     */
+    private void teleportBackAfterJoin(Player player) {
+        player.getScheduler().run(plugin, task -> locations.teleportBack(player), null);
     }
 
     /**
@@ -297,7 +313,7 @@ public final class PlayerListener implements Listener {
                 }
                 loginFlow.autoLogin(player);
                 player.sendMessage(I18n.msg("login.success", player));
-                locations.teleportBack(player);
+                teleportBackAfterJoin(player);
                 return;
             }
             // 仅已绑定验证器的账户进入待验证码状态：无凭据账户（无密码+无2FA+非正版）无码可验，

@@ -101,14 +101,16 @@ public final class PacketEventsTestSupport {
         static com.github.retrooper.packetevents.netty.buffer.ByteBufOperator byteBufOperator() {
             InvocationHandler h = (proxy, method, args) -> {
                 String name = method.getName();
-                if (name.equals("toString")) {
-                    return "TestByteBufOperator";
-                }
-                if (name.equals("hashCode")) {
-                    return System.identityHashCode(proxy);
-                }
-                if (name.equals("equals")) {
-                    return proxy == (args == null ? null : args[0]);
+                switch (name) {
+                    case "toString" -> {
+                        return "TestByteBufOperator";
+                    }
+                    case "hashCode" -> {
+                        return System.identityHashCode(proxy);
+                    }
+                    case "equals" -> {
+                        return proxy == (args == null ? null : args[0]);
+                    }
                 }
                 if (args == null || args.length == 0) {
                     return defaultValue(method.getReturnType());

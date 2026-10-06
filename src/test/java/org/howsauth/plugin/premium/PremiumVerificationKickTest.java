@@ -2,8 +2,6 @@ package org.howsauth.plugin.premium;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 
 import com.github.retrooper.packetevents.event.LoginEventScaffold;
 import com.github.retrooper.packetevents.event.LoginEventScaffold.FakeClient;
@@ -21,9 +19,10 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BooleanSupplier;
 
 /**
  * 验证失败必须真正踢出（端到端回归）。
@@ -36,7 +35,7 @@ import java.util.function.BooleanSupplier;
  * 「未加入」，真实 {@link PremiumVerifier} 跑完 hasJoined 回调与分支决策，回调最终落到
  * 一个会真正关闭通道的处理器上。因此"决策不踢"或"踢了但没人执行关闭"都会让它失败。
  * <p>
- * <b>覆盖边界</b>：处理器由本测试实现（{@link ClosingHandler}），所以它锁住的是
+ * <b>覆盖边界</b>：处理器由本测试实现（{@link RecordingHandler}），所以它锁住的是
  * "PremiumVerifier 决定踢出 + 处理器执行关闭"这条契约；{@code ConnectionHandler} 里那个匿名
  * 处理器实现未被本测试覆盖（它不可直接实例化）。若要把那一层也纳入，需要把该匿名实现提为具名类。
  */
@@ -76,39 +75,52 @@ class PremiumVerificationKickTest {
     }
 
     /**
-     * 会真正关闭通道的处理器：模拟 {@code ConnectionHandler} 在踢出时应做的事。
+     * 记录回调并按调用关闭通道的处理器：模拟 {@code ConnectionHandler} 在踢出时应做的事。
      * <p>
      * 关闭通道是本测试的观测点——它把"决策说踢出"与"连接确实被断"连成可断言的一步。
+     * 每次回调都会释放 {@code callbackFired} 闭锁，测试据此等待异步链路收尾，
+     * 而不是轮询状态（轮询会在链路完成前就读取，且属繁忙等待）。
      */
-    private static final class ClosingHandler implements PremiumVerifier.ResultHandler {
-        final List<String> calls = new ArrayList<>();
+    private static final class RecordingHandler implements PremiumVerifier.ResultHandler {
+        final List<String> calls = Collections.synchronizedList(new ArrayList<>());
+        private final CountDownLatch callbackFired = new CountDownLatch(1);
 
         @Override
         public void proceedWithLogin(Channel channel, User user, SessionContext session,
                                      java.util.UUID uuid, String username, String properties) {
             calls.add("proceedWithLogin");
+            callbackFired.countDown();
         }
 
         @Override
         public void kick(Channel channel, User user) {
             calls.add("kick");
             channel.close();
+            callbackFired.countDown();
         }
 
         @Override
         public void failAsyncLogin(Channel channel, User user, SessionContext session, String reason) {
             calls.add("failAsyncLogin");
+            callbackFired.countDown();
+        }
+
+        /** 等待任一回调发生；超时表示异步链路没跑完（测试失败而非静默通过） */
+        void awaitCallback() throws InterruptedException {
+            if (!callbackFired.await(20, TimeUnit.SECONDS)) {
+                throw new AssertionError("timed out waiting for the verification callback");
+            }
         }
     }
 
     private MockBukkitHarness env;
-    private ClosingHandler handler;
+    private RecordingHandler handler;
     private final List<TestEndpoint> endpoints = new ArrayList<>();
 
     @BeforeEach
     void setUp() throws Exception {
         env = MockBukkitHarness.start("hsauth-kick-");
-        handler = new ClosingHandler();
+        handler = new RecordingHandler();
     }
 
     @AfterEach
@@ -123,8 +135,8 @@ class PremiumVerificationKickTest {
     }
 
     /** 起一个本地端点（由 tearDown 统一停止） */
-    private TestEndpoint endpoint(int status, String body) throws IOException {
-        TestEndpoint e = new TestEndpoint(status, body);
+    private TestEndpoint endpoint() throws IOException {
+        TestEndpoint e = new TestEndpoint(204, "");
         endpoints.add(e);
         return e;
     }
@@ -164,15 +176,6 @@ class PremiumVerificationKickTest {
                 "sessionServerCandidates", env.config().premium(), List.copyOf(urls));
     }
 
-    /** 等待条件成立，超时即失败（异步链路用轮询观察，不依赖内部锁） */
-    private static void awaitTrue(String what, BooleanSupplier condition) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-        while (System.nanoTime() < deadline) {
-            if (condition.getAsBoolean()) return;
-            Thread.sleep(20);
-        }
-        throw new AssertionError("timed out waiting for: " + what);
-    }
 
     /**
      * 端点答复"玩家未加入会话"（204）时必须踢出：处理器被调用，且连接确实被关闭。
@@ -181,7 +184,7 @@ class PremiumVerificationKickTest {
      */
     @Test
     void notJoinedResponseKicksAndClosesTheConnection() throws Exception {
-        TestEndpoint mirror = endpoint(204, "");
+        TestEndpoint mirror = endpoint();
         useMirrors(mirror);
 
         FakeClient client = LoginEventScaffold.newClient("NotJoinedUser");
@@ -199,17 +202,16 @@ class PremiumVerificationKickTest {
         verifier.verify(channel, client.user(), session, new byte[]{1, 2, 3, 4},
                 new byte[]{5, 6, 7, 8});
 
-        awaitTrue("handler kicked", () -> handler.calls.contains("kick"));
+        handler.awaitCallback();
         assertEquals(List.of("kick"), handler.calls,
                 "a failed verification without fallback must kick, and must not call other callbacks");
-        awaitTrue("connection closed", () -> !channel.isOpen());
         assertFalse(channel.isOpen(), "kicking must actually close the connection");
     }
 
     /** 正版验证失败但允许密码回退时，不得踢出（应放行走密码登录） */
     @Test
     void verificationFailureWithFallbackDoesNotKick() throws Exception {
-        TestEndpoint mirror = endpoint(204, "");
+        TestEndpoint mirror = endpoint();
         // 与镜像注入合成一次配置写入：分开写会因 reload 冲掉候选表注入
         // 无密码的正版账号只有在 reject-no-auth-account 关闭时才允许回退
         useMirrorsWith(yaml -> {
@@ -234,7 +236,7 @@ class PremiumVerificationKickTest {
         verifier.verify(channel, client.user(), session, new byte[]{1, 2, 3, 4},
                 new byte[]{5, 6, 7, 8});
 
-        awaitTrue("a callback fired", () -> !handler.calls.isEmpty());
+        handler.awaitCallback();
         assertFalse(handler.calls.contains("kick"),
                 "an account eligible for password fallback must not be kicked");
     }
