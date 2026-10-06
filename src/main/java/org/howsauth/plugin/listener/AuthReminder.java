@@ -62,7 +62,7 @@ public final class AuthReminder {
      * @param needsLogin true = 发送登录提示，false = 发送注册提示
      */
     public void schedule(Player player, boolean needsLogin) {
-        int interval = plugin.getConfigManager().loginRemindInterval();
+        int interval = plugin.config().login().remindInterval();
         if (interval <= 0) return;
         long periodTicks = interval * 20L;
         UUID uuid = player.getUniqueId();
@@ -96,7 +96,7 @@ public final class AuthReminder {
     private void show(Player player, boolean needsLogin) {
         // 提示文案与首次挂起共用同一选择逻辑（promptKey），保证周期提醒口径一致
         String key = promptKey(player.getUniqueId(), needsLogin);
-        String method = plugin.getConfigManager().loginRemindMethod();
+        String method = plugin.config().login().remindMethod();
         switch (method) {
             case "title" -> player.showTitle(net.kyori.adventure.title.Title.title(
                     I18n.msg(key, player),

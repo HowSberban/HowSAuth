@@ -6,7 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.AuthManager.LoginResult;
-import org.howsauth.plugin.config.ConfigManager;
+import org.howsauth.plugin.config.LoginConfig;
+import org.howsauth.plugin.config.PasswordConfig;
 import org.howsauth.plugin.support.MockBukkitHarness;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -36,11 +37,11 @@ class FailProtectionResetTest {
     @BeforeAll
     void bootstrap() throws Exception {
         env = MockBukkitHarness.start("hsauth-failreset-test", config -> {
-            MockBukkitHarness.inject(ConfigManager.class, "bcryptCost", config, 4);
-            MockBukkitHarness.inject(ConfigManager.class, "failProtectionEnabled", config, true);
-            MockBukkitHarness.inject(ConfigManager.class, "failMaxAttempts", config, MAX_ATTEMPTS);
-            MockBukkitHarness.inject(ConfigManager.class, "failKickDuration", config, 1);
-            MockBukkitHarness.inject(ConfigManager.class, "failProtectionResetSeconds", config, RESET_SECONDS);
+            MockBukkitHarness.inject(PasswordConfig.class, "bcryptCost", config.password(), 4);
+            MockBukkitHarness.inject(LoginConfig.class, "failProtectionEnabled", config.login(), true);
+            MockBukkitHarness.inject(LoginConfig.class, "failMaxAttempts", config.login(), MAX_ATTEMPTS);
+            MockBukkitHarness.inject(LoginConfig.class, "failKickDuration", config.login(), 1);
+            MockBukkitHarness.inject(LoginConfig.class, "failProtectionResetSeconds", config.login(), RESET_SECONDS);
         });
         auth = env.auth();
     }

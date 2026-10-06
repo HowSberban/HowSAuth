@@ -58,7 +58,7 @@ public final class TwoFactorAuth {
 
     /** 账号是否处于双因素认证生效状态（已绑定密钥且全局开关开启） */
     public boolean has2fa(UUID uuid) {
-        return hasTotpSecret(uuid) && configManager.twoFaEnabled();
+        return hasTotpSecret(uuid) && configManager.twoFactor().enabled();
     }
 
     /** 玩家是否处于双因素待验证状态（密码已通过，TOTP 未完成） */
@@ -90,7 +90,7 @@ public final class TwoFactorAuth {
         PlayerData data = dataManager.getPlayer(uuid);
         if (data == null || data.totpSecret() == null) return false;
         if (hasSession(uuid, ip)) return false;
-        return configManager.twoFaEnabled()
+        return configManager.twoFactor().enabled()
                 || data.passwordHash() == null || data.passwordHash().isEmpty();
     }
 
@@ -98,15 +98,15 @@ public final class TwoFactorAuth {
 
     /** 记录 2FA 会话：验证码通过后同 IP 短时间内重连免验证码（固定窗口，命中不续期） */
     private void markSession(UUID uuid, String ip) {
-        if (!configManager.twoFaSessionEnabled() || ip == null) return;
+        if (!configManager.twoFactor().sessionEnabled() || ip == null) return;
         twoFaSessions.put(uuid, new TwoFaSession(ip,
-                System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(configManager.twoFaSessionExpireMinutes())));
+                System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(configManager.twoFactor().sessionExpireMinutes())));
     }
 
     /** 2FA 会话是否命中（免验证码）：开关开启 + 同 IP 且未过期。
      *  无密码账户同样适用——风险模型与 login.session 一致（同 IP 短窗口信任），窗口内等同零凭证登录 */
     public boolean hasSession(UUID uuid, String ip) {
-        if (!configManager.twoFaSessionEnabled() || ip == null) return false;
+        if (!configManager.twoFactor().sessionEnabled() || ip == null) return false;
         TwoFaSession s = twoFaSessions.get(uuid);
         if (s == null) return false;
         if (!s.ip().equals(ip) || System.currentTimeMillis() > s.expiresAt()) {
@@ -189,7 +189,7 @@ public final class TwoFactorAuth {
             pending2faSecretCreatedAt.put(uuid, System.currentTimeMillis());
             if (Debug.on()) {
                 Debug.log("2fa", "setup %s: temp secret generated (ttl %ss)",
-                        player.getName(), configManager.twoFaTempSecretExpireSeconds());
+                        player.getName(), configManager.twoFactor().tempSecretExpireSeconds());
             }
             return secret;
         });
@@ -294,7 +294,7 @@ public final class TwoFactorAuth {
 
     /** 临时密钥是否已超期（配置为 0 时永不过期） */
     private boolean isExpiredSecret(long created) {
-        int seconds = configManager.twoFaTempSecretExpireSeconds();
+        int seconds = configManager.twoFactor().tempSecretExpireSeconds();
         return seconds > 0 && System.currentTimeMillis() - created >= seconds * 1000L;
     }
 
@@ -319,7 +319,7 @@ public final class TwoFactorAuth {
 
     /** 周期清理所有过期的临时密钥（异步调度器调用） */
     void cleanupExpiredSecrets() {
-        int seconds = configManager.twoFaTempSecretExpireSeconds();
+        int seconds = configManager.twoFactor().tempSecretExpireSeconds();
         if (seconds <= 0) return;
         long limit = seconds * 1000L;
         long now = System.currentTimeMillis();

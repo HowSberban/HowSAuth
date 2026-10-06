@@ -14,7 +14,7 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Vector;
 import org.howsauth.plugin.HowSAuth;
-import org.howsauth.plugin.config.ConfigManager;
+import org.howsauth.plugin.config.PearlConfig;
 import org.howsauth.plugin.support.MockBukkitHarness;
 import org.howsauth.plugin.support.MockBukkitHarness.TestEnderPearlMock;
 import org.howsauth.plugin.support.MockBukkitHarness.TestPlayerMock;
@@ -42,7 +42,7 @@ class PearlRuntimeTest {
     @BeforeEach
     void setUp() throws Exception {
         env = MockBukkitHarness.start("hsauth-pearl-runtime-");
-        // 珍珠处理器读 plugin.getAuthManager()（resolveOwner/isAuthenticatedOwner 路径），harness 未装配该字段
+        // 珍珠处理器读 plugin.auth()（resolveOwner/isAuthenticatedOwner 路径），harness 未装配该字段
         MockBukkitHarness.inject(HowSAuth.class, "authManager", env.plugin(), env.auth());
     }
 
@@ -158,7 +158,7 @@ class PearlRuntimeTest {
         manager.onQuit(quitEvent(player));
         assertEquals(1, MockBukkitHarness.mapSize(manager, "pending"), "one absorbed snapshot must be stored");
 
-        MockBukkitHarness.inject(ConfigManager.class, "pearlEnabled", env.config(), false);
+        MockBukkitHarness.inject(PearlConfig.class, "enabled", env.config().pearl(), false);
         manager.refresh();
 
         assertEquals(0, MockBukkitHarness.mapSize(manager, "pending"), "disabling must clear pending records");
@@ -170,8 +170,8 @@ class PearlRuntimeTest {
 
     /** 注入开关与返还模式后构造管理器（构造器会读配置并 refresh） */
     private PendingPearlManager newManager(String returnMode) {
-        MockBukkitHarness.inject(ConfigManager.class, "pearlEnabled", env.config(), true);
-        MockBukkitHarness.inject(ConfigManager.class, "pearlReturnMode", env.config(), returnMode);
+        MockBukkitHarness.inject(PearlConfig.class, "enabled", env.config().pearl(), true);
+        MockBukkitHarness.inject(PearlConfig.class, "returnMode", env.config().pearl(), returnMode);
         manager = new PendingPearlManager(env.plugin());
         managerShutdown = false;
         return manager;

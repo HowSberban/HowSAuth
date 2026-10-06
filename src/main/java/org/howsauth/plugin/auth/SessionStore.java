@@ -105,11 +105,11 @@ public final class SessionStore {
 
     /** 记录登录会话：登录/注册成功后同 IP 且未过期免输密码（固定窗口，命中不刷新） */
     void markLoginSession(UUID uuid, String ip) {
-        if (!configManager.sessionEnabled() || ip == null) return;
+        if (!configManager.login().sessionEnabled() || ip == null) return;
         loginSessions.put(uuid, new LoginSession(ip, System.currentTimeMillis()));
         if (Debug.on()) {
             Debug.log("session", "login session established for %s (ttl %s min)",
-                    Debug.shortId(uuid), configManager.sessionExpireMinutes());
+                    Debug.shortId(uuid), configManager.login().sessionExpireMinutes());
         }
     }
 
@@ -126,7 +126,7 @@ public final class SessionStore {
 
     /** 登录会话是否命中（无需 Player 对象，用于 AsyncPlayerSpawnLocationEvent） */
     public boolean hasSession(UUID uuid, String ip) {
-        if (!configManager.sessionEnabled()) {
+        if (!configManager.login().sessionEnabled()) {
             if (Debug.on()) {
                 Debug.log("session", "login session miss for %s: session disabled", Debug.shortId(uuid));
             }
@@ -144,7 +144,7 @@ public final class SessionStore {
             return false;
         }
         // 固定窗口不滑动：命中登录不刷新建立时间，到期后需重新验证
-        long expireMillis = TimeUnit.MINUTES.toMillis(configManager.sessionExpireMinutes());
+        long expireMillis = TimeUnit.MINUTES.toMillis(configManager.login().sessionExpireMinutes());
         if (Debug.on()) {
             Debug.log("session", "login session for %s: %s", Debug.shortId(uuid),
                     System.currentTimeMillis() - s.establishedAt() < expireMillis ? "hit" : "expired");
@@ -154,7 +154,7 @@ public final class SessionStore {
 
     /** 周期清理已过期的登录会话（固定窗口，命中不续期），返回移除条数 */
     int cleanupSessions(long now) {
-        long sessionMs = TimeUnit.MINUTES.toMillis(configManager.sessionExpireMinutes());
+        long sessionMs = TimeUnit.MINUTES.toMillis(configManager.login().sessionExpireMinutes());
         int before = loginSessions.size();
         loginSessions.entrySet().removeIf(e -> now - e.getValue().establishedAt() >= sessionMs);
         return before - loginSessions.size();

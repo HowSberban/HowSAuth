@@ -103,7 +103,7 @@ public final class DataService {
      */
     public void markOfflineConfirmed(String ip, String name) {
         offlineConfirmed.put(cacheKey(ip, name),
-                System.currentTimeMillis() + configManager.premiumCrackerCacheSeconds() * 1000L);
+                System.currentTimeMillis() + configManager.premium().crackerCacheSeconds() * 1000L);
         enforceCap(offlineConfirmed);
     }
 
@@ -121,7 +121,7 @@ public final class DataService {
      */
     public void markPremiumFallbackConfirmed(String ip, String name) {
         premiumFallbackConfirmed.put(cacheKey(ip, name),
-                System.currentTimeMillis() + configManager.premiumFallbackCacheSeconds() * 1000L);
+                System.currentTimeMillis() + configManager.premium().fallbackCacheSeconds() * 1000L);
         enforceCap(premiumFallbackConfirmed);
     }
 
@@ -167,7 +167,7 @@ public final class DataService {
      * （最早到期 = 最不必需保留）。仅在标记写入时调用，超限场景下 O(n log n)，正常路径零开销。
      */
     private void enforceCap(Map<String, Long> map) {
-        int cap = configManager.premiumCacheCap();
+        int cap = configManager.premium().cacheCap();
         if (cap <= 0 || map.size() <= cap) return;
         long now = System.currentTimeMillis();
         // 先清已过期项

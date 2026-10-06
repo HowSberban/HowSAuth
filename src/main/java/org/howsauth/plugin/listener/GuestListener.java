@@ -44,7 +44,7 @@ public final class GuestListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onMove(PlayerMoveEvent event) {
-        if (!configManager.preventMove()) return;
+        if (!configManager.prevent().move()) return;
 
         Player player = event.getPlayer();
         if (sessions.isLoggedIn(player)) return;
@@ -61,7 +61,7 @@ public final class GuestListener implements Listener {
         boolean lookChanged = from.getYaw() != to.getYaw()
                 || from.getPitch() != to.getPitch();
 
-        boolean preventLook = configManager.preventLook();
+        boolean preventLook = configManager.prevent().look();
         if (preventLook) {
             // 禁止位置和视角变化：全部回滚到 from
             if (positionChanged || lookChanged) {
@@ -80,7 +80,7 @@ public final class GuestListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onChat(AsyncChatEvent event) {
-        if (!configManager.preventChat()) return;
+        if (!configManager.prevent().chat()) return;
 
         Player player = event.getPlayer();
         if (!sessions.isLoggedIn(player)) {
@@ -94,7 +94,7 @@ public final class GuestListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onCommand(PlayerCommandPreprocessEvent event) {
-        if (!configManager.preventCommand()) return;
+        if (!configManager.prevent().command()) return;
 
         Player player = event.getPlayer();
         if (sessions.isLoggedIn(player)) return;
@@ -109,7 +109,7 @@ public final class GuestListener implements Listener {
         if (colon >= 0) commandName = commandName.substring(colon + 1);
 
         // 白名单内的命令允许执行
-        if (configManager.commandWhitelist().contains(commandName)) {
+        if (configManager.prevent().commandWhitelist().contains(commandName)) {
             return;
         }
 
@@ -132,17 +132,17 @@ public final class GuestListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onBlockBreak(BlockBreakEvent event) {
-        cancelIfGuest(configManager.preventWorldInteraction(), event.getPlayer(), event);
+        cancelIfGuest(configManager.prevent().worldInteraction(), event.getPlayer(), event);
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onBlockPlace(BlockPlaceEvent event) {
-        cancelIfGuest(configManager.preventWorldInteraction(), event.getPlayer(), event);
+        cancelIfGuest(configManager.prevent().worldInteraction(), event.getPlayer(), event);
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onDamage(EntityDamageEvent event) {
-        if (!configManager.preventWorldInteraction()) return;
+        if (!configManager.prevent().worldInteraction()) return;
         if (event.getEntity() instanceof Player player) {
             // 未登录玩家或传送过渡期玩家不受伤害
             if (!sessions.isLoggedIn(player) || sessions.isInvulnerablePending(player)) {
@@ -170,36 +170,36 @@ public final class GuestListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onEntityTarget(EntityTargetEvent event) {
         if (event.getTarget() instanceof Player player) {
-            cancelIfGuest(configManager.preventWorldInteraction(), player, event);
+            cancelIfGuest(configManager.prevent().worldInteraction(), player, event);
         }
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onFoodChange(FoodLevelChangeEvent event) {
         if (event.getEntity() instanceof Player player) {
-            cancelIfGuest(configManager.preventWorldInteraction(), player, event);
+            cancelIfGuest(configManager.prevent().worldInteraction(), player, event);
         }
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onDropItem(PlayerDropItemEvent event) {
-        cancelIfGuest(configManager.preventWorldInteraction(), event.getPlayer(), event);
+        cancelIfGuest(configManager.prevent().worldInteraction(), event.getPlayer(), event);
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPickupItem(PlayerAttemptPickupItemEvent event) {
-        cancelIfGuest(configManager.preventWorldInteraction(), event.getPlayer(), event);
+        cancelIfGuest(configManager.prevent().worldInteraction(), event.getPlayer(), event);
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onInteract(PlayerInteractEvent event) {
-        cancelIfGuest(configManager.preventWorldInteraction(), event.getPlayer(), event);
+        cancelIfGuest(configManager.prevent().worldInteraction(), event.getPlayer(), event);
     }
 
     // 实体交互（右键实体：村民交易、上马、喂食等）：未登录玩家保持原游戏模式时可打开交易界面窥视
     @EventHandler(priority = EventPriority.LOWEST)
     public void onInteractEntity(PlayerInteractEntityEvent event) {
-        cancelIfGuest(configManager.preventWorldInteraction(), event.getPlayer(), event);
+        cancelIfGuest(configManager.prevent().worldInteraction(), event.getPlayer(), event);
     }
 
     // 禁止未登录的旁观玩家附身实体：附身后镜头跟随目标实体移动，可窥视他人位置（绕过坐标保护）。
@@ -207,14 +207,14 @@ public final class GuestListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onSpectateTeleport(PlayerTeleportEvent event) {
         if (event.getCause() != PlayerTeleportEvent.TeleportCause.SPECTATE) return;
-        cancelIfGuest(configManager.preventWorldInteraction(), event.getPlayer(), event);
+        cancelIfGuest(configManager.prevent().worldInteraction(), event.getPlayer(), event);
     }
 
     // 容器点击（含创造模式）
     @EventHandler(priority = EventPriority.LOWEST)
     public void onInventoryClick(InventoryClickEvent event) {
         if (event.getWhoClicked() instanceof Player player) {
-            cancelIfGuest(configManager.preventInventory(), player, event);
+            cancelIfGuest(configManager.prevent().inventory(), player, event);
         }
     }
 
@@ -222,25 +222,25 @@ public final class GuestListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onInventoryDrag(InventoryDragEvent event) {
         if (event.getWhoClicked() instanceof Player player) {
-            cancelIfGuest(configManager.preventInventory(), player, event);
+            cancelIfGuest(configManager.prevent().inventory(), player, event);
         }
     }
 
     // 传送门
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPortal(PlayerPortalEvent event) {
-        cancelIfGuest(configManager.preventWorldInteraction(), event.getPlayer(), event);
+        cancelIfGuest(configManager.prevent().worldInteraction(), event.getPlayer(), event);
     }
 
     // 物品消耗（进食、喝药水等）
     @EventHandler(priority = EventPriority.LOWEST)
     public void onItemConsume(PlayerItemConsumeEvent event) {
-        cancelIfGuest(configManager.preventInventory(), event.getPlayer(), event);
+        cancelIfGuest(configManager.prevent().inventory(), event.getPlayer(), event);
     }
 
     // 副手切换
     @EventHandler(priority = EventPriority.LOWEST)
     public void onSwapHandItems(PlayerSwapHandItemsEvent event) {
-        cancelIfGuest(configManager.preventInventory(), event.getPlayer(), event);
+        cancelIfGuest(configManager.prevent().inventory(), event.getPlayer(), event);
     }
 }

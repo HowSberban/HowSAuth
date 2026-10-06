@@ -152,11 +152,11 @@ public final class AuthManager {
         List<String> lines = new ArrayList<>(8 + Bukkit.getOnlinePlayers().size());
         lines.add("HowSAuth diagnostics: online=" + Bukkit.getOnlinePlayers().size()
                 + " dbLoadFailed=" + dataManager.isLoadFailed()
-                + " debug=" + configManager.debug()
-                + " session=" + configManager.sessionEnabled()
-                + " 2fa=" + configManager.twoFaEnabled()
-                + " failProtection=" + configManager.failProtectionEnabled()
-                + " spectatorProtection=" + configManager.protectionGamemodeEnabled());
+                + " debug=" + configManager.settings().debug()
+                + " session=" + configManager.login().sessionEnabled()
+                + " 2fa=" + configManager.twoFactor().enabled()
+                + " failProtection=" + configManager.login().failProtectionEnabled()
+                + " spectatorProtection=" + configManager.protectionMisc().gamemodeEnabled());
         lines.add("  caches: loginSessions=" + sessions.loginSessionCount() + " twoFaSessions=" + twoFactor.sessionCount()
                 + " pending2fa=" + twoFactor.pendingCount() + " pending2faSecret=" + twoFactor.pendingSecretCount()
                 + " verifying=" + sessions.verifyingCount() + " used2faCounters=" + twoFactor.usedCounterCount()

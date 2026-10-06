@@ -1,6 +1,7 @@
 package org.howsauth.plugin;
 
-import org.howsauth.plugin.config.ConfigManager;
+import org.howsauth.plugin.config.PasswordConfig;
+import org.howsauth.plugin.config.SettingsConfig;
 import org.howsauth.plugin.support.MockBukkitHarness;
 import org.howsauth.plugin.support.MockBukkitHarness.TestPlayerMock;
 import org.junit.jupiter.api.AfterEach;
@@ -30,14 +31,14 @@ class DebugModeTest {
     @BeforeEach
     void setUp() throws Exception {
         env = MockBukkitHarness.start("hsauth-debug-test", config ->
-                MockBukkitHarness.inject(ConfigManager.class, "bcryptCost", config, 4));
+                MockBukkitHarness.inject(PasswordConfig.class, "bcryptCost", config.password(), 4));
         plugin = env.plugin();
     }
 
     @AfterEach
     void tearDown() {
         // 复位静态开关，避免影响其它测试类
-        MockBukkitHarness.inject(ConfigManager.class, "debug", env.config(), false);
+        MockBukkitHarness.inject(SettingsConfig.class, "debug", env.config().settings(), false);
         Debug.refresh(plugin);
         env.close();
     }
@@ -47,12 +48,12 @@ class DebugModeTest {
         Debug.refresh(plugin);
         assertFalse(Debug.on(), "debug must be off with the shipped default config");
 
-        MockBukkitHarness.inject(ConfigManager.class, "debug", env.config(), true);
+        MockBukkitHarness.inject(SettingsConfig.class, "debug", env.config().settings(), true);
         Debug.refresh(plugin);
         assertTrue(Debug.on(), "debug must follow the configured value");
 
         // 运行时可切换：reload 后重新读取配置即静默
-        MockBukkitHarness.inject(ConfigManager.class, "debug", env.config(), false);
+        MockBukkitHarness.inject(SettingsConfig.class, "debug", env.config().settings(), false);
         Debug.refresh(plugin);
         assertFalse(Debug.on(), "debug must be silent again after switching back");
     }
@@ -81,7 +82,7 @@ class DebugModeTest {
                 Files.readString(configFile.toPath(), StandardCharsets.UTF_8).replace("debug: false", "debug: true"),
                 StandardCharsets.UTF_8);
 
-        plugin.getConfigManager().reload();
+        plugin.config().reload();
         Debug.refresh(plugin);
 
         assertTrue(Debug.on(), "advanced.debug must be read from the config file");
@@ -90,7 +91,7 @@ class DebugModeTest {
     /** 调试输出单独落 plugins/HowSAuth/debug.log（不进控制台与 latest.log） */
     @Test
     void debugOutputGoesToDedicatedFile() throws Exception {
-        MockBukkitHarness.inject(ConfigManager.class, "debug", env.config(), true);
+        MockBukkitHarness.inject(SettingsConfig.class, "debug", env.config().settings(), true);
         Debug.refresh(plugin);
 
         Debug.log("test", "hello %s", "world");
@@ -118,7 +119,7 @@ class DebugModeTest {
     /** 开服轮转：上一次的 debug.log 按开服时间归档，新会话写入空的新文件 */
     @Test
     void debugLogRotatesOnServerStart() throws Exception {
-        MockBukkitHarness.inject(ConfigManager.class, "debug", env.config(), true);
+        MockBukkitHarness.inject(SettingsConfig.class, "debug", env.config().settings(), true);
         Debug.refresh(plugin);
         Debug.log("test", "before restart");
         Debug.close();
@@ -138,7 +139,7 @@ class DebugModeTest {
     /** 跨日轮转：日期变化后的首次写入先归档前一天的内容，单个文件不超过一天 */
     @Test
     void debugLogRotatesOnDateChange() throws Exception {
-        MockBukkitHarness.inject(ConfigManager.class, "debug", env.config(), true);
+        MockBukkitHarness.inject(SettingsConfig.class, "debug", env.config().settings(), true);
         Debug.refresh(plugin);
         Debug.log("test", "yesterday");
 

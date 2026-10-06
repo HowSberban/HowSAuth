@@ -60,7 +60,7 @@ public final class DialogManager {
     Dialog buildLoginDialog(String locale, Component error, DialogActionCallback onConfirm, DialogActionCallback onCancel) {
         DialogBase base = base(locale, "dialog.login.title", "dialog.login.body", error)
                 .inputs(List.of(DialogInput.text("password", text(locale, "dialog.password_label"))
-                        .maxLength(plugin.getConfigManager().maxPasswordLength())
+                        .maxLength(plugin.config().password().maxLength())
                         .build()))
                 .build();
         return confirmDialog(base, locale, onConfirm, onCancel);
@@ -68,7 +68,7 @@ public final class DialogManager {
 
     /** 注册窗口（密码 + 确认输入） */
     Dialog buildRegisterDialog(String locale, Component error, DialogActionCallback onConfirm, DialogActionCallback onCancel) {
-        int maxLength = plugin.getConfigManager().maxPasswordLength();
+        int maxLength = plugin.config().password().maxLength();
         DialogBase base = base(locale, "dialog.register.title", "dialog.register.body", error)
                 .inputs(List.of(
                         DialogInput.text("password", text(locale, "dialog.password_label"))
@@ -101,7 +101,7 @@ public final class DialogManager {
         body.add(DialogBody.plainMessage(Component.text(secret).color(HIGHLIGHT_COLOR)));
         body.add(DialogBody.plainMessage(text(locale, "dialog.setup_hint")));
         // 有限时配置时追加红色过期提醒
-        int expireSeconds = plugin.getConfigManager().twoFaTempSecretExpireSeconds();
+        int expireSeconds = plugin.config().twoFactor().tempSecretExpireSeconds();
         if (expireSeconds > 0) {
             body.add(DialogBody.plainMessage(text(locale, "2fa.setup_expire", expireSeconds)));
         }

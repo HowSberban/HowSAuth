@@ -79,29 +79,29 @@ public final class PlayerDataManager implements AutoCloseable {
     }
 
     private HikariDataSource createDataSource(HowSAuth plugin) {
-        var cm = plugin.getConfigManager();
+        var cm = plugin.config();
         HikariConfig config = new HikariConfig();
         config.setPoolName("HowSAuth-DB");
 
-        if ("mysql".equals(cm.databaseType())) {
+        if ("mysql".equals(cm.database().type())) {
             // 拼接 MySQL JDBC URL 与连接参数
             StringBuilder url = new StringBuilder()
                     .append("jdbc:mysql://")
-                    .append(cm.mysqlHost())
+                    .append(cm.database().host())
                     .append(":")
-                    .append(cm.mysqlPort())
+                    .append(cm.database().port())
                     .append("/")
-                    .append(cm.mysqlDatabase());
-            if (!cm.mysqlParams().isEmpty()) {
-                String query = cm.mysqlParams().entrySet().stream()
+                    .append(cm.database().database());
+            if (!cm.database().params().isEmpty()) {
+                String query = cm.database().params().entrySet().stream()
                         .map(e -> e.getKey() + "=" + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8))
                         .collect(Collectors.joining("&"));
                 url.append("?").append(query);
             }
             config.setJdbcUrl(url.toString());
-            config.setUsername(cm.mysqlUsername());
-            config.setPassword(cm.mysqlPassword());
-            config.setMaximumPoolSize(Math.max(1, cm.poolSize()));
+            config.setUsername(cm.database().username());
+            config.setPassword(cm.database().password());
+            config.setMaximumPoolSize(Math.max(1, cm.database().poolSize()));
         } else {
             // SQLite：单连接即可，避免文件锁竞争
             File dbFile = new File(plugin.getDataFolder(), "players.db");
@@ -115,7 +115,7 @@ public final class PlayerDataManager implements AutoCloseable {
 
         HikariDataSource ds = new HikariDataSource(config);
         if (Debug.on()) {
-            Debug.log("db", "datasource init: type=%s poolSize=%s", cm.databaseType(), config.getMaximumPoolSize());
+            Debug.log("db", "datasource init: type=%s poolSize=%s", cm.database().type(), config.getMaximumPoolSize());
         }
         return ds;
     }

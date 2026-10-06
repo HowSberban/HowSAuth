@@ -69,7 +69,7 @@ public final class MojangClient {
 
     public MojangClient(HowSAuth plugin) {
         this.plugin = plugin;
-        int poolSize = plugin.getConfigManager().premiumHttpPoolSize();
+        int poolSize = plugin.config().premium().httpPoolSize();
         this.httpExecutor = Executors.newFixedThreadPool(poolSize, r -> {
             Thread t = new Thread(r, "HowSAuth-Mojang");
             t.setDaemon(true);
@@ -84,17 +84,17 @@ public final class MojangClient {
      * 2. 直连 → 镜像候选列表（官方地址硬编码首位 + 配置的镜像，代理均不可用时的备选）
      */
     private List<Endpoint> allEndpoints() {
-        ConfigManager config = plugin.getConfigManager();
+        ConfigManager config = plugin.config();
         List<Endpoint> list = new ArrayList<>();
-        String official = config.premiumSessionServerCandidates().getFirst();
-        for (Proxy proxy : config.premiumHttpProxies()) {
+        String official = config.premium().sessionServerCandidates().getFirst();
+        for (Proxy proxy : config.premium().httpProxies()) {
             var addr = (InetSocketAddress) proxy.address();
             String proxyDesc = addr.getHostString() + ":" + addr.getPort();
             String proxyKey = "proxy:" + proxyDesc + "@" + official;
             list.add(new Endpoint(proxyKey, proxyClient(proxyDesc, proxy), official,
                     I18n.get("log.premium_endpoint_via_proxy", official, proxyDesc)));
         }
-        for (String baseUrl : config.premiumSessionServerCandidates()) {
+        for (String baseUrl : config.premium().sessionServerCandidates()) {
             list.add(new Endpoint("direct:" + baseUrl, directClient, baseUrl, baseUrl));
         }
         return list;
@@ -245,8 +245,8 @@ public final class MojangClient {
     public CompletableFuture<Optional<PremiumProfile>> hasJoined(String serverHash, String username) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                ConfigManager config = plugin.getConfigManager();
-                long deadline = System.currentTimeMillis() + config.premiumVerifyDeadlineMs();
+                ConfigManager config = plugin.config();
+                long deadline = System.currentTimeMillis() + config.premium().verifyDeadlineMs();
                 String encodedName = URLEncoder.encode(username, StandardCharsets.UTF_8);
                 // 依次尝试端点，直到某个端点给出确定答复或总时限耗尽
                 for (Endpoint endpoint : buildEndpoints()) {
@@ -288,9 +288,9 @@ public final class MojangClient {
     @SuppressWarnings("resource")
     private QueryResult queryServer(Endpoint endpoint, String serverHash, String encodedName,
                                     String username, ConfigManager config, long deadline) {
-        int maxRetries = config.premiumMaxRetries();
-        long retryIntervalMs = config.premiumRetryIntervalMs();
-        long requestTimeoutMs = config.premiumTimeoutSeconds() * 1000L;
+        int maxRetries = config.premium().maxRetries();
+        long retryIntervalMs = config.premium().retryIntervalMs();
+        long requestTimeoutMs = config.premium().timeoutSeconds() * 1000L;
         String url = endpoint.baseUrl() + HAS_JOINED_PATH + encodedName + "&serverId=" + serverHash;
 
         for (int attempt = 0; attempt <= maxRetries; attempt++) {

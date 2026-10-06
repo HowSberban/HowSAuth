@@ -5,7 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.howsauth.plugin.auth.AuthManager.LoginResult;
-import org.howsauth.plugin.config.ConfigManager;
+import org.howsauth.plugin.config.LoginConfig;
+import org.howsauth.plugin.config.PasswordConfig;
 import org.howsauth.plugin.support.MockBukkitHarness;
 import org.howsauth.plugin.support.MockBukkitHarness.TestPlayerMock;
 import org.junit.jupiter.api.AfterAll;
@@ -38,12 +39,12 @@ class FailProtectionTest {
     @BeforeAll
     void bootstrap() throws Exception {
         env = MockBukkitHarness.start("hsauth-failprot-test", config -> {
-            MockBukkitHarness.inject(ConfigManager.class, "bcryptCost", config, 4);
-            MockBukkitHarness.inject(ConfigManager.class, "failProtectionEnabled", config, true);
-            MockBukkitHarness.inject(ConfigManager.class, "failMaxAttempts", config, MAX_ATTEMPTS);
-            MockBukkitHarness.inject(ConfigManager.class, "failKickDuration", config, KICK_SECONDS);
+            MockBukkitHarness.inject(PasswordConfig.class, "bcryptCost", config.password(), 4);
+            MockBukkitHarness.inject(LoginConfig.class, "failProtectionEnabled", config.login(), true);
+            MockBukkitHarness.inject(LoginConfig.class, "failMaxAttempts", config.login(), MAX_ATTEMPTS);
+            MockBukkitHarness.inject(LoginConfig.class, "failKickDuration", config.login(), KICK_SECONDS);
             // 过期窗口远大于用例时长：确保本节用例不会因计数过期而重置
-            MockBukkitHarness.inject(ConfigManager.class, "failProtectionResetSeconds", config, 60);
+            MockBukkitHarness.inject(LoginConfig.class, "failProtectionResetSeconds", config.login(), 60);
         });
     }
 

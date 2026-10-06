@@ -91,7 +91,7 @@ public final class PreJoinAuthListener implements Listener {
         this.accounts = accounts;
         this.loginFlow = loginFlow;
         this.dialogManager = dialogManager;
-        this.nameClaims = new NameClaims(plugin.getConfigManager());
+        this.nameClaims = new NameClaims(plugin.config());
     }
 
     /**
@@ -145,7 +145,7 @@ public final class PreJoinAuthListener implements Listener {
         // 弹窗验证会卡死到超时（reject 开关在 dialog 场景轮不到），此处与连接层拦截口径一致：
         if (uuid != null && accounts.hasAccount(uuid)
                 && accounts.hasNoUsableLoginMethod(uuid)) {
-            if (plugin.getConfigManager().rejectNoAuthAccount()) {
+            if (plugin.config().protectionMisc().rejectNoAuthAccount()) {
                 if (Debug.on()) {
                     Debug.log("dialog", "pre-join %s: no usable login method, disconnect",
                             Debug.shortId(uuid));
@@ -158,7 +158,7 @@ public final class PreJoinAuthListener implements Listener {
             // 放行：跳过验证窗口（无凭据永远验不过），由 onJoin 的 beginAuthFlow 挂起至超时踢出
             return;
         }
-        if (!plugin.getConfigManager().loginDialogEnabled()) {
+        if (!plugin.config().login().dialogEnabled()) {
             if (Debug.on()) {
                 Debug.log("dialog", "pre-join %s: dialog disabled, fallback to chat",
                         Debug.shortId(uuid));
@@ -236,8 +236,8 @@ public final class PreJoinAuthListener implements Listener {
             }
             // 阻塞配置线程直到认证完成/超时（虚拟线程阻塞开销极小）。
             // 配置超时为 0 表示聊天流程无超时，但配置阶段仍需有上限，避免客户端断开后 latch 无人释放。
-            ConfigManager cfg = plugin.getConfigManager();
-            int configuredTimeout = isLogin ? cfg.loginTimeout() : cfg.registerTimeout();
+            ConfigManager cfg = plugin.config();
+            int configuredTimeout = isLogin ? cfg.login().timeout() : cfg.login().registerTimeout();
             int timeout = configuredTimeout > 0 ? configuredTimeout : CONFIG_WAIT_FALLBACK_SECONDS;
             //noinspection ResultOfMethodCallIgnored
             session.latch.await(timeout, TimeUnit.SECONDS);
@@ -268,7 +268,7 @@ public final class PreJoinAuthListener implements Listener {
         }
         // 超时未完成：kick-on-timeout 开启时踢出（连接断开，释放认领）；
         // 关闭时由 onJoin 的 beginAuthFlow 接管（仍会进入游戏，认领保留到 onJoin）
-        if (plugin.getConfigManager().kickOnTimeout()) {
+        if (plugin.config().login().kickOnTimeout()) {
             nameClaims.release(name, conn);
             conn.disconnect(I18n.msgForLocale("listener.login_timeout", locale));
         }
@@ -464,7 +464,7 @@ public final class PreJoinAuthListener implements Listener {
                         Debug.log("dialog", "register dialog confirm for %s: failed (ip limit)",
                                 Debug.shortId(uuid));
                     }
-                    showRegister(session, uuid, locale, I18n.msgForLocale("register.ip_limit", locale, plugin.getConfigManager().maxAccountsPerIp()));
+                    showRegister(session, uuid, locale, I18n.msgForLocale("register.ip_limit", locale, plugin.config().register().maxAccountsPerIp()));
                 } else {
                     if (Debug.on()) {
                         Debug.log("dialog", "register dialog confirm for %s: failed", Debug.shortId(uuid));

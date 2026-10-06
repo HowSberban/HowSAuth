@@ -51,21 +51,21 @@ public class JoinQuitMessageService implements Listener {
     public void onJoinMessage(PlayerJoinEvent event) {
         Player player = event.getPlayer();
         // 完全禁用：无条件清空，不暂存补发
-        if (configManager.joinDisabled()) {
+        if (configManager.messages().joinDisabled()) {
             event.joinMessage(null);
             return;
         }
-        Component template = formatTemplate(configManager.joinMessageTemplate(), player);
+        Component template = formatTemplate(configManager.messages().joinMessageTemplate(), player);
         if (template != null) {
             event.joinMessage(template);
         }
-        if (sessions.hasAuthenticatedThisConnection(player.getUniqueId()) || !configManager.joinHideUnauthenticated()) {
+        if (sessions.hasAuthenticatedThisConnection(player.getUniqueId()) || !configManager.messages().joinHideUnauthenticated()) {
             return;
         }
         Component hidden = template != null ? template : event.joinMessage();
         event.joinMessage(null);
         // 前序监听器已清空消息且无模板时无消息可补发，不入表
-        if (configManager.joinDelayUntilAuthenticated() && hidden != null) {
+        if (configManager.messages().joinDelayUntilAuthenticated() && hidden != null) {
             pendingJoinMessages.put(player.getUniqueId(), hidden);
         }
     }
@@ -81,15 +81,15 @@ public class JoinQuitMessageService implements Listener {
         Player player = event.getPlayer();
         pendingJoinMessages.remove(player.getUniqueId());
         // 完全禁用：无条件清空（暂存项已在上面移除，不会补发）
-        if (configManager.quitDisabled()) {
+        if (configManager.messages().quitDisabled()) {
             event.quitMessage(null);
             return;
         }
-        if (!sessions.hasAuthenticatedThisConnection(player.getUniqueId()) && configManager.quitHideUnauthenticated()) {
+        if (!sessions.hasAuthenticatedThisConnection(player.getUniqueId()) && configManager.messages().quitHideUnauthenticated()) {
             event.quitMessage(null);
             return;
         }
-        Component template = formatTemplate(configManager.quitMessageTemplate(), player);
+        Component template = formatTemplate(configManager.messages().quitMessageTemplate(), player);
         if (template != null) {
             event.quitMessage(template);
         }
@@ -116,7 +116,7 @@ public class JoinQuitMessageService implements Listener {
     private void broadcastPending(Player player) {
         Component message = pendingJoinMessages.remove(player.getUniqueId());
         // 补发前复查禁用开关：暂存可能发生在 reload 开启禁用之前
-        if (message != null && !configManager.joinDisabled() && player.isOnline()) {
+        if (message != null && !configManager.messages().joinDisabled() && player.isOnline()) {
             Bukkit.getServer().sendMessage(message);
         }
     }

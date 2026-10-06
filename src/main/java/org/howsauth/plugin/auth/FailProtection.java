@@ -39,9 +39,9 @@ public final class FailProtection {
             Debug.log("auth", "login failure for %s", player != null ? player.getName() : uuid);
         }
         // 增加计数（仅在启用失败保护时）
-        if (!configManager.failProtectionEnabled()) return;
+        if (!configManager.login().failProtectionEnabled()) return;
         long now = System.currentTimeMillis();
-        long resetMs = configManager.failProtectionResetSeconds() * 1000L;
+        long resetMs = configManager.login().failProtectionResetSeconds() * 1000L;
         // 容量守卫：失败计数跨连接保留后不再随退出清理，超限时清理可安全移除的条目
         if (failedAttempts.size() > FAILED_ATTEMPTS_CAP) {
             evictStaleFailures(now);
@@ -58,14 +58,14 @@ public final class FailProtection {
             attempts[0] = (int) v[0];
             return v;
         });
-        if (attempts[0] >= configManager.failMaxAttempts()) {
+        if (attempts[0] >= configManager.login().failMaxAttempts()) {
             // 达到阈值，设置踢出期
             if (Debug.on()) {
                 Debug.log("auth", "kick %s: %s consecutive failures, banned %ss",
                         player != null ? player.getName() : Debug.shortId(uuid),
-                        attempts[0], configManager.failKickDuration());
+                        attempts[0], configManager.login().failKickDuration());
             }
-            kickUntil.put(uuid, now + configManager.failKickDuration() * 1000L);
+            kickUntil.put(uuid, now + configManager.login().failKickDuration() * 1000L);
             failedAttempts.remove(uuid);
             // 容量守卫：攻击者用大量用户名各达阈值后不再重连，踢出记录仅在被读取时懒清理，
             // 超限时清理已过期项，防止 Map 无界增长（与 failedAttempts 守卫同一威胁模型）
@@ -87,7 +87,7 @@ public final class FailProtection {
     }
 
     public boolean isKicked(UUID uuid) {
-        if (!configManager.failProtectionEnabled()) return false;
+        if (!configManager.login().failProtectionEnabled()) return false;
         Long until = kickUntil.get(uuid);
         if (until == null) return false;
         if (until <= System.currentTimeMillis()) {
@@ -122,7 +122,7 @@ public final class FailProtection {
      *  不能按"未达阈值"清理——达阈值的条目在 recordFailure 中已被 remove，Map 中不存在 ≥max 的条目，
      *  按阈值清理恒真等于全清，攻击者可用大量假名洪水抹掉自己针对目标账号的累计进度 */
     private void evictStaleFailures(long now) {
-        long resetMs = configManager.failProtectionResetSeconds() * 1000L;
+        long resetMs = configManager.login().failProtectionResetSeconds() * 1000L;
         if (resetMs <= 0) return;
         failedAttempts.entrySet().removeIf(entry -> now - entry.getValue()[1] >= resetMs);
     }

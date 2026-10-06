@@ -65,7 +65,7 @@ public final class LoginFlow {
             return;
         }
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            String hash = PasswordHash.hashPassword(password, configManager.passwordHashAlgorithm(), configManager.bcryptCost());
+            String hash = PasswordHash.hashPassword(password, configManager.password().hashAlgorithm(), configManager.password().bcryptCost());
             player.getScheduler().run(plugin, task2 -> {
                 // 同名账号（含正版）已存在时拒绝；离线 UUID 由名推导，该判定同时覆盖账号已存在的并发竞态
                 if (dataManager.hasAccountByName(player.getName())) {
@@ -78,7 +78,7 @@ public final class LoginFlow {
                 // 建号+登录收尾在区域线程（轻量），立即落库（关键操作防崩溃丢失，经串行写队列）
                 // 名额判定与建号原子完成：并发注册同一 IP 不会全部通过检查（防 max-accounts-per-ip 被绕过）
                 if (dataManager.createPlayerIfIpAllowed(uuid, hash, ip != null ? ip : "unknown",
-                        configManager.maxAccountsPerIp()) == null) {
+                        configManager.register().maxAccountsPerIp()) == null) {
                     if (Debug.on()) {
                         Debug.log("auth", "register %s: failed (ip account limit reached, atomic check)", player.getName());
                     }
@@ -213,11 +213,11 @@ public final class LoginFlow {
 
     /** 密码算法对齐：配置算法与存储算法不一致时按配置算法重新哈希（异步线程调用，返回新哈希；无需对齐返回 null） */
     private String alignedPasswordHash(PlayerData data, String password) {
-        String configured = configManager.passwordHashAlgorithm();
+        String configured = configManager.password().hashAlgorithm();
         boolean storedIsBcrypt = PasswordHash.isBcrypt(data.passwordHash());
         boolean configIsBcrypt = "bcrypt".equalsIgnoreCase(configured);
         if (configIsBcrypt == storedIsBcrypt) return null;
-        return PasswordHash.hashPassword(password, configured, configManager.bcryptCost());
+        return PasswordHash.hashPassword(password, configured, configManager.password().bcryptCost());
     }
 
     /** 登录成功收尾：IP 变动提醒、更新 IP/时间/活跃时间、标记登录、恢复模式、触发事件（须在玩家区域线程调用） */
@@ -243,7 +243,7 @@ public final class LoginFlow {
         // IP 变动提醒：上次登录 IP 存在且与本次不同（首次登录无旧 IP 可比，不提醒）。
         // 正版玩家身份经 Mojang 验证，仅在开启正版验证回退（正版可能转密码登录）时才提醒；
         // 离线（非正版）玩家始终提醒。
-        if (configManager.ipChangeNotifyEnabled()
+        if (configManager.login().ipChangeNotifyEnabled()
                 && oldIp != null && !oldIp.isEmpty()
                 && !oldIp.equals(data.ip())
                 && notifyIpChangeFor(data)) {
@@ -253,7 +253,7 @@ public final class LoginFlow {
 
     /** IP 变动提醒是否适用于该玩家：离线玩家提醒；正版玩家仅当正版验证回退开启时提醒（fallback 仅约束正版） */
     private boolean notifyIpChangeFor(PlayerData data) {
-        return !data.premium() || configManager.premiumPasswordFallbackEnabled();
+        return !data.premium() || configManager.premium().passwordFallbackEnabled();
     }
 
     /**
@@ -335,7 +335,7 @@ public final class LoginFlow {
     /** 强制修改玩家密码（无需验证旧密码，玩家无需在线） */
     public boolean forceChangePassword(UUID uuid, String newPassword) {
         if (!dataManager.hasAccount(uuid)) return false;
-        String newHash = PasswordHash.hashPassword(newPassword, configManager.passwordHashAlgorithm(), configManager.bcryptCost());
+        String newHash = PasswordHash.hashPassword(newPassword, configManager.password().hashAlgorithm(), configManager.password().bcryptCost());
         dataManager.updatePassword(uuid, newHash);
         invalidateLoginSessions(uuid);
         return true;
@@ -447,7 +447,7 @@ public final class LoginFlow {
                 }, null);
                 return;
             }
-            String newHash = PasswordHash.hashPassword(newPassword, configManager.passwordHashAlgorithm(), configManager.bcryptCost());
+            String newHash = PasswordHash.hashPassword(newPassword, configManager.password().hashAlgorithm(), configManager.password().bcryptCost());
             player.getScheduler().run(plugin, task2 -> {
                 dataManager.updatePassword(uuid, newHash);
                 invalidateLoginSessions(uuid);
@@ -474,7 +474,7 @@ public final class LoginFlow {
             return;
         }
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            String newHash = PasswordHash.hashPassword(newPassword, configManager.passwordHashAlgorithm(), configManager.bcryptCost());
+            String newHash = PasswordHash.hashPassword(newPassword, configManager.password().hashAlgorithm(), configManager.password().bcryptCost());
             player.getScheduler().run(plugin, task2 -> {
                 dataManager.updatePassword(uuid, newHash);
                 if (Debug.on()) {
@@ -530,7 +530,7 @@ public final class LoginFlow {
             // 立即隐藏提醒 BossBar（不等下一个提醒周期；非 bossbar 方式时为空操作）
             plugin.authReminder().hide(player);
             // 返还退出时保管的飞行末影珍珠（无记录时为空操作）
-            plugin.getPendingPearlManager().returnPearls(player);
+            plugin.pendingPearls().returnPearls(player);
             // 仅对被设为旁观的玩家恢复游戏模式
             if (sessions.consumeSpectatorPending(player.getUniqueId())) {
                 PlayerData data = dataManager.getPlayer(player.getUniqueId());

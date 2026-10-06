@@ -47,8 +47,8 @@ public final class PremiumCommand {
 
         // 纯内存改标记 + 异步落库，无阻塞 IO，主线程直接执行
         // 先判 null：findUuidByName 对无账号名字返回 null，直接传入 getPlayer 会抛 NPE
-        UUID targetUuid = plugin.getPlayerDataManager().findUuidByName(targetName);
-        PlayerData data = targetUuid == null ? null : plugin.getPlayerDataManager().getPlayer(targetUuid);
+        UUID targetUuid = plugin.playerData().findUuidByName(targetName);
+        PlayerData data = targetUuid == null ? null : plugin.playerData().getPlayer(targetUuid);
         if (data == null) {
             sender.sendMessage(I18n.msg("hsauth.accounts_not_found", sender));
             return Command.SINGLE_SUCCESS;
@@ -75,11 +75,11 @@ public final class PremiumCommand {
             sender.sendMessage(I18n.msg("premium.switched_offline", sender, targetName));
         } else if (data.premium()) {
             // 残留态（管理员此前标记为正版但玩家尚未正版验证进服）：撤销标记回离线
-            plugin.getPlayerDataManager().forceMarkOffline(data.uuid());
+            plugin.playerData().forceMarkOffline(data.uuid());
             sender.sendMessage(I18n.msg("premium.switched_offline", sender, targetName));
         } else {
             // 离线 → 正版：仅标记 premium=1，玩家下次正版验证进服时填充正式记录
-            plugin.getPlayerDataManager().forceMarkPremium(data.uuid());
+            plugin.playerData().forceMarkPremium(data.uuid());
             sender.sendMessage(I18n.msg("premium.switched_premium", sender, targetName));
         }
         return Command.SINGLE_SUCCESS;

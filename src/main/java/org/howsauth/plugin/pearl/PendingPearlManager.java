@@ -65,7 +65,7 @@ public final class PendingPearlManager implements Listener {
     }
 
     public void refresh() {
-        boolean enabled = plugin.getConfigManager().pearlEnabled();
+        boolean enabled = plugin.config().pearl().enabled();
         boolean wasEnabled = lastPearlEnabled;
         boolean initialized = pearlStateInitialized;
         lastPearlEnabled = enabled;
@@ -82,7 +82,7 @@ public final class PendingPearlManager implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(PlayerQuitEvent event) {
-        if (!plugin.getConfigManager().pearlEnabled()) return;
+        if (!plugin.config().pearl().enabled()) return;
         UUID uuid = event.getPlayer().getUniqueId();
         boolean changed = false;
         for (EnderPearl pearl : copyFlyingPearls(event.getPlayer())) {
@@ -95,7 +95,7 @@ public final class PendingPearlManager implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onEntityRemoveFromWorld(EntityRemoveFromWorldEvent event) {
         if (!(event.getEntity() instanceof EnderPearl pearl)) return;
-        if (!plugin.getConfigManager().pearlEnabled()) return;
+        if (!plugin.config().pearl().enabled()) return;
         if (handledPearls.remove(pearl.getUniqueId()) != null) return;
         UUID owner = ownerResolver.resolve(pearl);
         if (owner == null) {
@@ -111,7 +111,7 @@ public final class PendingPearlManager implements Listener {
     public void onEntityAddToWorld(EntityAddToWorldEvent event) {
         if (!(event.getEntity() instanceof EnderPearl pearl)) return;
         UUID owner = ownerResolver.resolve(pearl);
-        if (!plugin.getConfigManager().pearlEnabled()) {
+        if (!plugin.config().pearl().enabled()) {
             // 开关关闭时仍清理未登录玩家的恢复珍珠，但不能干扰已登录玩家的正常投掷。
             if (owner == null) return;
             if (ownerResolver.isAuthenticated(owner)) return;
@@ -129,7 +129,7 @@ public final class PendingPearlManager implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPearlTeleport(PlayerTeleportEvent event) {
-        if (!plugin.getConfigManager().pearlEnabled()) return;
+        if (!plugin.config().pearl().enabled()) return;
         if (event.getCause() != PlayerTeleportEvent.TeleportCause.ENDER_PEARL) return;
         Player player = event.getPlayer();
         if (plugin.sessions().isLoggedIn(player)) return;
@@ -148,7 +148,7 @@ public final class PendingPearlManager implements Listener {
     }
 
     public void returnPearls(Player player) {
-        if (!plugin.getConfigManager().pearlEnabled()) return;
+        if (!plugin.config().pearl().enabled()) return;
         boolean absorbed = false;
         for (EnderPearl pearl : copyFlyingPearls(player)) {
             absorb(pearl, player.getUniqueId());
@@ -163,7 +163,7 @@ public final class PendingPearlManager implements Listener {
             return;
         }
         saveSync();
-        if (!plugin.getConfigManager().pearlReturnEntity()) {
+        if (!plugin.config().pearl().returnEntity()) {
             if (Debug.on()) {
                 Debug.log("pearl", "return %s pearls to %s as items", snapshots.size(), player.getName());
             }

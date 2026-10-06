@@ -79,7 +79,7 @@ public final class TwoFactorCommand {
 
     /** 全局开关 + 登录状态前置校验：不满足时发提示并返回 true（中止本次命令） */
     private boolean blocked(Player player) {
-        if (!plugin.getConfigManager().twoFaEnabled()) {
+        if (!plugin.config().twoFactor().enabled()) {
             player.sendMessage(msg(player, "2fa.feature_disabled"));
             return true;
         }
@@ -104,7 +104,7 @@ public final class TwoFactorCommand {
         // Dialog 可用时聊天栏完全静默，两者互斥（扫码入口在对话框按钮上）
         // 运行时复查 login.dialog.enabled：reload 关闭配置后 dialogManager 仍非空（启动时创建、reload 不重建），
         // 需按当前配置回退聊天栏，与 PreJoinAuthListener 的运行时检查保持一致
-        if (dialogManager != null && plugin.getConfigManager().loginDialogEnabled()) {
+        if (dialogManager != null && plugin.config().login().dialogEnabled()) {
             showSetupDialog(player, secret, url, null);
         } else {
             // dialog 关闭/服务端不支持（<1.21.11）：回退聊天栏展示密钥与完成指引
@@ -168,12 +168,12 @@ public final class TwoFactorCommand {
 
     /** 生成二维码服务 URL 供扫码按钮打开；开关关闭或模板缺失 {data} 占位符时返回 null（省略扫码入口） */
     private String qrUrl(Player player, String secret) {
-        if (!plugin.getConfigManager().twoFaQrEnabled()) return null;
-        String template = plugin.getConfigManager().twoFaQrUrl();
+        if (!plugin.config().twoFactor().qrEnabled()) return null;
+        String template = plugin.config().twoFactor().qrUrl();
         if (template == null || !template.contains("{data}")) return null;
         // otpauth 资料：issuer（服务器名，可空）+ 账户名（玩家名）+ 密钥，拼好后整体编码一次（与 AuthMe 一致）
         // label 用 "服务器名:玩家名" 并带 issuer 参数：验证器条目标题指向服务器，玩家名作账户详情
-        String issuer = plugin.getConfigManager().twoFaServerName();
+        String issuer = plugin.config().twoFactor().serverName();
         String data = "otpauth://totp/"
                 + (issuer.isEmpty() ? "" : issuer + ":")
                 + player.getName() + "?secret=" + secret
@@ -184,7 +184,7 @@ public final class TwoFactorCommand {
 
     /** 红色过期提醒组件：配置为 0（永不过期）时返回 null */
     private Component expireReminder(Player player) {
-        int seconds = plugin.getConfigManager().twoFaTempSecretExpireSeconds();
+        int seconds = plugin.config().twoFactor().tempSecretExpireSeconds();
         if (seconds <= 0) return null;
         return I18n.msg("2fa.setup_expire", player, seconds);
     }
@@ -253,7 +253,7 @@ public final class TwoFactorCommand {
     private int handleVerify(CommandContext<CommandSourceStack> ctx) {
         Player player = (Player) ctx.getSource().getSender();
         // 无密码账户不受全局开关影响：验证码是其唯一登录因素
-        if (!plugin.getConfigManager().twoFaEnabled()
+        if (!plugin.config().twoFactor().enabled()
                 && !plugin.accounts().isPasswordless(player.getUniqueId())) {
             player.sendMessage(msg(player, "2fa.feature_disabled"));
             return Command.SINGLE_SUCCESS;

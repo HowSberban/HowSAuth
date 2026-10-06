@@ -11,7 +11,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.howsauth.plugin.auth.AuthManager;
 import org.howsauth.plugin.auth.AuthManager.LoginResult;
 import org.howsauth.plugin.auth.SessionStore;
-import org.howsauth.plugin.config.ConfigManager;
+import org.howsauth.plugin.config.LoginConfig;
+import org.howsauth.plugin.config.PasswordConfig;
+import org.howsauth.plugin.config.RegisterConfig;
 import org.howsauth.plugin.data.PlayerDataManager;
 import org.howsauth.plugin.support.MockBukkitHarness;
 import org.howsauth.plugin.support.MockBukkitHarness.TestPlayerMock;
@@ -81,10 +83,10 @@ class LongRunStabilityTest {
     @BeforeAll
     void bootstrap() throws Exception {
         env = MockBukkitHarness.start("hsauth-stab-test", config -> {
-            MockBukkitHarness.inject(ConfigManager.class, "bcryptCost", config, BCRYPT_COST);
-            MockBukkitHarness.inject(ConfigManager.class, "maxAccountsPerIp", config, MAX_ACCOUNTS_PER_IP);
+            MockBukkitHarness.inject(PasswordConfig.class, "bcryptCost", config.password(), BCRYPT_COST);
+            MockBukkitHarness.inject(RegisterConfig.class, "maxAccountsPerIp", config.register(), MAX_ACCOUNTS_PER_IP);
             // 失败保护关闭：多轮密码/2FA 错误码验证会累积失败计数触发踢出，干扰成功率类断言
-            MockBukkitHarness.inject(ConfigManager.class, "failProtectionEnabled", config, false);
+            MockBukkitHarness.inject(LoginConfig.class, "failProtectionEnabled", config.login(), false);
         });
         server = env.server();
         plugin = env.plugin();

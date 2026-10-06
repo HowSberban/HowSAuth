@@ -49,7 +49,7 @@ public final class PlayerInjector {
 
     public PlayerInjector(HowSAuth plugin) {
         this.plugin = plugin;
-        int poolSize = plugin.getConfigManager().premiumHttpPoolSize();
+        int poolSize = plugin.config().premium().httpPoolSize();
         this.preLoginExecutor = Executors.newFixedThreadPool(poolSize, r -> {
             Thread t = new Thread(r, "HowSAuth-PreLogin");
             t.setDaemon(true);

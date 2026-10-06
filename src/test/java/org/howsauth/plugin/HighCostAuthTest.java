@@ -47,8 +47,8 @@ class HighCostAuthTest {
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void shippedConfigUsesProductionHashStrength() {
-        assertEquals("bcrypt", env.config().passwordHashAlgorithm(), "the default hash algorithm must be bcrypt");
-        assertEquals(PRODUCTION_BCRYPT_COST, env.config().bcryptCost(), "the default bcrypt cost must be 12");
+        assertEquals("bcrypt", env.config().password().hashAlgorithm(), "the default hash algorithm must be bcrypt");
+        assertEquals(PRODUCTION_BCRYPT_COST, env.config().password().bcryptCost(), "the default bcrypt cost must be 12");
     }
 
     /** 生产强度下的完整认证链路，包含 2FA 绑定与验证 */

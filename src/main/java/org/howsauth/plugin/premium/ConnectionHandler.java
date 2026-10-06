@@ -94,7 +94,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
     private void handleLoginStart(PacketReceiveEvent event) {
         Channel channel = (Channel) event.getChannel();
         User user = event.getUser();
-        ConfigManager config = plugin.getConfigManager();
+        ConfigManager config = plugin.config();
 
         WrapperLoginClientLoginStart wrapper = new WrapperLoginClientLoginStart(event);
         String username = wrapper.getUsername();
@@ -113,7 +113,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         if (profile.exists() && !profile.premium()) {
             // 2. 离线玩家：仅当正版验证总开关开启且有升级标记时拦截做正版验证
             //    （升级成功则迁移账号，失败则回退离线），否则不拦截，由服务端原生处理
-            if (!config.premiumEnabled() || !plugin.accounts().hasPendingUpgrade(profile.uuid())) {
+            if (!config.premium().enabled() || !plugin.accounts().hasPendingUpgrade(profile.uuid())) {
                 return;
             }
             upgradeAttempt = true;
@@ -137,7 +137,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         //    同时检查离线确认标记，避免离线客户端反复尝试正版验证
         //    已注册玩家（含 premium=1）不受离线标记影响，防止同名离线玩家抢占正版账号
         if (!profile.exists()) {
-            if (!config.premiumEnabled() || !config.premiumAutoVerify()) return;
+            if (!config.premium().enabled() || !config.premium().autoVerify()) return;
             if (dataService.isOfflineConfirmed(ip, username)) {
                 if (Debug.on()) {
                     Debug.log("premium", "offline confirmed (cached) for %s: pass to server", username);
@@ -208,7 +208,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                     } else if (s.isUpgradeAttempt()) {
                         // 升级尝试在验证前断开 → 回退离线，清除升级标记
                         plugin.accounts().clearUpgradePending(s.offlineUuid());
-                    } else if (s.premiumAccount() && config.premiumPasswordFallbackEnabled()) {
+                    } else if (s.premiumAccount() && config.premium().passwordFallbackEnabled()) {
                         // 已注册正版玩家使用离线启动器，无法回应 EncryptionRequest 即断开 →
                         // 记录回退标记，下次重连跳过正版验证，以正版 UUID 进入并用密码登录
                         dataService.markPremiumFallbackConfirmed(s.ip(), s.username());
@@ -236,7 +236,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                 cleanupSession(channel);
                 channel.close();
             }
-        }, config.premiumHandshakeTimeoutMs(), TimeUnit.MILLISECONDS));
+        }, config.premium().handshakeTimeoutMs(), TimeUnit.MILLISECONDS));
     }
 
     // ===== 阶段2-3：加密握手与启用 =====
@@ -352,7 +352,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                     } else {
                         // /premium 强制标记的账号首次正版验证进服：存量记录仍是离线 UUID（仅 premium=1），
                         // 同样迁移到正版 UUID 并保留退出位置等数据，避免与新建记录并存
-                        PlayerData pending = plugin.getPlayerDataManager().getPlayer(DataService.offlineUuid(username));
+                        PlayerData pending = plugin.playerData().getPlayer(DataService.offlineUuid(username));
                         if (pending != null && pending.premium()) {
                             // 目标正版 UUID 已有正版记录时保留原记录数据，跳过原版数据迁移（防止离线号文件覆盖正版身份数据）
                             if (dataService.migrateToPremium(pending.uuid(), uuid, username, session.ip(), properties)) {
@@ -437,8 +437,8 @@ public final class ConnectionHandler extends PacketListenerAbstract {
      * LoginStart 离线标记回退与 hasJoined 验证失败回退两处共用，保持同一口径。
      */
     private boolean premiumFallbackAllowed(UUID uuid) {
-        return plugin.getConfigManager().premiumPasswordFallbackEnabled()
-                && (!plugin.accounts().isPasswordless(uuid) || !plugin.getConfigManager().rejectNoAuthAccount());
+        return plugin.config().premium().passwordFallbackEnabled()
+                && (!plugin.accounts().isPasswordless(uuid) || !plugin.config().protectionMisc().rejectNoAuthAccount());
     }
 
     /**
@@ -452,7 +452,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
         if (data != null && data.premium()) return data;
         // /premium 强制标记的账号记录仍在离线 UUID 上（名字未写入正版索引），按离线 UUID 定位，
         // 使验证失败时同样能走密码回退（与正常正版账号行为一致）
-        data = plugin.getPlayerDataManager().getPlayer(DataService.offlineUuid(username));
+        data = plugin.playerData().getPlayer(DataService.offlineUuid(username));
         return data != null && data.premium() ? data : null;
     }
 

@@ -80,7 +80,7 @@ final class NameClaims {
      * 确保任何异常路径下名字都会被回收，不会永久锁死。
      */
     private long ttlMillis() {
-        long timeout = Math.max(configManager.loginTimeout(), configManager.registerTimeout());
+        long timeout = Math.max(configManager.login().timeout(), configManager.login().registerTimeout());
         if (timeout <= 0) timeout = FALLBACK_TIMEOUT_SECONDS;
         return (timeout + GRACE_SECONDS) * 1000L;
     }

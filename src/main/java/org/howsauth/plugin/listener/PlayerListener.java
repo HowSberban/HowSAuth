@@ -58,7 +58,7 @@ public final class PlayerListener implements Listener {
         var uuid = event.getUniqueId();
 
         // 数据库加载失败（fail-closed）：缓存为空会把所有玩家误判为未注册，拒绝进入直至恢复
-        if (plugin.getPlayerDataManager().isLoadFailed()) {
+        if (plugin.playerData().isLoadFailed()) {
             if (Debug.on()) {
                 Debug.log("flow", "prelogin reject %s: database load failed", event.getName());
             }
@@ -80,7 +80,7 @@ public final class PlayerListener implements Listener {
 
         // 有账号但无任何可用登录方式（无密码/未绑 2FA/非正版）。
         // 配置开启时在连接阶段直接拦截；关闭时放行，由 beginAuthFlow 挂起（永远无法通过，超时踢出）
-        if (plugin.getConfigManager().rejectNoAuthAccount()
+        if (plugin.config().protectionMisc().rejectNoAuthAccount()
                 && accounts.hasNoUsableLoginMethod(uuid)) {
             if (Debug.on()) {
                 Debug.log("flow", "prelogin reject %s: no usable login method", event.getName());
@@ -104,16 +104,16 @@ public final class PlayerListener implements Listener {
         // 同 IP 已达上限时仅在连接层拦截无账号新玩家，避免名额已满的 IP 涌入未注册玩家；
         // max-accounts-per-ip.reject-join 关闭时放行进服，由注册动作精确判定（共享 IP 环境友好）
         // 已达上限判定内部已处理 max<=0，无需在此重复判断
-        if (plugin.getConfigManager().ipLimitRejectJoin()
+        if (plugin.config().register().ipLimitRejectJoin()
                 && !accounts.hasAccount(uuid)
                 && accounts.isIpAccountLimitReached(event.getAddress().getHostAddress())) {
             if (Debug.on()) {
                 Debug.log("flow", "prelogin reject %s: ip account limit reached (max %s)",
-                        event.getName(), plugin.getConfigManager().maxAccountsPerIp());
+                        event.getName(), plugin.config().register().maxAccountsPerIp());
             }
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER,
                     I18n.msg("register.ip_limit",
-                            plugin.getConfigManager().maxAccountsPerIp()));
+                            plugin.config().register().maxAccountsPerIp()));
         }
 
         // 放行玩家异步预载退出位置区块：fire-and-forget，不阻塞、不影响放行判定
@@ -128,7 +128,7 @@ public final class PlayerListener implements Listener {
 
         // 玩家已进入世界：服务端的同名单会话检查自 play 阶段起生效，
         // 配置阶段的名字认领到此释放（不释放会让该名字在 TTL 内无法被重新连接使用）
-        PreJoinAuthListener preJoin = plugin.getPreJoinAuthListener();
+        PreJoinAuthListener preJoin = plugin.preJoinAuth();
         if (preJoin != null) {
             preJoin.releaseClaim(player.getName());
         }
@@ -212,7 +212,7 @@ public final class PlayerListener implements Listener {
     public void suspend(Player player, String messageKey, boolean needsLogin) {
         if (Debug.on()) {
             Debug.log("flow", "suspend %s: %s (needsLogin=%s, spectatorProtection=%s)", player.getName(), messageKey,
-                    needsLogin, plugin.getConfigManager().protectionGamemodeEnabled());
+                    needsLogin, plugin.config().protectionMisc().gamemodeEnabled());
         }
         locations.setSpectator(player);
         applyLoginBlindness(player);
@@ -227,7 +227,7 @@ public final class PlayerListener implements Listener {
      * 已失明的玩家可被解除，无需额外的 reload 同步逻辑。
      */
     private void applyLoginBlindness(Player player) {
-        if (plugin.getConfigManager().protectionBlindnessEnabled()) {
+        if (plugin.config().protectionMisc().blindnessEnabled()) {
             if (Debug.on()) {
                 Debug.log("flow", "apply login blindness for %s", player.getName());
             }
@@ -370,7 +370,7 @@ public final class PlayerListener implements Listener {
         }
 
         // Pre-join 已认证玩家：与会话命中一致，直接在退出位置出生，避免随机出生后再传送
-        PreJoinAuthListener preJoin = plugin.getPreJoinAuthListener();
+        PreJoinAuthListener preJoin = plugin.preJoinAuth();
         if (uuid != null && preJoin != null && preJoin.hasCompleted(uuid)) {
             Location logoutLoc = locations.get(uuid);
             if (logoutLoc != null) {
@@ -387,7 +387,7 @@ public final class PlayerListener implements Listener {
         }
 
         // 启用坐标保护：强制主世界随机位置，防止坐标泄露
-        if (plugin.getConfigManager().protectionPosEnabled()) {
+        if (plugin.config().protectionPosition().enabled()) {
             org.bukkit.World world = org.bukkit.Bukkit.getWorlds().getFirst();
             Location safeSpawn = locations.findSafeAuthSpawn(world);
             event.setSpawnLocation(safeSpawn);
@@ -404,8 +404,8 @@ public final class PlayerListener implements Listener {
     /** 启动登录/注册超时踢出任务（onJoin 和 forceRegister 共用，重复调用会自动作废旧任务）
      *  @param needsLogin true = 登录超时（login.timeout），false = 注册超时（register.timeout） */
     public void scheduleLoginTimeout(Player player, boolean needsLogin) {
-        int timeout = plugin.getConfigManager().loginTimeout();
-        if (!needsLogin) timeout = plugin.getConfigManager().registerTimeout();
+        int timeout = plugin.config().login().timeout();
+        if (!needsLogin) timeout = plugin.config().login().registerTimeout();
         if (timeout <= 0) return;
 
         // 记录启动时间，触发时校验是否为最新任务（forceRegister 重启超时后旧任务自动失效）
@@ -417,7 +417,7 @@ public final class PlayerListener implements Listener {
             // 非最新任务直接放弃（forceRegister 已重启超时计时）
             if (!sessions.isLatestLoginTimeout(player.getUniqueId(), startedAt)) return;
             if (!sessions.isLoggedIn(player) && player.isOnline()) {
-                if (plugin.getConfigManager().kickOnTimeout()) {
+                if (plugin.config().login().kickOnTimeout()) {
                     player.kick(I18n.msg("listener.login_timeout", player));
                 }
             }

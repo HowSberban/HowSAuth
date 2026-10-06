@@ -54,17 +54,17 @@ class ConfigValidationTest {
         ConfigManager config = env.config();
 
         // 哈希算法与 cost 的默认值断言在 HighCostAuthTest
-        assertEquals(6, config.minPasswordLength(), "default minimum password length must be 6");
-        assertEquals(32, config.maxPasswordLength(), "default maximum password length must be 32");
-        assertNotNull(config.passwordPattern(), "a password character pattern must be configured by default");
-        assertEquals("sqlite", config.databaseType(), "default database type must be sqlite");
-        assertEquals(3, config.maxAccountsPerIp(), "default per-IP account limit must be 3");
-        assertTrue(config.failProtectionEnabled(), "brute-force protection must be enabled by default");
-        assertEquals(3, config.failMaxAttempts(), "default maximum failed attempts must be 3");
-        assertTrue(config.rejectNoAuthAccount(), "credential-less accounts must be rejected by default");
-        assertFalse(config.pearlEnabled(), "pearl custody must be disabled by default");
-        assertTrue(config.pearlReturnEntity(), "pearls must be returned as an entity by default (return: entity)");
-        assertEquals(120, config.loginTimeout(), "default login timeout must be 120 seconds");
+        assertEquals(6, config.password().minLength(), "default minimum password length must be 6");
+        assertEquals(32, config.password().maxLength(), "default maximum password length must be 32");
+        assertNotNull(config.password().pattern(), "a password character pattern must be configured by default");
+        assertEquals("sqlite", config.database().type(), "default database type must be sqlite");
+        assertEquals(3, config.register().maxAccountsPerIp(), "default per-IP account limit must be 3");
+        assertTrue(config.login().failProtectionEnabled(), "brute-force protection must be enabled by default");
+        assertEquals(3, config.login().failMaxAttempts(), "default maximum failed attempts must be 3");
+        assertTrue(config.protectionMisc().rejectNoAuthAccount(), "credential-less accounts must be rejected by default");
+        assertFalse(config.pearl().enabled(), "pearl custody must be disabled by default");
+        assertTrue(config.pearl().returnEntity(), "pearls must be returned as an entity by default (return: entity)");
+        assertEquals(120, config.login().timeout(), "default login timeout must be 120 seconds");
     }
 
     /** 非 ASCII 密码（中文“密码”×3）：用字符码构造，源码不含中文 */
@@ -81,13 +81,13 @@ class ConfigValidationTest {
 
         assertNull(PasswordValidator.invalidMessage(plugin, "zh_CN", "abcdef"),
                 "a valid 6-character alphanumeric password must be accepted");
-        assertNull(PasswordValidator.invalidMessage(plugin, "zh_CN", "a".repeat(config.minPasswordLength())),
+        assertNull(PasswordValidator.invalidMessage(plugin, "zh_CN", "a".repeat(config.password().minLength())),
                 "the minimum-length boundary must be accepted");
-        assertNull(PasswordValidator.invalidMessage(plugin, "zh_CN", "a".repeat(config.maxPasswordLength())),
+        assertNull(PasswordValidator.invalidMessage(plugin, "zh_CN", "a".repeat(config.password().maxLength())),
                 "the maximum-length boundary must be accepted");
         assertNotNull(PasswordValidator.invalidMessage(plugin, "zh_CN", "abc"),
                 "a password shorter than the minimum length must be rejected");
-        assertNotNull(PasswordValidator.invalidMessage(plugin, "zh_CN", "a".repeat(config.maxPasswordLength() + 1)),
+        assertNotNull(PasswordValidator.invalidMessage(plugin, "zh_CN", "a".repeat(config.password().maxLength() + 1)),
                 "a password longer than the maximum length must be rejected");
         assertNotNull(PasswordValidator.invalidMessage(plugin, "zh_CN", "abc def"),
                 "a space outside the allowed character set must be rejected");
@@ -118,11 +118,11 @@ class ConfigValidationTest {
 
         ConfigManager reloaded = new ConfigManager(plugin);
 
-        assertEquals("bcrypt", reloaded.passwordHashAlgorithm(), "invalid hash algorithm must fall back to bcrypt");
-        assertEquals("sqlite", reloaded.databaseType(), "invalid database type must fall back to sqlite");
-        assertFalse(reloaded.pearlReturnEntity(), "invalid pearl return mode must fall back to item");
-        assertEquals(4, reloaded.minPasswordLength(), "a too-small minimum password length must be clamped to 4");
-        assertEquals(128, reloaded.maxPasswordLength(), "a too-large maximum password length must be clamped to 128");
+        assertEquals("bcrypt", reloaded.password().hashAlgorithm(), "invalid hash algorithm must fall back to bcrypt");
+        assertEquals("sqlite", reloaded.database().type(), "invalid database type must fall back to sqlite");
+        assertFalse(reloaded.pearl().returnEntity(), "invalid pearl return mode must fall back to item");
+        assertEquals(4, reloaded.password().minLength(), "a too-small minimum password length must be clamped to 4");
+        assertEquals(128, reloaded.password().maxLength(), "a too-large maximum password length must be clamped to 128");
     }
 
 }

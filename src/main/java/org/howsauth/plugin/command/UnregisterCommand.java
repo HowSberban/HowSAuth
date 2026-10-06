@@ -48,7 +48,7 @@ public final class UnregisterCommand implements BasicCommand {
             return;
         }
 
-        if (!plugin.getConfigManager().allowSelfUnregister()) {
+        if (!plugin.config().settings().allowSelfUnregister()) {
             player.sendMessage(I18n.msg("unregister.self_disabled", player));
             return;
         }

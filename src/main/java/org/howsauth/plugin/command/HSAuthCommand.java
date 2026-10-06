@@ -64,7 +64,7 @@ public final class HSAuthCommand {
                 }
             }
             // 再添加已注册的离线玩家
-            for (UUID uuid : plugin.getPlayerDataManager().getAllUuids()) {
+            for (UUID uuid : plugin.playerData().getAllUuids()) {
                 if (Bukkit.getPlayer(uuid) != null) continue;
                 OfflinePlayer offline = Bukkit.getOfflinePlayer(uuid);
                 String name = offline.getName();
@@ -145,15 +145,15 @@ public final class HSAuthCommand {
         if (Debug.on()) {
             Debug.log("cmd", "reload by %s", sender.getName());
         }
-        boolean dbChanged = plugin.getConfigManager().reload();
+        boolean dbChanged = plugin.config().reload();
         I18n.reload();
         // 调试开关可能被切换：重新读取配置
         Debug.refresh(plugin);
-        plugin.getAuthManager().cleanupExpiredStates();
+        plugin.auth().cleanupExpiredStates();
         // 登录界面方式可能被切换：清理现有 BossBar，重新挂起未登录玩家（关闭旧 Dialog，按新配置展示）
-        plugin.getPlayerListener().refreshPendingPlayers();
+        plugin.playerListener().refreshPendingPlayers();
         // 珍珠保管开关可能被切换：关闭时清空全部保管记录
-        plugin.getPendingPearlManager().refresh();
+        plugin.pendingPearls().refresh();
         if (dbChanged) {
             sender.sendMessage(I18n.msg("hsauth.reload_db_changed", sender));
             plugin.getLogger().warning(I18n.get("hsauth.reload_db_changed"));
@@ -171,7 +171,7 @@ public final class HSAuthCommand {
     private int handleDebugDump(CommandContext<io.papermc.paper.command.brigadier.CommandSourceStack> ctx) {
         CommandSender sender = ctx.getSource().getSender();
         boolean console = !(sender instanceof Player);
-        List<String> lines = plugin.getAuthManager().diagnostics();
+        List<String> lines = plugin.auth().diagnostics();
         // 补一行调试文件状态：排查时最先要确认的就是"日志在哪、有没有在写"
         lines.add(Debug.fileStatus());
         if (Debug.on()) {
@@ -198,7 +198,7 @@ public final class HSAuthCommand {
         // 异步执行：getOfflinePlayer 可能阻塞网络查询（Folia 兼容）
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
             UUID targetUuid = resolveTargetUuid(targetName);
-            PlayerData data = plugin.getPlayerDataManager().getPlayer(targetUuid);
+            PlayerData data = plugin.playerData().getPlayer(targetUuid);
             if (data == null) {
                 if (Debug.on()) {
                     Debug.log("cmd", "accounts by %s for %s: not found", sender.getName(), targetName);
@@ -216,7 +216,7 @@ public final class HSAuthCommand {
             }
 
             // 查找同 IP 的所有账号
-            List<PlayerData> sameIpAccounts = plugin.getPlayerDataManager().findByIp(ip);
+            List<PlayerData> sameIpAccounts = plugin.playerData().findByIp(ip);
             // 排除目标玩家自身，输出其他账号名
             List<String> otherNames = sameIpAccounts.stream()
                     .filter(d -> !d.uuid().equals(targetUuid))
@@ -327,8 +327,8 @@ public final class HSAuthCommand {
         UUID uuid = Bukkit.getOfflinePlayer(targetName).getUniqueId();
         // 离线模式下 getOfflinePlayer 返回离线 UUID，与正版账号存储的正版 UUID 不匹配，
         // 不回溯会对正版玩家误报"账号不存在"
-        if (!plugin.getPlayerDataManager().hasAccount(uuid)) {
-            PlayerData premium = plugin.getPlayerDataManager().getByName(targetName);
+        if (!plugin.playerData().hasAccount(uuid)) {
+            PlayerData premium = plugin.playerData().getByName(targetName);
             if (premium != null) uuid = premium.uuid();
         }
         return uuid;
@@ -392,7 +392,7 @@ public final class HSAuthCommand {
             Player online = Bukkit.getPlayerExact(targetName);
             if (online != null) {
                 // 复用通用挂起：补旁观者保护（登录成功后按存储模式恢复游戏模式）
-                plugin.getPlayerListener().suspend(online, "listener.please_login", true);
+                plugin.playerListener().suspend(online, "listener.please_login", true);
             }
         });
         return Command.SINGLE_SUCCESS;
@@ -432,7 +432,7 @@ public final class HSAuthCommand {
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
             // 以数据库记录解析账号：getOfflinePlayer 走 usercache，同名可能缓存到与账号无关的 UUID
             // （玩家改名或正版/离线缓存混杂时），导致删错或漏删账号
-            UUID targetUuid = plugin.getPlayerDataManager().findUuidByName(targetName);
+            UUID targetUuid = plugin.playerData().findUuidByName(targetName);
             if (targetUuid == null || !plugin.accounts().unregister(targetUuid)) {
                 if (Debug.on()) {
                     Debug.log("cmd", "unreg by %s for %s: not found", sender.getName(), targetName);

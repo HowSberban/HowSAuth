@@ -102,7 +102,7 @@ public final class AccountLifecycle {
      * @return true 已达上限，false 仍可注册/进入
      */
     public boolean isIpAccountLimitReached(String ip) {
-        int max = configManager.maxAccountsPerIp();
+        int max = configManager.register().maxAccountsPerIp();
         if (max <= 0) return false;
         if (ip == null) return false;
         return dataManager.findByIp(ip).size() >= max;
@@ -113,7 +113,7 @@ public final class AccountLifecycle {
         if (dataManager.hasAccountByName(name) || dataManager.hasAccount(uuid)) {
             return false;
         }
-        String hash = PasswordHash.hashPassword(password, configManager.passwordHashAlgorithm(), configManager.bcryptCost());
+        String hash = PasswordHash.hashPassword(password, configManager.password().hashAlgorithm(), configManager.password().bcryptCost());
         dataManager.createPlayer(uuid, hash, ip != null ? ip : "unknown");
         return true;
     }
@@ -140,10 +140,10 @@ public final class AccountLifecycle {
         if (dataManager.hasAccountByName(name) || dataManager.hasAccount(uuid)) {
             return false;
         }
-        String hash = PasswordHash.hashPassword(password, configManager.passwordHashAlgorithm(), configManager.bcryptCost());
+        String hash = PasswordHash.hashPassword(password, configManager.password().hashAlgorithm(), configManager.password().bcryptCost());
         // 名额判定与建号原子完成：并发注册同一 IP 不会全部通过检查（防 max-accounts-per-ip 被绕过）
         return dataManager.createPlayerIfIpAllowed(uuid, hash, ip != null ? ip : "unknown",
-                configManager.maxAccountsPerIp()) != null;
+                configManager.register().maxAccountsPerIp()) != null;
     }
 
     // ===== 注销 =====
@@ -217,7 +217,7 @@ public final class AccountLifecycle {
         sessions.clearLoginSession(uuid);
         twoFactor.clearSession(uuid);
         // 根据配置决定是否删除 Minecraft 原版玩家数据（player.dat）
-        if (configManager.realUnreg()) {
+        if (configManager.settings().realUnreg()) {
             // 记录注销时间，5 秒内拒绝重连，确保 .dat 删除完成
             sessions.markRecentUnregister(uuid);
             if (Bukkit.getPlayer(uuid) != null) {
@@ -317,7 +317,7 @@ public final class AccountLifecycle {
     public boolean isPremiumFallback(UUID premiumUuid) {
         Long markedAt = premiumFallback.get(premiumUuid);
         if (markedAt == null) return false;
-        long ttl = configManager.premiumFallbackCacheSeconds() * 1000L;
+        long ttl = configManager.premium().fallbackCacheSeconds() * 1000L;
         if (System.currentTimeMillis() - markedAt >= ttl) {
             premiumFallback.remove(premiumUuid);
             return false;

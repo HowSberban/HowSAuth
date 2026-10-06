@@ -39,7 +39,7 @@ public final class DowngradeAccountCommand implements BasicCommand {
             return;
         }
         // 正版验证总开关或降级开关未开启时降级不可用
-        if (!plugin.getConfigManager().premiumEnabled() || !plugin.getConfigManager().premiumDowngradeEnabled()) {
+        if (!plugin.config().premium().enabled() || !plugin.config().premium().downgradeEnabled()) {
             player.sendMessage(I18n.msg("downgrade.disabled", player));
             return;
         }

@@ -4,7 +4,7 @@ import net.kyori.adventure.text.Component;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.howsauth.plugin.auth.SessionStore;
-import org.howsauth.plugin.config.ConfigManager;
+import org.howsauth.plugin.config.PasswordConfig;
 import org.howsauth.plugin.listener.JoinQuitMessageService;
 import org.howsauth.plugin.listener.PlayerListener;
 import org.howsauth.plugin.pearl.PendingPearlManager;
@@ -37,7 +37,7 @@ class QuitFlowRegressionTest {
     @BeforeEach
     void setUp() throws Exception {
         env = MockBukkitHarness.start("hsauth-quit-flow-", config ->
-                MockBukkitHarness.inject(ConfigManager.class, "bcryptCost", config, 4));
+                MockBukkitHarness.inject(PasswordConfig.class, "bcryptCost", config.password(), 4));
         plugin = env.plugin();
         sessions = env.sessions();
         // 监听器与登录收尾依赖的插件字段由 onEnable 装配，测试不触发 onEnable 需按同样次序注入

@@ -117,7 +117,7 @@ public final class MockBukkitHarness implements AutoCloseable {
             if (configTweaks != null) {
                 configTweaks.accept(config);
             }
-            // PlayerDataManager 建数据源走 plugin.getConfigManager()，需先注入（onEnable 中由字段赋值保证）
+            // PlayerDataManager 建数据源走 plugin.config()，需先注入（onEnable 中由字段赋值保证）
             inject(HowSAuth.class, "configManager", plugin, config);
             PlayerDataManager data = new PlayerDataManager(plugin);
             AuthManager auth = new AuthManager(plugin, data, config);

@@ -78,13 +78,13 @@ public class HowSAuth extends JavaPlugin {
         // 1.21.6–1.21.10 存在未验证的兼容问题（Paper #13365/#13708），默认禁用，
         // 经 login.dialog.allow-risky-versions 强制启用时由使用者自担风险
         // dialogManager 为 null 时 pre-join 与游戏内 2FA 绑定均回退聊天栏/文本
-        if (configManager.loginDialogEnabled()
+        if (configManager.login().dialogEnabled()
                 && DialogManager.isSupported()
-                && (preJoinSupported() || configManager.dialogAllowRiskyVersions())) {
+                && (preJoinSupported() || configManager.login().dialogAllowRiskyVersions())) {
             this.dialogManager = new DialogManager(this);
             this.preJoinAuthListener = new PreJoinAuthListener(this, authManager.sessions(), authManager.failProtection(), authManager.twoFactor(), authManager.accounts(), authManager.loginFlow(), dialogManager);
             getServer().getPluginManager().registerEvents(preJoinAuthListener, this);
-        } else if (configManager.loginDialogEnabled()) {
+        } else if (configManager.login().dialogEnabled()) {
             getLogger().warning(I18n.get("log.dialog_unsupported"));
         }
 
@@ -94,10 +94,10 @@ public class HowSAuth extends JavaPlugin {
         registerPacketListener();
         registerPremiumListener();
         // 清理不活跃账号（启动时执行，此时玩家尚未进入）
-        if (configManager.purgeEnabled()) {
-            int purged = playerDataManager.purgeInactive(configManager.purgeDays());
+        if (configManager.settings().purgeEnabled()) {
+            int purged = playerDataManager.purgeInactive(configManager.settings().purgeDays());
             if (purged > 0) {
-                getLogger().info(I18n.get("log.purge_inactive", purged, configManager.purgeDays()));
+                getLogger().info(I18n.get("log.purge_inactive", purged, configManager.settings().purgeDays()));
             }
         }
         // 周期批量落库脏数据（合并 DB 写，降低 SQLite 锁竞争与 IO 开销）
@@ -212,20 +212,23 @@ public class HowSAuth extends JavaPlugin {
         PacketEvents.getAPI().getEventManager()
                 .registerListener(new ConnectionHandler(this, dataService, mojangClient, playerInjector));
         // 启动时异步探测代理/镜像可用性（不阻塞启动），使用时跳过不可用端点
-        if (configManager.premiumEnabled() || playerDataManager.hasPremiumAccount()) {
+        if (configManager.premium().enabled() || playerDataManager.hasPremiumAccount()) {
             mojangClient.probeAll();
         }
     }
 
-    public ConfigManager getConfigManager() {
+    /** 插件配置（只读领域快照，见 ConfigManager 的各领域访问器） */
+    public ConfigManager config() {
         return configManager;
     }
 
-    public PlayerDataManager getPlayerDataManager() {
+    /** 玩家数据（账号、密码哈希、2FA 密钥、退出位置等） */
+    public PlayerDataManager playerData() {
         return playerDataManager;
     }
 
-    public AuthManager getAuthManager() {
+    /** 认证协作服务聚合（sessions/failProtection/twoFactor/locations/accounts/playerFiles/loginFlow） */
+    public AuthManager auth() {
         return authManager;
     }
 
@@ -264,7 +267,8 @@ public class HowSAuth extends JavaPlugin {
         return authManager.loginFlow();
     }
 
-    public PlayerListener getPlayerListener() {
+    /** 加入/退出主监听器（挂起、超时、登录收尾） */
+    public PlayerListener playerListener() {
         return playerListener;
     }
 
@@ -273,12 +277,13 @@ public class HowSAuth extends JavaPlugin {
         return authReminder;
     }
 
-    public PendingPearlManager getPendingPearlManager() {
+    /** 末影珍珠保管与返还（退出接管、登录返还） */
+    public PendingPearlManager pendingPearls() {
         return pendingPearlManager;
     }
 
     /** 配置阶段 Dialog 监听器（配置事件 API 不可用时为 null，调用方判空回退聊天栏流程） */
-    public PreJoinAuthListener getPreJoinAuthListener() {
+    public PreJoinAuthListener preJoinAuth() {
         return preJoinAuthListener;
     }
 

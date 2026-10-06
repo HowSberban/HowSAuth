@@ -72,7 +72,7 @@ public final class PlayerFiles {
      * 遵循 settings.real-unreg 配置；可在网络线程调用（内部异步调度，不阻塞调用线程）。
      */
     public void deleteAsync(UUID uuid) {
-        if (!configManager.realUnreg()) return;
+        if (!configManager.settings().realUnreg()) return;
         Bukkit.getAsyncScheduler().runNow(plugin, task -> retryDelete(uuid));
     }
 

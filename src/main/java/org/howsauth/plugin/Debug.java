@@ -31,8 +31,8 @@ public final class Debug {
 
     /** 启动时与 /hsauth reload 后同步开关与输出文件（配置可运行时变更） */
     public static void refresh(HowSAuth plugin) {
-        ConfigManager config = plugin.getConfigManager();
-        enabled = config != null && config.debug();
+        ConfigManager config = plugin.config();
+        enabled = config != null && config.settings().debug();
         DebugFile.attach(plugin);
     }
 

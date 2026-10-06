@@ -116,8 +116,10 @@ public final class LogoutLocation {
      */
     public void preloadChunk(UUID uuid) {
         try {
-            // 坐标保护 / 旁观强制开启时 setSpectator 不做悬空判定，无需预载
-            if (configManager.protectionGamemodeEnabled() || configManager.protectionPosEnabled()) return;
+            // 坐标保护 / 旁观强制开启时 setSpectator 不做悬空判定；
+            // advanced.dangling-check 关闭（默认）时判定整段被跳过：三种情况都无需预载
+            if (configManager.protectionMisc().gamemodeEnabled() || configManager.protectionPosition().enabled()
+                    || !configManager.settings().danglingCheck()) return;
             Location logoutLoc = get(uuid);
             if (logoutLoc == null) return;
             World world = logoutLoc.getWorld();
@@ -139,14 +141,19 @@ public final class LogoutLocation {
      * <p>
      * 当 gamemode.enabled=false 时，若坐标保护未开启且退出位置悬空，仍强制切换为旁观模式：
      * 退出位置悬空时玩家会在该处坠落暴露位置。
+     * <p>
+     * 悬空判定受 advanced.dangling-check 控制：false（默认）时不执行判定，整段处理跳过、本方法直接返回，
+     * 玩家保持原游戏模式；true 时才走 {@link #isBlockSolidBelow} 判定。
      * 悬空检查通过 ChunkSnapshot 读取（快照线程安全），任意线程可安全访问，
      * 避免 Folia 下在非所属区域线程读取退出位置所在世界（可能为其它世界或其它区域）的方块。
      * 最终 setGameMode 使用玩家调度器执行，保证 Folia 下在玩家区域线程调用（非线程安全）。
      */
     public void setSpectator(Player player) {
-        if (!configManager.protectionGamemodeEnabled()) {
+        if (!configManager.protectionMisc().gamemodeEnabled()) {
+            // 未启用悬空判定（默认）：不处理也不旁观，直接返回，玩家保持原游戏模式
+            if (!configManager.settings().danglingCheck()) return;
             // 旁观模式未开启时，仅在坐标保护未开启且退出位置悬空时仍切换为旁观
-            if (configManager.protectionPosEnabled()) return;
+            if (configManager.protectionPosition().enabled()) return;
             Location logoutLoc = get(player);
             if (logoutLoc == null || logoutLoc.getWorld() == null) return;
             if (isBlockSolidBelow(logoutLoc)) return;
@@ -180,17 +187,12 @@ public final class LogoutLocation {
      */
     public Location findSafeAuthSpawn(World world) {
         // 固定坐标模式：直接使用配置的坐标
-        if ("fixed".equals(configManager.protectionPosMode())) {
-            return new Location(world,
-                    configManager.protectionPosFixedX(),
-                    configManager.protectionPosFixedY(),
-                    configManager.protectionPosFixedZ(),
-                    configManager.protectionPosFixedYaw(),
-                    configManager.protectionPosFixedPitch());
+        if (configManager.protectionPosition().fixedMode()) {
+            return configManager.protectionPosition().fixedLocation(world);
         }
 
         Location spawn = world.getSpawnLocation();
-        int radius = configManager.protectionPosSpawnRadius();
+        int radius = configManager.protectionPosition().spawnRadius();
         ThreadLocalRandom random = ThreadLocalRandom.current();
         // 多次重试，模仿原版 MC 寻找安全出生点的机制
         for (int attempt = 0; attempt < 10; attempt++) {
