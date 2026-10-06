@@ -343,7 +343,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                     if (session.isUpgradeAttempt()) {
                         // 升级成功：将离线账号迁移到正版 UUID（保留退出位置等数据，密码置空）+ 迁移原版玩家数据（背包/成就/统计），清除升级标记
                         dataService.migrateToPremium(session.offlineUuid(), uuid, username, session.ip(), properties);
-                        plugin.accounts().migratePlayerDataAsync(session.offlineUuid(), uuid);
+                        plugin.vanillaData().migrateAsync(session.offlineUuid(), uuid);
                         plugin.accounts().clearUpgradePending(session.offlineUuid());
                         if (Debug.on()) {
                             Debug.log("premium", "upgrade success for %s: migrated offline account to premium uuid %s",
@@ -356,7 +356,7 @@ public final class ConnectionHandler extends PacketListenerAbstract {
                         if (pending != null && pending.premium()) {
                             // 目标正版 UUID 已有正版记录时保留原记录数据，跳过原版数据迁移（防止离线号文件覆盖正版身份数据）
                             if (dataService.migrateToPremium(pending.uuid(), uuid, username, session.ip(), properties)) {
-                                plugin.accounts().migratePlayerDataAsync(pending.uuid(), uuid);
+                                plugin.vanillaData().migrateAsync(pending.uuid(), uuid);
                             }
                         } else {
                             // 首次注册：无密码账户（正版验证即身份凭证，玩家可用 /addpassword 自行设置密码）

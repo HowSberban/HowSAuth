@@ -447,7 +447,7 @@ public final class PlayerListener implements Listener {
         // 清理提醒任务引用（任务随玩家调度器 retired 不再执行，防止 Map 残留）
         reminders.cancelTask(player.getUniqueId());
         // 注销玩家退出时删除原版 .dat（服务器已保存并释放文件锁）
-        accounts.tryDeletePlayerDataOnQuit(player.getUniqueId());
+        plugin.vanillaData().deleteOnQuit(player.getUniqueId());
     }
 
     /**

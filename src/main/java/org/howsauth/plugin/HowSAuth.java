@@ -12,6 +12,7 @@ import org.howsauth.plugin.auth.LoginFlow;
 import org.howsauth.plugin.auth.LogoutLocation;
 import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.TwoFactorAuth;
+import org.howsauth.plugin.auth.VanillaPlayerData;
 import org.howsauth.plugin.command.*;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
@@ -251,6 +252,11 @@ public class HowSAuth extends JavaPlugin {
     /** 账号生命周期（注册/注销/数据删除/正版标记），AuthManager 拆分后的协作服务 */
     public AccountLifecycle accounts() {
         return authManager.accounts();
+    }
+
+    /** 原版玩家数据文件（.dat/advancements/stats）的删除与迁移 */
+    public VanillaPlayerData vanillaData() {
+        return authManager.vanillaData();
     }
 
     /** 登录/注册编排（密码校验、2FA 转接、登录收尾、密码操作），AuthManager 拆分后的协作服务 */

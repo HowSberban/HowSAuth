@@ -47,6 +47,7 @@ public final class AuthManager {
     private final FailProtection failProtection;
     private final TwoFactorAuth twoFactor;
     private final LogoutLocation locations;
+    private final VanillaPlayerData vanillaData;
     private final AccountLifecycle accounts;
     private final LoginFlow loginFlow;
 
@@ -59,8 +60,9 @@ public final class AuthManager {
         this.failProtection = new FailProtection(configManager);
         this.twoFactor = new TwoFactorAuth(dataManager, configManager, failProtection, events);
         this.locations = new LogoutLocation(plugin, dataManager, configManager, sessions);
+        this.vanillaData = new VanillaPlayerData(plugin, configManager, sessions);
         this.accounts = new AccountLifecycle(plugin, dataManager, configManager, events, sessions,
-                failProtection, twoFactor, this::cleanupExpiredStates);
+                failProtection, twoFactor, vanillaData, this::cleanupExpiredStates);
         this.loginFlow = new LoginFlow(plugin, dataManager, configManager, events, sessions,
                 failProtection, twoFactor, accounts);
         // 周期清理过期的 2FA 临时密钥与登录/2FA 会话等状态（懒清理兜底，随插件关闭统一取消）
@@ -105,6 +107,14 @@ public final class AuthManager {
      */
     public AccountLifecycle accounts() {
         return accounts;
+    }
+
+    /**
+     * 原版玩家数据文件（.dat/advancements/stats）的删除与迁移。
+     * 拆分后由本类持有组装，调用方直接使用该服务（AuthManager 不再提供转发）。
+     */
+    public VanillaPlayerData vanillaData() {
+        return vanillaData;
     }
 
     /**

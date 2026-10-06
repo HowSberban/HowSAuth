@@ -580,7 +580,7 @@ public final class PlayerDataManager implements AutoCloseable {
         premiumNameIndex.put(name.toLowerCase(), premiumUuid);
         plugin.getLogger().info(I18n.get("log.premium_migrate_preserved", name + " (" + offlineUuid + ")"));
         // 作废离线号的原版数据文件一并删除（否则同名新玩家注册会继承遗留的背包/成就/统计）
-        plugin.accounts().deletePlayerDataAsync(offlineUuid);
+        plugin.vanillaData().deleteAsync(offlineUuid);
         submitDbWrite(() -> {
             try (Connection conn = dataSource.getConnection()) {
                 conn.setAutoCommit(false);
