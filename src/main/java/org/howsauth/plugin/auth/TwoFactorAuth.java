@@ -58,8 +58,7 @@ public final class TwoFactorAuth {
 
     /** 账号是否处于双因素认证生效状态（已绑定密钥且全局开关开启） */
     public boolean has2fa(UUID uuid) {
-        PlayerData data = dataManager.getPlayer(uuid);
-        return data != null && data.totpSecret() != null && configManager.twoFaEnabled();
+        return hasTotpSecret(uuid) && configManager.twoFaEnabled();
     }
 
     /** 玩家是否处于双因素待验证状态（密码已通过，TOTP 未完成） */
