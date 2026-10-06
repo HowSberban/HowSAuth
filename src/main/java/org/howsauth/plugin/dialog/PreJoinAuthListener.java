@@ -57,6 +57,8 @@ public final class PreJoinAuthListener implements Listener {
     private final Map<UUID, AuthOutcome> outcomes = new ConcurrentHashMap<>();
     // 活跃的配置阶段会话（Dialog 提交回调查找）
     private final Map<UUID, Session> configSessions = new ConcurrentHashMap<>();
+    // 配置阶段玩家名认领：先到者持续占有连接，后来者被拒（离线模式同名解析为同一 UUID）
+    private final NameClaims nameClaims;
     // timeout=0 时由配置阶段连接生命周期负责释放 Session
     private static final int CONFIG_WAIT_FALLBACK_SECONDS = 600;
 
@@ -89,6 +91,15 @@ public final class PreJoinAuthListener implements Listener {
         this.accounts = accounts;
         this.loginFlow = loginFlow;
         this.dialogManager = dialogManager;
+        this.nameClaims = new NameClaims(plugin.getConfigManager());
+    }
+
+    /**
+     * 玩家进入世界后释放名字认领：play 阶段起服务端的同名单会话检查接管，
+     * 插件侧的配置阶段认领不再需要（不释放会让名字在 TTL 内无法被重新连接使用）。
+     */
+    public void releaseClaim(String name) {
+        nameClaims.releaseByName(name);
     }
 
     /** 玩家进入世界时消费配置阶段认证结果（无结果返回 null，走正常登录流程） */
@@ -110,6 +121,18 @@ public final class PreJoinAuthListener implements Listener {
     public void onConfigure(AsyncPlayerConnectionConfigureEvent event) {
         PlayerConfigurationConnection conn = event.getConnection();
         UUID uuid = conn.getProfile().getId();
+        // 名字认领必须最先执行：先到者持续占有连接，后来者直接拒绝（"您已登录此服务器"）。
+        // 离线模式同名解析为同一 UUID，而服务端的同名单会话检查要到创建 ServerPlayer
+        // （play 阶段）才生效，配置阶段的同名竞争只能在此拦截。也正因如此，认领失败时
+        // 必须立即返回、不得触碰任何共享状态——否则会清掉先到者正在进行的认证结果。
+        String name = conn.getProfile().getName();
+        if (!nameClaims.claim(name, conn)) {
+            if (Debug.on()) {
+                Debug.log("dialog", "pre-join %s: name already claimed, disconnect", Debug.shortId(uuid));
+            }
+            conn.disconnect(I18n.msgForLocale("prelogin.already_online", resolveLocale(conn)));
+            return;
+        }
         // 清除上次连接可能残留的会话状态：认证结果与 2FA 待验证标记
         // （pre-join 阶段断开无 PlayerQuitEvent → clearSession 不执行，残留的 pending2fa
         //  会让下次连接的密码玩家凭旧会话状态直接 /2fa 跳过密码验证）
@@ -127,6 +150,8 @@ public final class PreJoinAuthListener implements Listener {
                     Debug.log("dialog", "pre-join %s: no usable login method, disconnect",
                             Debug.shortId(uuid));
                 }
+                // 连接就此断开，不会进入游戏，立即释放名字认领
+                nameClaims.release(name, conn);
                 conn.disconnect(I18n.msgForLocale("prelogin.account_locked", resolveLocale(conn)));
                 return;
             }
@@ -231,12 +256,20 @@ public final class PreJoinAuthListener implements Listener {
                 }
             }
         }
-        if (session.kicked || session.fallback) return;
+        // 被接管的旧会话：连接已被 disconnect，不会进入游戏，释放名字认领
+        if (session.kicked) {
+            nameClaims.release(name, conn);
+            return;
+        }
+        // 发送窗口失败回退聊天栏：仍会进入游戏，认领由 onJoin 释放
+        if (session.fallback) return;
         if (session.success) {
             return;
         }
-        // 超时未完成：kick-on-timeout 开启时踢出，否则由 onJoin 的 beginAuthFlow 接管
+        // 超时未完成：kick-on-timeout 开启时踢出（连接断开，释放认领）；
+        // 关闭时由 onJoin 的 beginAuthFlow 接管（仍会进入游戏，认领保留到 onJoin）
         if (plugin.getConfigManager().kickOnTimeout()) {
+            nameClaims.release(name, conn);
             conn.disconnect(I18n.msgForLocale("listener.login_timeout", locale));
         }
     }

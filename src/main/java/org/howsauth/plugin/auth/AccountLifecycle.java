@@ -233,7 +233,7 @@ public final class AccountLifecycle {
                     Debug.log("auth", "unregister %s: account removed, vanilla data deleted immediately",
                             Debug.shortId(uuid));
                 }
-                playerFiles.deleteWithRetry(uuid);
+                playerFiles.retryDelete(uuid);
             }
             // 顺手清理已过期的踢出记录、失败计数和注销拒绝重连记录，防止批量注销时累积
             expiredStateCleanup.run();

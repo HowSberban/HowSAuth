@@ -99,7 +99,7 @@ public final class PendingPearlManager implements Listener {
         if (handledPearls.remove(pearl.getUniqueId()) != null) return;
         UUID owner = ownerResolver.resolve(pearl);
         if (owner == null) {
-            ownerResolver.warnResolutionFailure(pearl);
+            ownerResolver.warnResolution(pearl);
             return;
         }
         if (ownerResolver.isAuthenticated(owner)) return;
@@ -119,7 +119,7 @@ public final class PendingPearlManager implements Listener {
             return;
         }
         if (owner == null) {
-            ownerResolver.warnResolutionFailure(pearl);
+            ownerResolver.warnResolution(pearl);
             return;
         }
         if (ownerResolver.isAuthenticated(owner)) return;
@@ -315,8 +315,10 @@ public final class PendingPearlManager implements Listener {
         }
     }
 
-    /** 解析快照（包内可见：供单测使用）；world 缺失或非字符串时返回 null */
-    /** 快照列表转 YAML 映射（包内可见：供单测使用） */
+    /**
+     * 解析快照（包内可见：供单测使用）；world 缺失或非字符串时返回 null
+     * 快照列表转 YAML 映射（包内可见：供单测使用）
+     */
     private void save() {
         if (shuttingDown) return;
         saveRequested.set(true);

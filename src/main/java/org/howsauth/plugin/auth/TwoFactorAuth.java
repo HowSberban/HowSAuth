@@ -231,7 +231,7 @@ public final class TwoFactorAuth {
 
     /** 玩家的临时密钥是否已失效：未生成或已过期（供提示"重新 setup"前判断）
      *  调用方均为取反前的直接判断，方法语义保持"已失效"便于阅读 */
-    public boolean isPendingSecretExpired(UUID uuid) {
+    public boolean isSecretExpired(UUID uuid) {
         removeExpiredSecret(uuid);
         return !pending2faSecret.containsKey(uuid);
     }
@@ -337,7 +337,7 @@ public final class TwoFactorAuth {
     }
 
     /** 周期清理已过期的 2FA 会话，返回移除条数 */
-    int cleanupExpiredSessions(long now) {
+    int cleanupSessions(long now) {
         int before = twoFaSessions.size();
         twoFaSessions.entrySet().removeIf(e -> now > e.getValue().expiresAt());
         return before - twoFaSessions.size();

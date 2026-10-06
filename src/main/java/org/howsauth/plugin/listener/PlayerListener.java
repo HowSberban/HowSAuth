@@ -126,6 +126,13 @@ public final class PlayerListener implements Listener {
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
 
+        // 玩家已进入世界：服务端的同名单会话检查自 play 阶段起生效，
+        // 配置阶段的名字认领到此释放（不释放会让该名字在 TTL 内无法被重新连接使用）
+        PreJoinAuthListener preJoin = plugin.getPreJoinAuthListener();
+        if (preJoin != null) {
+            preJoin.releaseClaim(player.getName());
+        }
+
         // 清理上一会话残留的登录失明（药水效果随 .dat 保存，崩溃重连后仍在）；
         // 本监听器最先注册，先于其它插件的 join 处理执行，不会误删后者施加的效果；
         // 本次需要挂起时 suspend 会在同一 tick 内重新施加，客户端无感知
@@ -135,7 +142,6 @@ public final class PlayerListener implements Listener {
         loginFlow.touchActive(player);
 
         // Pre-join Dialog 已在配置阶段完成登录/注册：收尾后直接进入世界（无需挂起）
-        PreJoinAuthListener preJoin = plugin.getPreJoinAuthListener();
         if (preJoin != null) {
             PreJoinAuthListener.AuthOutcome outcome = preJoin.consume(player);
             if (outcome != null) {

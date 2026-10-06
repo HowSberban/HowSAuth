@@ -133,9 +133,9 @@ public final class AuthManager {
     public void cleanupExpiredStates() {
         long now = System.currentTimeMillis();
         int removed = failProtection.cleanupExpired(now);
-        removed += twoFactor.cleanupExpiredSessions(now);
+        removed += twoFactor.cleanupSessions(now);
         // 清理已过期的登录会话（固定窗口，命中不续期）与注销拒绝重连记录
-        removed += sessions.cleanupExpiredSessions(now);
+        removed += sessions.cleanupSessions(now);
         int before = sessions.recentUnregisterCount();
         sessions.cleanupExpired(now);
         removed += before - sessions.recentUnregisterCount();
@@ -169,7 +169,7 @@ public final class AuthManager {
             lines.add("  " + player.getName() + "(" + Debug.shortId(uuid) + ")"
                     + sessions.describe(uuid)
                     + " pending2fa=" + twoFactor.isPending(uuid)
-                    + " loginSession=" + sessions.hasLoginSessionRecord(uuid)
+                    + " loginSession=" + sessions.hasLoginSession(uuid)
                     + " twoFaSession=" + twoFactor.hasSessionRecord(uuid)
                     + " failed=" + failProtection.hasFailureRecord(uuid)
                     + " kicked=" + failProtection.isKicked(uuid));

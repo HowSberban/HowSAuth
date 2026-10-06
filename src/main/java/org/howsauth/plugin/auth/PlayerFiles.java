@@ -63,7 +63,7 @@ public final class PlayerFiles {
         if (Debug.on()) {
             Debug.log("db", "delete vanilla data on quit: %s queued", Debug.shortId(uuid));
         }
-        Bukkit.getAsyncScheduler().runNow(plugin, task -> deleteWithRetry(uuid));
+        Bukkit.getAsyncScheduler().runNow(plugin, task -> retryDelete(uuid));
     }
 
     /**
@@ -73,12 +73,12 @@ public final class PlayerFiles {
      */
     public void deleteAsync(UUID uuid) {
         if (!configManager.realUnreg()) return;
-        Bukkit.getAsyncScheduler().runNow(plugin, task -> deleteWithRetry(uuid));
+        Bukkit.getAsyncScheduler().runNow(plugin, task -> retryDelete(uuid));
     }
 
     /** 重试删除玩家数据，5 秒内持续尝试（首次 1000ms，后续每 300ms） */
     @SuppressWarnings("BusyWait")
-    void deleteWithRetry(UUID uuid) {
+    void retryDelete(UUID uuid) {
         long elapsed = 0;
         while (true) {
             try {

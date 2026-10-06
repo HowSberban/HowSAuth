@@ -53,7 +53,7 @@ final class OwnerResolver {
     }
 
     /** 限频告警：归属者解析失败按 {@link #OWNER_WARNING_INTERVAL_MILLIS} 节流，避免刷屏 */
-    void warnResolutionFailure(EnderPearl pearl) {
+    void warnResolution(EnderPearl pearl) {
         long now = System.currentTimeMillis();
         while (true) {
             long previous = lastOwnerWarningAt.get();

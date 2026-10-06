@@ -153,7 +153,7 @@ public final class SessionStore {
     }
 
     /** 周期清理已过期的登录会话（固定窗口，命中不续期），返回移除条数 */
-    int cleanupExpiredSessions(long now) {
+    int cleanupSessions(long now) {
         long sessionMs = TimeUnit.MINUTES.toMillis(configManager.sessionExpireMinutes());
         int before = loginSessions.size();
         loginSessions.entrySet().removeIf(e -> now - e.getValue().establishedAt() >= sessionMs);
@@ -316,7 +316,7 @@ public final class SessionStore {
         return loginSessions.size();
     }
 
-    boolean hasLoginSessionRecord(UUID uuid) {
+    boolean hasLoginSession(UUID uuid) {
         return loginSessions.containsKey(uuid);
     }
 
