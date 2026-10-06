@@ -152,6 +152,33 @@ public final class MockBukkitHarness implements AutoCloseable {
         return config;
     }
 
+    /**
+     * 改写 config.yml 的一个键并让运行中的 {@link ConfigManager} 立刻读到新值。
+     * <p>
+     * 两个必须处理的坑（否则改了配置但被测代码仍读旧值）：
+     * <ol>
+     *   <li>写入后要把文件修改时间前推，因为 {@code JavaPlugin.reloadConfig()} 在 mtime 未变时会跳过重读；</li>
+     *   <li>{@code reloadConfig()} 只刷新 {@code plugin.getConfig()} 的内容，需再调 {@code config.load()}
+     *       让 ConfigManager 的各领域快照（如 {@code premium()}）基于新内容重建。</li>
+     * </ol>
+     * 用于测试需要"运行时改变配置并观察行为"的场景（如按配置切换端点列表）。
+     */
+    public void writeConfig(java.util.function.Consumer<org.bukkit.configuration.file.YamlConfiguration> mutator) {
+        File configFile = new File(plugin.getDataFolder(), "config.yml");
+        try {
+            org.bukkit.configuration.file.YamlConfiguration yaml =
+                    org.bukkit.configuration.file.YamlConfiguration.loadConfiguration(configFile);
+            mutator.accept(yaml);
+            yaml.save(configFile);
+            Files.setLastModifiedTime(configFile.toPath(),
+                    java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() + 1000L));
+            plugin.reloadConfig();
+            config.load();
+        } catch (IOException e) {
+            throw new IllegalStateException("failed to rewrite the test config file", e);
+        }
+    }
+
     public PlayerDataManager data() {
         return data;
     }
