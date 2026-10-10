@@ -5,11 +5,13 @@ import com.github.retrooper.packetevents.injector.ChannelInjector;
 import com.github.retrooper.packetevents.manager.player.PlayerManager;
 import com.github.retrooper.packetevents.manager.protocol.ProtocolManager;
 import com.github.retrooper.packetevents.manager.server.ServerManager;
+import com.github.retrooper.packetevents.manager.server.ServerVersion;
 import com.github.retrooper.packetevents.netty.NettyManager;
 import com.github.retrooper.packetevents.netty.buffer.ByteBufAllocationOperator;
 import com.github.retrooper.packetevents.settings.PacketEventsSettings;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import org.jspecify.annotations.NullMarked;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
@@ -52,6 +54,10 @@ public final class PacketEventsTestSupport {
             };
         }
 
+        /** 已记录的出站包（不可变快照），供测试断言服务端到底发出了什么包 */
+        public List<Object> packets() {
+            return List.copyOf(sentPackets);
+        }
     }
 
     /** 缓冲分配器：直接委托 netty 的 Unpooled（packetevents 的读写都走此接口） */
@@ -156,10 +162,14 @@ public final class PacketEventsTestSupport {
         }
     }
 
-    /** 最小 PacketEventsAPI 替身：只实现 User 构造与 sendPacket 真正用到的方法 */
+    /** 最小 PacketEventsAPI 替身：只实现 User 构造与 sendPacket 真正用到的方法。
+     *  标注 @NullMarked 使其覆写与超类（被 IDE 视为非空作用域）保持一致的返回值契约 */
+    @NullMarked
     private static final class StubApi extends PacketEventsAPI<Object> {
         private final PacketEventsSettings settings = new PacketEventsSettings();
         private final ProtocolManager protocolManager;
+        /** PacketWrapper 构造时会读取服务端版本，提供一个固定版本的 ServerManager 替身 */
+        private final ServerManager serverManager = () -> ServerVersion.V_1_21_11;
 
         StubApi(ProtocolManager protocolManager) {
             this.protocolManager = protocolManager;
@@ -186,12 +196,13 @@ public final class PacketEventsTestSupport {
 
         @Override
         public Object getPlugin() {
-            return null;
+            // 本桩未持有真实插件实例，且测试路径不会调用；显式抛错以明确"不支持"并满足非空契约
+            throw new UnsupportedOperationException("test stub does not provide a plugin instance");
         }
 
         @Override
         public ServerManager getServerManager() {
-            return null;
+            return serverManager;
         }
 
         @Override
@@ -201,7 +212,8 @@ public final class PacketEventsTestSupport {
 
         @Override
         public PlayerManager getPlayerManager() {
-            return null;
+            // 测试路径不经过玩家管理，占位抛错以表达"此桩不提供"
+            throw new UnsupportedOperationException("test stub does not provide a player manager");
         }
 
         @Override
@@ -211,7 +223,8 @@ public final class PacketEventsTestSupport {
 
         @Override
         public ChannelInjector getInjector() {
-            return null;
+            // 测试环境不做注入，占位抛错以表达"此桩不提供"
+            throw new UnsupportedOperationException("test stub does not provide a channel injector");
         }
 
         @Override
@@ -232,12 +245,13 @@ public final class PacketEventsTestSupport {
      * 安装 API 替身并返回记录器。
      * 幂等：重复调用替换为新的记录器（每个测试用例独立记录）。
      */
-    public static void install() {
+    public static RecordingProtocolManager install() {
         RecordingProtocolManager recorder = new RecordingProtocolManager();
         ProtocolManager protocolManager = (ProtocolManager) Proxy.newProxyInstance(
                 PacketEventsTestSupport.class.getClassLoader(),
                 new Class<?>[]{ProtocolManager.class}, recorder);
         PacketEvents.setAPI(new StubApi(protocolManager));
+        return recorder;
     }
 
     private static Object defaultValue(Class<?> type) {

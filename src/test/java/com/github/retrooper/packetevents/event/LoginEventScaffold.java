@@ -28,10 +28,11 @@ public final class LoginEventScaffold {
     public static final class FakeClient {
         private final EmbeddedChannel channel = new EmbeddedChannel();
         private final User user;
+        private final PacketEventsTestSupport.RecordingProtocolManager recorder;
 
         private FakeClient(String username, UUID uuid) {
-            // install() 安装 PacketEvents API 替身，是构造真实 User 的前提；其返回的记录器此处不使用
-            PacketEventsTestSupport.install();
+            // install() 安装 PacketEvents API 替身，是构造真实 User 的前提
+            this.recorder = PacketEventsTestSupport.install();
             this.user = new User(channel, ConnectionState.LOGIN, ClientVersion.V_1_21_5,
                     new UserProfile(uuid, username));
         }
@@ -42,6 +43,11 @@ public final class LoginEventScaffold {
 
         public User user() {
             return user;
+        }
+
+        /** 本连接期间记录的出站包，供测试断言（如踢出前必须发出 Disconnect 包） */
+        public PacketEventsTestSupport.RecordingProtocolManager recorder() {
+            return recorder;
         }
     }
 

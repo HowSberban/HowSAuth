@@ -2,10 +2,12 @@ package org.howsauth.plugin.premium;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.retrooper.packetevents.event.LoginEventScaffold;
 import com.github.retrooper.packetevents.event.LoginEventScaffold.FakeClient;
 import com.github.retrooper.packetevents.protocol.player.User;
+import com.github.retrooper.packetevents.wrapper.login.server.WrapperLoginServerDisconnect;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.netty.channel.Channel;
@@ -206,6 +208,23 @@ class PremiumVerificationKickTest {
         assertEquals(List.of("kick"), handler.calls,
                 "a failed verification without fallback must kick, and must not call other callbacks");
         assertFalse(channel.isOpen(), "kicking must actually close the connection");
+    }
+
+    /**
+     * 踢出的真实副作用：{@link LoginFrames#kick} 必须先发出 Disconnect 包、再关闭通道。
+     * <p>
+     * 上面的用例用测试桩处理器观察"决策→断连"，不经过真实发包；本用例直接驱动真实帧层，
+     * 让 {@code RecordingProtocolManager} 记录到实际出站包，补上"客户端到底收到了什么"这一环。
+     */
+    @Test
+    void kickSendsDisconnectPacketBeforeClosing() {
+        FakeClient client = LoginEventScaffold.newClient("KickUser");
+
+        LoginFrames.kick(client.channel(), client.user(), net.kyori.adventure.text.Component.text("bye"));
+
+        assertTrue(client.recorder().packets().stream().anyMatch(WrapperLoginServerDisconnect.class::isInstance),
+                "kick must send a login disconnect packet to the client");
+        assertFalse(client.channel().isOpen(), "kick must close the connection");
     }
 
     /** 正版验证失败但允许密码回退时，不得踢出（应放行走密码登录） */

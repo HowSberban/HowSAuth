@@ -54,6 +54,8 @@ public final class PlayerListener implements Listener {
 
     // 在玩家加入世界前拦截：踢出期玩家、同一 IP 账号数量超限
     // 使用 AsyncPlayerPreLoginEvent 替代已弃用的 PlayerLoginEvent（1.21.6+）
+    // PlayerDataManager 为插件生命周期内共享的服务，不在此处关闭；此处仅调用其查询方法
+    @SuppressWarnings("resource")
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPreLogin(AsyncPlayerPreLoginEvent event) {
         var uuid = event.getUniqueId();

@@ -16,6 +16,8 @@ import org.bukkit.ServerLinks;
 import org.howsauth.plugin.dialog.PreJoinAuthListener.AuthOutcome;
 import org.howsauth.plugin.support.MockBukkitHarness;
 import org.howsauth.plugin.support.MockBukkitHarness.TestPlayerMock;
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,7 +57,9 @@ import java.util.concurrent.TimeUnit;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 class PreJoinAuthListenerConfigureTest {
 
-    /** 最小连接实现：只回放 profile/clientOption，并记录 disconnect 调用 */
+    /** 最小连接实现：只回放 profile/clientOption，并记录 disconnect 调用。
+     *  标注 @NullMarked 与 Paper 接口所在包保持一致的返回值契约 */
+    @NullMarked
     private static final class FakeConnection implements PlayerConfigurationConnection {
         private final PlayerProfile profile;
         private final String locale;
@@ -132,18 +136,19 @@ class PreJoinAuthListenerConfigureTest {
         }
 
         @Override
-        public InetSocketAddress getVirtualHost() {
+        public @Nullable InetSocketAddress getVirtualHost() {
             return null;
         }
 
         @Override
-        public InetSocketAddress getHAProxyAddress() {
+        public @Nullable InetSocketAddress getHAProxyAddress() {
             return null;
         }
 
         @Override
         public CompletableFuture<byte[]> retrieveCookie(NamespacedKey key) {
-            return CompletableFuture.completedFuture(null);
+            // 泛型元素为非空字节数组；用空数组表达"无 cookie"，而非放入 null
+            return CompletableFuture.completedFuture(new byte[0]);
         }
 
         @Override
