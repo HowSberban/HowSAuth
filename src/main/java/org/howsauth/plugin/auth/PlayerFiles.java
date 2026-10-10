@@ -49,9 +49,7 @@ public final class PlayerFiles {
      * 26.1+ 主版本号 >= 26，旧版 1.x 主版本号始终为 1。
      */
     private static boolean detectNewWorldStructure() {
-        String version = Bukkit.getBukkitVersion();
-        int dash = version.indexOf('-');
-        String nums = dash > 0 ? version.substring(0, dash) : version;
+        String nums = Bukkit.getBukkitVersion().split("-", 2)[0];
         String[] parts = nums.split("\\.");
         try {
             return Integer.parseInt(parts[0]) >= 26;
@@ -133,14 +131,19 @@ public final class PlayerFiles {
         }
 
         String[] dirs = playerDataDirs();
+        File dataDir = new File(worldRoot, dirs[0]);
+        // 期望的玩家数据目录不存在：多为版本判定与实际世界结构不符，删除会静默跳过，显式告警
+        if (!dataDir.isDirectory()) {
+            plugin.getLogger().warning(I18n.get("log.player_data_dir_missing", dataDir.getAbsolutePath()));
+        }
         // 删除 .dat_old（备份文件，失败仅告警，不影响重试）
-        File datOldFile = new File(worldRoot, dirs[0] + "/" + uuid + ".dat_old");
+        File datOldFile = new File(dataDir, uuid + ".dat_old");
         if (datOldFile.exists() && !datOldFile.delete()) {
             plugin.getLogger().warning(I18n.get("log.delete_player_data_backup_failed", datOldFile.getAbsolutePath()));
         }
 
         // 删除 .dat、advancements/.json、stats/.json，任一失败则重试
-        return deletePlayerFile(new File(worldRoot, dirs[0]), uuid, ".dat")
+        return deletePlayerFile(dataDir, uuid, ".dat")
                 && deletePlayerFile(new File(worldRoot, dirs[1]), uuid, ".json")
                 && deletePlayerFile(new File(worldRoot, dirs[2]), uuid, ".json");
     }
@@ -159,7 +162,12 @@ public final class PlayerFiles {
                 return;
             }
             String[] dirs = playerDataDirs();
-            renamePlayerFile(new File(worldRoot, dirs[0]), fromUuid, toUuid, ".dat");
+            File dataDir = new File(worldRoot, dirs[0]);
+            // 期望的玩家数据目录不存在：多为版本判定与实际世界结构不符，迁移会静默跳过，显式告警
+            if (!dataDir.isDirectory()) {
+                plugin.getLogger().warning(I18n.get("log.player_data_dir_missing", dataDir.getAbsolutePath()));
+            }
+            renamePlayerFile(dataDir, fromUuid, toUuid, ".dat");
             renamePlayerFile(new File(worldRoot, dirs[1]), fromUuid, toUuid, ".json");
             renamePlayerFile(new File(worldRoot, dirs[2]), fromUuid, toUuid, ".json");
         });

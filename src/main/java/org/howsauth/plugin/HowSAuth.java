@@ -291,7 +291,7 @@ public class HowSAuth extends JavaPlugin {
      * 检测服务端配置阶段 Dialog 是否稳定可用：事件 API 存在（1.21.4+）且服务端版本 >= 1.21.11。
      * 1.21.6–1.21.10 虽能发送配置阶段 Dialog 包，但存在未验证的兼容问题（见 Paper issue #13365/#13708），
      * AuthMe 亦将 pre-join 门槛定为 1.21.11+，故低于此版本回退聊天栏提示更稳妥。
-     * 版本解析与 AccountLifecycle#detectNewWorldStructure 同源（兼容 26.x 新命名）。
+     * 版本解析写法与 PlayerFiles#detectNewWorldStructure 一致（兼容 26.x 新命名）。
      */
     private static boolean preJoinSupported() {
         try {
