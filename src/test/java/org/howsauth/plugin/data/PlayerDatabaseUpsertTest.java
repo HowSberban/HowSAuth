@@ -71,6 +71,7 @@ class PlayerDatabaseUpsertTest {
      * 于是"未列入 upsert 语句的列"被重置为默认值；{@code ON CONFLICT DO UPDATE} 则保持原值。
      * （已用变异测试验证：把实现改回 {@code REPLACE INTO} 时本用例会失败。）
      */
+    @SuppressWarnings("SqlResolve")
     @Test
     void conflictingUpsertPreservesEveryExistingColumn() throws Exception {
         UUID uuid = UUID.randomUUID();
@@ -108,7 +109,7 @@ class PlayerDatabaseUpsertTest {
         }
     }
 
-    /** 读取测试注入的额外列的当前值（列不存在时返回 null） */
+    @SuppressWarnings("SqlResolve")
     private String readFutureFlag(UUID uuid) throws Exception {
         try (Connection conn = openRawConnection();
              PreparedStatement ps = conn.prepareStatement(
@@ -121,6 +122,7 @@ class PlayerDatabaseUpsertTest {
     }
 
     /** 新 UUID 的 upsert 仍应正常插入 */
+    @SuppressWarnings("SqlResolve")
     @Test
     void upsertInsertsWhenTheRowDoesNotExistYet() throws Exception {
         UUID uuid = UUID.randomUUID();
