@@ -36,9 +36,6 @@ final class PlayerDatabase implements AutoCloseable {
     @SuppressWarnings("SqlResolve")
     private static final String SQL_DELETE = "DELETE FROM players WHERE uuid = ?";
     @SuppressWarnings("SqlResolve")
-    private static final String SQL_UPDATE_PREMIUM =
-            "UPDATE players SET premium = ?, properties = ?, name = ? WHERE uuid = ?";
-    @SuppressWarnings("SqlResolve")
     private static final String SQL_SELECT_ALL =
             "SELECT uuid, name, password_hash, ip, last_login, logout_location, premium, properties, game_mode, totp_secret, last_active FROM players";
 
@@ -234,10 +231,10 @@ final class PlayerDatabase implements AutoCloseable {
     }
 
     /**
-     * 单事务内：删除 {@code deleteUuid} 行，再执行一次写入（upsert 或 premium 更新）。
+     * 单事务内：删除 {@code deleteUuid} 行，再执行一次写入（upsert）。
      * <p>
      * 账号迁移必须走本方法：删除与写入若不在同一事务，中途崩溃会两条记录皆失（账号丢失）。
-     * 三个迁移路径（离线→正版、保留式合并、正版→离线）共用此实现。
+     * 两条迁移路径（离线→正版、正版→离线）共用此实现。
      *
      * @param deleteUuid 要删除的旧记录
      * @param write      在同一事务内执行的写入语句构造（使用传入的同一连接）
@@ -263,17 +260,6 @@ final class PlayerDatabase implements AutoCloseable {
     void upsertRow(Connection conn, PlayerData data) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(sqlUpsert)) {
             bindPlayerData(ps, data);
-            ps.executeUpdate();
-        }
-    }
-
-    /** 在同一事务连接内仅更新正版标记/皮肤/名字（保留密码、2FA、退出位置等原有数据）。 */
-    void updatePremiumRow(Connection conn, UUID uuid, String name, String properties) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(SQL_UPDATE_PREMIUM)) {
-            ps.setBoolean(1, true);
-            ps.setString(2, properties);
-            ps.setString(3, name);
-            ps.setString(4, uuid.toString());
             ps.executeUpdate();
         }
     }

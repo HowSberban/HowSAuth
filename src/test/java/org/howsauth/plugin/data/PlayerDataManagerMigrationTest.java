@@ -18,7 +18,7 @@ import java.util.UUID;
  * 账号身份迁移（离线↔正版）回归。
  * <p>
  * 迁移是本插件最不可逆的操作：它删除一个 UUID 的记录、写入另一个，且必须落在同一事务里
- * （否则中途崩溃会两条记录皆失，等于账号丢失）。三条路径此前各自复制了一遍事务骨架，
+ * （否则中途崩溃会两条记录皆失，等于账号丢失）。两条路径此前各自复制了一遍事务骨架，
  * 现已收敛为 {@link PlayerDatabase#transactionalDeleteThenWrite}——本测试用于锁定收敛前后行为一致。
  * <p>
  * 断言分两层：
@@ -107,25 +107,28 @@ class PlayerDataManagerMigrationTest {
         assertNull(data.getPlayer(premiumUuid), "no premium record may be created");
     }
 
-    // ---------- 离线 → 正版（目标已有正版记录的保留式合并） ----------
+    // ---------- 离线 → 正版（目标已有正版记录的覆盖式迁移） ----------
 
     /**
-     * 目标正版 UUID 已有记录：保留原记录全部玩家数据，仅换绑名字与皮肤，离线号作废；
-     * 返回 false 让调用方跳过原版玩家数据迁移。
+     * 目标正版 UUID 已有记录：一律被离线号覆盖（新覆盖旧，无例外）——离线号的退出位置/2FA/游戏模式
+     * 接管该正版 UUID，原正版记录的旧名字被摘除索引，密码置空；返回 true 让调用方随迁原版玩家数据。
      */
     @Test
-    void migrateToPremiumPreservesAnExistingPremiumRecord() {
+    void migrateToPremiumOverwritesAnExistingPremiumRecord() {
         String offlineName = "OldOfflineName";
         String newName = "FreshPremiumName";
         UUID offlineUuid = offlineUuidOf(offlineName);
         UUID premiumUuid = UUID.randomUUID();
         PlayerDataManager data = env.data();
 
-        // 离线号：带自己的密码与退出位置（这些都不该覆盖到正版记录上）
+        // 离线号：带自己的密码/2FA/退出位置/游戏模式（这些将覆盖到原正版记录上）
         data.createPlayer(offlineUuid, "offline-pw", IP);
-        data.getPlayer(offlineUuid).logoutLocation("offline_world:9.0:9.0:9.0:0.0:0.0");
+        PlayerData offline = data.getPlayer(offlineUuid);
+        offline.totpSecret("OFFLINETOTP");
+        offline.logoutLocation("offline_world:9.0:9.0:9.0:0.0:0.0");
+        offline.gameMode("SURVIVAL");
         data.saveNow(offlineUuid);
-        // 目标正版记录：先以前一个名字存在，带密码/2FA/位置/游戏模式
+        // 目标正版记录：先以前一个名字存在，带密码/2FA/位置/游戏模式（都将被覆盖）
         data.createPremiumPlayer(premiumUuid, "PreviousPremiumName", IP, "{\"old\":true}");
         PlayerData premium = data.getPlayer(premiumUuid);
         premium.passwordHash("premium-pw");
@@ -134,22 +137,22 @@ class PlayerDataManagerMigrationTest {
         premium.gameMode("CREATIVE");
         data.saveNow(premiumUuid);
 
-        assertFalse(data.migrateToPremium(offlineUuid, premiumUuid, newName, IP, "{\"new\":true}"),
-                "preserving an existing premium record must report false (skip vanilla data migration)");
+        assertTrue(data.migrateToPremium(offlineUuid, premiumUuid, newName, IP, "{\"new\":true}"),
+                "overwriting an existing premium record must still report true (migrate vanilla data)");
 
-        // 内存态：离线号作废；原正版记录的密码/2FA/位置/游戏模式原样保留，仅名字与皮肤变化
+        // 内存态：离线号作废；该正版 UUID 被离线号数据整体覆盖
         assertFalse(data.hasAccount(offlineUuid), "the offline record must be dropped");
         PlayerData merged = data.getPlayer(premiumUuid);
-        assertNotNull(merged, "the existing premium record must survive");
+        assertNotNull(merged, "the overwritten premium record must exist");
         assertEquals(newName, merged.name(), "the name must be rebound");
         assertEquals("{\"new\":true}", merged.properties(), "properties must be replaced");
         assertTrue(merged.premium(), "the record must stay premium");
-        assertEquals("premium-pw", merged.passwordHash(), "the premium password must be preserved");
-        assertEquals("PREMIUMTOTP", merged.totpSecret(), "the premium 2FA secret must be preserved");
-        assertEquals("premium_world:5.0:70.0:6.0:90.0:10.0", merged.logoutLocation(),
-                "the premium logout location must be preserved");
-        assertEquals("CREATIVE", merged.gameMode(), "the premium game mode must be preserved");
-        // 名字索引：新名指向该记录，旧名（正版旧名与离线名）都不再可反查
+        assertEquals("", merged.passwordHash(), "premium accounts must have no password");
+        assertEquals("OFFLINETOTP", merged.totpSecret(), "the offline 2FA secret must overwrite the old one");
+        assertEquals("offline_world:9.0:9.0:9.0:0.0:0.0", merged.logoutLocation(),
+                "the offline logout location must overwrite the old one");
+        assertEquals("SURVIVAL", merged.gameMode(), "the offline game mode must overwrite the old one");
+        // 名字索引：新名指向该记录，原正版旧名（与离线名）都不再可反查
         assertEquals(premiumUuid, data.findUuidByName(newName), "the new name must resolve");
         assertNull(data.getByName("PreviousPremiumName"), "the previous premium name must be unindexed");
         assertNull(data.getByName(offlineName), "the offline name must never be indexed");
@@ -159,12 +162,12 @@ class PlayerDataManagerMigrationTest {
         try (PlayerDataManager restarted = new PlayerDataManager(env.plugin())) {
             assertFalse(restarted.hasAccount(offlineUuid), "the offline row must be deleted");
             PlayerData reloaded = restarted.getPlayer(premiumUuid);
-            assertNotNull(reloaded, "the preserved premium row must still exist");
+            assertNotNull(reloaded, "the overwritten premium row must exist");
             assertEquals(newName, reloaded.name(), "the rebound name must persist");
-            assertEquals("premium-pw", reloaded.passwordHash(), "the preserved password must not be overwritten");
-            assertEquals("PREMIUMTOTP", reloaded.totpSecret(), "the preserved 2FA secret must not be overwritten");
-            assertEquals("premium_world:5.0:70.0:6.0:90.0:10.0", reloaded.logoutLocation(),
-                    "the preserved location must not be overwritten");
+            assertEquals("", reloaded.passwordHash(), "the password must be cleared on overwrite");
+            assertEquals("OFFLINETOTP", reloaded.totpSecret(), "the offline 2FA secret must persist");
+            assertEquals("offline_world:9.0:9.0:9.0:0.0:0.0", reloaded.logoutLocation(),
+                    "the offline location must persist");
         }
     }
 

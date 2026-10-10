@@ -360,7 +360,7 @@ public final class PlayerDataManager implements AutoCloseable {
      * 将离线账号迁移到正版账号（离线账号升级为正版）。
      * 实现见 {@link AccountMigration}——本方法只做委托，保持对外 API 与返回值语义不变。
      *
-     * @return true 常规迁移完成，调用方应随迁原版玩家数据文件；false 未迁移（离线号不存在或已保留原正版记录）
+     * @return true 迁移完成，调用方应随迁原版玩家数据文件；false 离线号不存在
      */
     public boolean migrateToPremium(UUID offlineUuid, UUID premiumUuid, String name, String ip, String properties) {
         return migration.migrateToPremium(offlineUuid, premiumUuid, name, ip, properties);

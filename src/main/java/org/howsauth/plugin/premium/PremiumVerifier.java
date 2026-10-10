@@ -128,7 +128,7 @@ final class PremiumVerifier {
             // 同样迁移到正版 UUID 并保留退出位置等数据，避免与新建记录并存
             PlayerData pending = dataManager.getPlayer(OfflineUuids.of(username));
             if (pending != null && pending.premium()) {
-                // 目标正版 UUID 已有正版记录时保留原记录数据，跳过原版数据迁移（防止离线号文件覆盖正版身份数据）
+                // 迁移到正版 UUID 并覆盖目标（新覆盖旧，无例外），随后随迁原版数据文件（离线文件覆盖正版文件）
                 if (dataService.migrateToPremium(pending.uuid(), uuid, username, session.ip(), properties)) {
                     plugin.playerFiles().migrateAsync(pending.uuid(), uuid);
                 }

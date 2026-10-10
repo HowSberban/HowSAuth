@@ -91,9 +91,9 @@ public final class DataService {
     /**
      * 将离线账号迁移到正版账号（离线升级为正版）。
      * 透传 PlayerDataManager，保留退出位置等数据并标记 premium=1，密码置空（正版默认无密码）。
-     * 目标正版 UUID 已有正版记录时保留原记录全部玩家数据（密码/2FA/退出位置等），仅更新名字与皮肤，离线号作废。
+     * 目标正版 UUID 已有记录时一律被覆盖（新覆盖旧，无例外）。
      *
-     * @return true 常规迁移完成，调用方应随迁原版玩家数据文件；false 未迁移，调用方应跳过原版数据迁移
+     * @return true 迁移完成，调用方应随迁原版玩家数据文件；false 离线号不存在，调用方应跳过原版数据迁移
      */
     public boolean migrateToPremium(UUID offlineUuid, UUID premiumUuid, String name, String ip, String propertiesJson) {
         return dataManager.migrateToPremium(offlineUuid, premiumUuid, name, ip, propertiesJson);
