@@ -412,11 +412,6 @@ public final class PlayerDataManager implements AutoCloseable {
         players.put(uuid, data);
     }
 
-    /** 建立正版名字索引 */
-    void index(String name, UUID uuid) {
-        premiumNameIndex.put(name.toLowerCase(), uuid);
-    }
-
     /** 摘除正版名字索引 */
     void unindex(String name) {
         premiumNameIndex.remove(name.toLowerCase());

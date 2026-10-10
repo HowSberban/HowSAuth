@@ -84,6 +84,11 @@ class PlayerDatabaseUpsertTest {
                     + uuid + "'");
         }
 
+        // 前置断言：确认"额外字段"确实已写入，否则下面的失败无法区分
+        // 是被测代码重置了它，还是这一步本身没生效
+        assertEquals("preserved", readFutureFlag(uuid),
+                "precondition: the extra column must hold the value written by the test setup");
+
         // 同一 UUID 再次落库：不得把 future_flag 重置为默认值
         data.saveNow(uuid);
         data.awaitPendingWrites();
@@ -99,6 +104,18 @@ class PlayerDatabaseUpsertTest {
                 assertEquals("preserved", rs.getString("future_flag"),
                         "a column absent from the upsert statement must keep its value, "
                                 + "which REPLACE INTO would have silently reset");
+            }
+        }
+    }
+
+    /** 读取测试注入的额外列的当前值（列不存在时返回 null） */
+    private String readFutureFlag(UUID uuid) throws Exception {
+        try (Connection conn = openRawConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT future_flag FROM players WHERE uuid = ?")) {
+            ps.setString(1, uuid.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString("future_flag") : null;
             }
         }
     }
