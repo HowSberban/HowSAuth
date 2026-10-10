@@ -274,16 +274,14 @@ public final class AccountLifecycle {
 
     // ===== 正版账号降级为离线 =====
 
-    /**
-     * 切换降级标记：无标记则打上（返回 true），已有标记则取消（返回 false）。
-     * 重复执行 /downgrade 即取消已提交的降级请求
-     */
-    public boolean toggleDowngrade(UUID premiumUuid) {
-        if (!pendingDowngrade.add(premiumUuid)) {
-            pendingDowngrade.remove(premiumUuid);
-            return false;
-        }
-        return true;
+    /** 打上降级标记（返回 true 表示新标记，false 表示此前已标记） */
+    public boolean markDowngrade(UUID premiumUuid) {
+        return pendingDowngrade.add(premiumUuid);
+    }
+
+    /** 取消降级标记（返回 true 表示已移除，false 表示此前无标记） */
+    public boolean cancelDowngrade(UUID premiumUuid) {
+        return pendingDowngrade.remove(premiumUuid);
     }
 
     /** 检查正版账号是否有降级标记 */
