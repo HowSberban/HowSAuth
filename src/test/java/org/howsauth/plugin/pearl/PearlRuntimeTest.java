@@ -23,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
+import java.lang.reflect.Field;
 import java.util.UUID;
 
 /**
@@ -67,7 +68,7 @@ class PearlRuntimeTest {
 
         manager.onQuit(quitEvent(player));
 
-        assertEquals(1, MockBukkitHarness.mapSize(manager, "pending"),
+        assertEquals(1, storeMapSize(manager, "pending"),
                 "one absorbed snapshot must be stored for the quitting player");
         assertFalse(pearl.isValid(), "the absorbed flying pearl must be removed from the world");
         // onQuit 的 save() 是 100ms 合并异步写，测试无 tick；shutdown 触发同步落盘以验证持久化
@@ -89,7 +90,7 @@ class PearlRuntimeTest {
         TestEnderPearlMock second = newPearl(2, 64, 2, 0, 0, 0);
         player.trackEnderPearl(second);
         manager.onQuit(quitEvent(player));
-        assertEquals(1, MockBukkitHarness.mapSize(manager, "pending"), "both pearls belong to the same player");
+        assertEquals(1, storeMapSize(manager, "pending"), "both pearls belong to the same player");
 
         // 记录仍在 pending 中时同步落盘，验证持久化写入了该玩家 uuid 的两条快照
         shutdownManager();
@@ -99,7 +100,7 @@ class PearlRuntimeTest {
         manager.returnPearls(player);
 
         assertEquals(2, countEnderPearls(player), "item return must give back exactly the snapshot count");
-        assertEquals(0, MockBukkitHarness.mapSize(manager, "pending"), "pending must be cleared after returning");
+        assertEquals(0, storeMapSize(manager, "pending"), "pending must be cleared after returning");
     }
 
     /** entity 模式返还：按快照的世界/坐标/速度重新生成珍珠，并设置发射者 */
@@ -112,7 +113,7 @@ class PearlRuntimeTest {
         TestEnderPearlMock pearl = newPearl(x, y, z, vx, vy, vz);
         player.trackEnderPearl(pearl);
         manager.onQuit(quitEvent(player));
-        assertEquals(1, MockBukkitHarness.mapSize(manager, "pending"), "one absorbed snapshot must be stored");
+        assertEquals(1, storeMapSize(manager, "pending"), "one absorbed snapshot must be stored");
 
         manager.returnPearls(player);
 
@@ -126,7 +127,7 @@ class PearlRuntimeTest {
         assertEquals(vy, respawned.getVelocity().getY(), TOLERANCE, "respawned vy must match the snapshot");
         assertEquals(vz, respawned.getVelocity().getZ(), TOLERANCE, "respawned vz must match the snapshot");
         assertEquals(player, respawned.getShooter(), "the returning player must be the respawned shooter");
-        assertEquals(0, MockBukkitHarness.mapSize(manager, "pending"), "pending must be cleared after returning");
+        assertEquals(0, storeMapSize(manager, "pending"), "pending must be cleared after returning");
     }
 
     /** 离线玩家 entity 模式返还：无法生成实体，快照被回填 pending 并落盘 */
@@ -138,11 +139,11 @@ class PearlRuntimeTest {
         TestEnderPearlMock pearl = newPearl(3, 64, 3, 0, 0, 0);
         offline.trackEnderPearl(pearl);
         manager.onQuit(quitEvent(offline));
-        assertEquals(1, MockBukkitHarness.mapSize(manager, "pending"), "one absorbed snapshot must be stored");
+        assertEquals(1, storeMapSize(manager, "pending"), "one absorbed snapshot must be stored");
 
         manager.returnPearls(offline);
 
-        assertEquals(1, MockBukkitHarness.mapSize(manager, "pending"),
+        assertEquals(1, storeMapSize(manager, "pending"),
                 "an offline return must requeue the snapshot instead of spawning it");
         assertTrue(loadPearls().contains(offline.getUniqueId().toString()),
                 "the requeued snapshot must be persisted for the offline player");
@@ -156,16 +157,37 @@ class PearlRuntimeTest {
         TestEnderPearlMock pearl = newPearl(4, 64, 4, 0, 0, 0);
         player.trackEnderPearl(pearl);
         manager.onQuit(quitEvent(player));
-        assertEquals(1, MockBukkitHarness.mapSize(manager, "pending"), "one absorbed snapshot must be stored");
+        assertEquals(1, storeMapSize(manager, "pending"), "one absorbed snapshot must be stored");
 
         MockBukkitHarness.inject(PearlConfig.class, "enabled", env.config().pearl(), false);
         manager.refresh();
 
-        assertEquals(0, MockBukkitHarness.mapSize(manager, "pending"), "disabling must clear pending records");
-        assertEquals(0, MockBukkitHarness.mapSize(manager, "handledPearls"), "disabling must clear handled pearls");
+        assertEquals(0, storeMapSize(manager, "pending"), "disabling must clear pending records");
+        assertEquals(0, storeMapSize(manager, "handledPearls"), "disabling must clear handled pearls");
         assertFalse(loadPearls().contains(player.getUniqueId().toString()),
                 "pearls.dat must no longer contain the player uuid after clearing");
         assertTrue(loadPearls().getKeys(false).isEmpty(), "pearls.dat must contain no player records");
+    }
+
+    /** 返还开关关闭时，登录收尾仍须丢弃上次退出留下的待返还快照 */
+    @Test
+    void disabledPearlReturnDropsStalePendingSnapshotsOnLogin() {
+        PendingPearlManager manager = newManager("item");
+        TestPlayerMock player = env.addScheduledPlayer("pearl-disabled-return");
+        TestEnderPearlMock pearl = newPearl(5, 64, 5, 0, 0, 0);
+        player.trackEnderPearl(pearl);
+        manager.onQuit(quitEvent(player));
+        assertEquals(1, storeMapSize(manager, "pending"), "precondition: quit stored one pearl snapshot");
+
+        // 模拟珍珠刚被关闭但 refresh 尚未完成/未被调用的登录竞态
+        MockBukkitHarness.inject(PearlConfig.class, "enabled", env.config().pearl(), false);
+        manager.returnPearls(player);
+
+        assertEquals(0, storeMapSize(manager, "pending"),
+                "disabled pearl recovery must discard stale snapshots for the logging-in player");
+        assertFalse(loadPearls().contains(player.getUniqueId().toString()),
+                "discarded snapshots must not reappear after a later restart or re-enable");
+        assertEquals(0, countEnderPearls(player), "disabled recovery must not give pearl items");
     }
 
     /** 注入开关与返还模式后构造管理器（构造器会读配置并 refresh） */
@@ -182,6 +204,20 @@ class PearlRuntimeTest {
         if (manager != null && !managerShutdown) {
             managerShutdown = true;
             manager.shutdown();
+        }
+    }
+
+    /** 读存储层私有状态：管理器拆分后，pending/handledPearls 由 PendingPearlStore 持有。 */
+    private int storeMapSize(PendingPearlManager manager, String fieldName) {
+        try {
+            Field storeField = PendingPearlManager.class.getDeclaredField("store");
+            storeField.setAccessible(true);
+            Object store = storeField.get(manager);
+            Field mapField = store.getClass().getDeclaredField(fieldName);
+            mapField.setAccessible(true);
+            return ((java.util.Map<?, ?>) mapField.get(store)).size();
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("failed to read pearl store field: " + fieldName, e);
         }
     }
 

@@ -2,12 +2,10 @@ package org.howsauth.plugin.pearl;
 
 import com.destroystokyo.paper.event.entity.EntityAddToWorldEvent;
 import com.destroystokyo.paper.event.entity.EntityRemoveFromWorldEvent;
-import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.EnderPearl;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -22,47 +20,24 @@ import org.howsauth.plugin.pearl.SnapshotCodec.PearlSnapshot;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.I18n;
 
-import java.io.File;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /** 暂存离线或尚未通过认证玩家的末影珍珠。 */
 public final class PendingPearlManager implements Listener {
 
     private final HowSAuth plugin;
     private final OwnerResolver ownerResolver;
-    private final File file;
-    private final File tempFile;
-    private final Map<UUID, List<PearlSnapshot>> pending = new ConcurrentHashMap<>();
-    private final Map<UUID, Long> handledPearls = new ConcurrentHashMap<>();
-    private final AtomicBoolean saveScheduled = new AtomicBoolean();
-    private final AtomicBoolean saveRequested = new AtomicBoolean();
-    private static final long HANDLED_PEARL_TTL_MILLIS = TimeUnit.SECONDS.toMillis(30);
-    private static final long SAVE_COALESCE_DELAY_MILLIS = 100;
-    // 已处理珍珠记录的清理周期（秒）：去重标记过期后必须移除，否则 Map 无界增长
-    private static final int CLEANUP_PERIOD_SECONDS = 30;
+    private final PendingPearlStore store;
     private volatile boolean lastPearlEnabled;
     private volatile boolean pearlStateInitialized;
-    private volatile boolean shuttingDown;
-    private volatile ScheduledTask saveTask;
-    private final ScheduledTask handledCleanupTask;
 
     public PendingPearlManager(HowSAuth plugin) {
         this.plugin = plugin;
         this.ownerResolver = new OwnerResolver(plugin);
-        this.file = new File(plugin.getDataFolder(), "pearls.dat");
-        this.tempFile = new File(plugin.getDataFolder(), "pearls.dat.tmp");
-        load();
-        handledCleanupTask = Bukkit.getAsyncScheduler().runAtFixedRate(plugin,
-                task -> cleanupHandledPearls(), CLEANUP_PERIOD_SECONDS, CLEANUP_PERIOD_SECONDS, TimeUnit.SECONDS);
+        this.store = new PendingPearlStore(plugin);
         refresh();
     }
 
@@ -73,9 +48,9 @@ public final class PendingPearlManager implements Listener {
         lastPearlEnabled = enabled;
         pearlStateInitialized = true;
         if (!enabled && (!initialized || wasEnabled)) {
-            int cleared = pending.size();
-            pending.clear();
-            saveSync();
+            int cleared = store.pendingSize();
+            store.clearPending();
+            store.saveSync();
             if (Debug.on()) {
                 Debug.log("pearl", "pearl storage disabled: cleared %s pending records", cleared);
             }
@@ -91,14 +66,14 @@ public final class PendingPearlManager implements Listener {
             absorb(pearl, uuid);
             changed = true;
         }
-        if (changed) save();
+        if (changed) store.save();
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onEntityRemoveFromWorld(EntityRemoveFromWorldEvent event) {
         if (!(event.getEntity() instanceof EnderPearl pearl)) return;
         if (!plugin.config().pearl().enabled()) return;
-        if (handledPearls.remove(pearl.getUniqueId()) != null) return;
+        if (store.consumeHandled(pearl.getUniqueId())) return;
         UUID owner = ownerResolver.resolve(pearl);
         if (owner == null) {
             ownerResolver.warnResolution(pearl);
@@ -106,7 +81,7 @@ public final class PendingPearlManager implements Listener {
         }
         if (ownerResolver.isAuthenticated(owner)) return;
         absorb(pearl, owner);
-        save();
+        store.save();
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -126,7 +101,7 @@ public final class PendingPearlManager implements Listener {
         }
         if (ownerResolver.isAuthenticated(owner)) return;
         absorb(pearl, owner);
-        save();
+        store.save();
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
@@ -141,30 +116,31 @@ public final class PendingPearlManager implements Listener {
         if (world == null) return;
         PearlSnapshot credit = new PearlSnapshot(UUID.randomUUID(), false, world.getName(),
                 to.getX(), to.getY(), to.getZ(), 0, 0, 0);
-        pending.merge(player.getUniqueId(), List.of(credit), (oldList, newList) -> {
-            List<PearlSnapshot> merged = new ArrayList<>(oldList);
-            merged.addAll(newList);
-            return List.copyOf(merged);
-        });
-        save();
+        store.mergeOne(player.getUniqueId(), credit);
+        store.save();
     }
 
     public void returnPearls(Player player) {
-        if (!plugin.config().pearl().enabled()) return;
+        if (!plugin.config().pearl().enabled()) {
+            // 功能关闭时不返还旧快照，也不保留到下次重新开启，避免过期状态被再次恢复。
+            List<PearlSnapshot> discarded = store.remove(player.getUniqueId());
+            if (discarded != null && !discarded.isEmpty()) store.saveSync();
+            return;
+        }
         boolean absorbed = false;
         for (EnderPearl pearl : copyFlyingPearls(player)) {
             absorb(pearl, player.getUniqueId());
             absorbed = true;
         }
-        List<PearlSnapshot> snapshots = pending.remove(player.getUniqueId());
+        List<PearlSnapshot> snapshots = store.remove(player.getUniqueId());
         if (snapshots == null || snapshots.isEmpty()) {
-            if (absorbed) saveSync();
+            if (absorbed) store.saveSync();
             if (absorbed && Debug.on()) {
                 Debug.log("pearl", "return pearls to %s: only absorbed flying pearls", player.getName());
             }
             return;
         }
-        saveSync();
+        store.saveSync();
         if (!plugin.config().pearl().returnEntity()) {
             if (Debug.on()) {
                 Debug.log("pearl", "return %s pearls to %s as items", snapshots.size(), player.getName());
@@ -182,12 +158,8 @@ public final class PendingPearlManager implements Listener {
             Location loc = new Location(world, snapshot.x(), snapshot.y(), snapshot.z());
             Bukkit.getRegionScheduler().run(plugin, loc, task -> {
                 if (!player.isOnline()) {
-                    pending.merge(player.getUniqueId(), List.of(snapshot), (oldList, newList) -> {
-                        List<PearlSnapshot> merged = new ArrayList<>(oldList);
-                        merged.addAll(newList);
-                        return List.copyOf(merged);
-                    });
-                    saveSync();
+                    store.mergeOne(player.getUniqueId(), snapshot);
+                    store.saveSync();
                     return;
                 }
                 world.spawn(loc, EnderPearl.class, p -> {
@@ -212,7 +184,7 @@ public final class PendingPearlManager implements Listener {
         UUID pearlId = pearl.getUniqueId();
         PearlSnapshot snapshot = new PearlSnapshot(pearlId, false, worldName,
                 loc.getX(), loc.getY(), loc.getZ(), vel.getX(), vel.getY(), vel.getZ());
-        pending.compute(owner, (uuid, oldList) -> {
+        store.update(owner, (uuid, oldList) -> {
             List<PearlSnapshot> updated = oldList == null
                     ? new ArrayList<>() : new ArrayList<>(oldList);
             for (int i = 0; i < updated.size(); i++) {
@@ -231,9 +203,8 @@ public final class PendingPearlManager implements Listener {
         });
         removePearl(pearl);
         if (Debug.on()) {
-            List<PearlSnapshot> stored = pending.get(owner);
             Debug.log("pearl", "absorb pearl for %s (stored %s)", Debug.shortId(owner),
-                    stored == null ? 0 : stored.size());
+                    store.pendingCount(owner));
         }
     }
 
@@ -258,32 +229,23 @@ public final class PendingPearlManager implements Listener {
         boolean scheduled = pearl.getScheduler().runDelayed(plugin, task -> {
             if (!pearl.isValid()) return;
             markAndRemove(pearl, pearlId);
-        }, () -> handledPearls.remove(pearlId), 1) != null;
-        if (!scheduled) handledPearls.remove(pearlId);
-    }
-
-    private void cleanupHandledPearls() {
-        long cutoff = System.currentTimeMillis() - HANDLED_PEARL_TTL_MILLIS;
-        handledPearls.forEach((pearlId, handledAt) -> {
-            if (handledAt <= cutoff) {
-                handledPearls.remove(pearlId, handledAt);
-            }
-        });
+        }, () -> store.clearHandled(pearlId), 1) != null;
+        if (!scheduled) store.clearHandled(pearlId);
     }
 
     private void markAndRemove(EnderPearl pearl, UUID pearlId) {
-        handledPearls.put(pearlId, System.currentTimeMillis());
+        store.markHandled(pearlId);
         try {
             pearl.remove();
         } catch (RuntimeException exception) {
-            handledPearls.remove(pearlId);
+            store.clearHandled(pearlId);
             throw exception;
         }
     }
 
     private void clearHandledLater(EnderPearl pearl, UUID pearlId) {
-        pearl.getScheduler().runDelayed(plugin, task -> handledPearls.remove(pearlId),
-                () -> handledPearls.remove(pearlId), 1);
+        pearl.getScheduler().runDelayed(plugin, task -> store.clearHandled(pearlId),
+                () -> store.clearHandled(pearlId), 1);
     }
 
     private void giveItems(Player player, int count) {
@@ -295,78 +257,8 @@ public final class PendingPearlManager implements Listener {
         player.sendMessage(I18n.msg("pearl.returned", player, count));
     }
 
-    private void load() {
-        if (!file.exists()) return;
-        try {
-            YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
-            for (String key : yaml.getKeys(false)) {
-                try {
-                    UUID uuid = UUID.fromString(key);
-                    List<PearlSnapshot> snapshots = new ArrayList<>();
-                    for (Map<?, ?> map : yaml.getMapList(key)) {
-                        PearlSnapshot snapshot = SnapshotCodec.parseSnapshot(map);
-                        if (snapshot != null) snapshots.add(snapshot);
-                    }
-                    if (!snapshots.isEmpty()) pending.put(uuid, List.copyOf(snapshots));
-                } catch (IllegalArgumentException ignored) {
-                    // 忽略格式错误的玩家记录。
-                }
-            }
-        } catch (Exception e) {
-            plugin.getLogger().severe(I18n.get("log.pearl_persist_failed", e.getMessage()));
-        }
-    }
-
-    /**
-     * 解析快照（包内可见：供单测使用）；world 缺失或非字符串时返回 null
-     * 快照列表转 YAML 映射（包内可见：供单测使用）
-     */
-    private void save() {
-        if (shuttingDown) return;
-        saveRequested.set(true);
-        if (!saveScheduled.compareAndSet(false, true)) return;
-        saveTask = Bukkit.getAsyncScheduler().runDelayed(plugin,
-                task -> flushScheduledSaves(), SAVE_COALESCE_DELAY_MILLIS, TimeUnit.MILLISECONDS);
-    }
-
-    private void flushScheduledSaves() {
-        try {
-            do {
-                saveRequested.set(false);
-                saveSync();
-            } while (!shuttingDown && saveRequested.get());
-        } finally {
-            saveTask = null;
-            saveScheduled.set(false);
-            if (!shuttingDown && saveRequested.get()) save();
-        }
-    }
-
+    /** 关闭存储任务并同步落盘，供插件停用阶段调用。 */
     public void shutdown() {
-        shuttingDown = true;
-        ScheduledTask pendingSave = saveTask;
-        if (pendingSave != null) pendingSave.cancel();
-        handledCleanupTask.cancel();
-        saveRequested.set(false);
-        saveScheduled.set(false);
-        saveSync();
-    }
-
-    private synchronized void saveSync() {
-        YamlConfiguration yaml = new YamlConfiguration();
-        for (Map.Entry<UUID, List<PearlSnapshot>> entry : pending.entrySet()) {
-            yaml.set(entry.getKey().toString(), SnapshotCodec.serializeSnapshots(entry.getValue()));
-        }
-        try {
-            yaml.save(tempFile);
-            try {
-                Files.move(tempFile.toPath(), file.toPath(),
-                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(tempFile.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            }
-        } catch (Exception e) {
-            plugin.getLogger().warning(I18n.get("log.pearl_persist_failed", e.getMessage()));
-        }
+        store.shutdown();
     }
 }
