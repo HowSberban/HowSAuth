@@ -27,6 +27,9 @@ final class PendingPearlStore {
     private static final long SAVE_COALESCE_DELAY_MILLIS = 100;
     private static final int CLEANUP_PERIOD_SECONDS = 30;
 
+    /** 合成快照（取消传送时补发的 credit）的标识；与真实珍珠 UUID 区分，便于吸收时替换而非追加。 */
+    static final UUID SYNTHETIC_PEARL_ID = new UUID(0L, 0L);
+
     private final HowSAuth plugin;
     private final File file;
     private final File tempFile;
@@ -56,6 +59,47 @@ final class PendingPearlStore {
         return snapshots == null ? 0 : snapshots.size();
     }
 
+    /**
+     * 该玩家是否已有快照落在给定位置附近（真实珍珠或合成 credit 均算）。
+     * <p>
+     * 用于控制合成 credit：同一次投掷的移除事件或前一个传送事件已经记过，就不应再补一条。
+     */
+    boolean hasSnapshotNear(UUID owner, String world, double x, double y, double z, double tolerance) {
+        List<PearlSnapshot> snapshots = pending.get(owner);
+        if (snapshots == null) return false;
+        double maxDistanceSq = tolerance * tolerance;
+        for (PearlSnapshot snapshot : snapshots) {
+            if (snapshot.world() == null || !snapshot.world().equals(world)) continue;
+            if (distanceSq(snapshot, x, y, z) <= maxDistanceSq) return true;
+        }
+        return false;
+    }
+
+    /** 同一世界、给定半径内最近的合成 credit 下标；没有时返回 -1。 */
+    int nearestSyntheticIndex(List<PearlSnapshot> snapshots, String world,
+                              double x, double y, double z, double tolerance) {
+        int nearest = -1;
+        double nearestDistance = tolerance * tolerance;
+        for (int i = 0; i < snapshots.size(); i++) {
+            PearlSnapshot snapshot = snapshots.get(i);
+            if (snapshot.world() == null || !snapshot.world().equals(world)) continue;
+            if (!SYNTHETIC_PEARL_ID.equals(snapshot.pearlId())) continue;
+            double distance = distanceSq(snapshot, x, y, z);
+            if (distance <= nearestDistance) {
+                nearestDistance = distance;
+                nearest = i;
+            }
+        }
+        return nearest;
+    }
+
+    private static double distanceSq(PearlSnapshot snapshot, double x, double y, double z) {
+        double dx = snapshot.x() - x;
+        double dy = snapshot.y() - y;
+        double dz = snapshot.z() - z;
+        return dx * dx + dy * dy + dz * dz;
+    }
+
     void clearPending() {
         pending.clear();
     }
@@ -64,16 +108,12 @@ final class PendingPearlStore {
         return pending.remove(owner);
     }
 
-    void merge(UUID owner, List<PearlSnapshot> snapshots) {
-        pending.merge(owner, snapshots, (oldList, newList) -> {
+    void mergeOne(UUID owner, PearlSnapshot snapshot) {
+        pending.merge(owner, List.of(snapshot), (oldList, newList) -> {
             List<PearlSnapshot> merged = new ArrayList<>(oldList);
             merged.addAll(newList);
             return List.copyOf(merged);
         });
-    }
-
-    void mergeOne(UUID owner, PearlSnapshot snapshot) {
-        merge(owner, List.of(snapshot));
     }
 
     void update(UUID owner, BiFunction<UUID, List<PearlSnapshot>, List<PearlSnapshot>> updater) {

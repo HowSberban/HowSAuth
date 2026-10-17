@@ -25,8 +25,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** 暂存离线或尚未通过认证玩家的末影珍珠。 */
+/**
+ * 保管末影珍珠：玩家退出时吸收在飞珍珠，未认证玩家在世界中产生/落地的珍珠也会被吸收。
+ * 成功登录后按配置以物品或实体形式返还。
+ */
 public final class PendingPearlManager implements Listener {
+
+    private static final double TELEPORT_CREDIT_MATCH_RADIUS = 2.0;
 
     private final HowSAuth plugin;
     private final OwnerResolver ownerResolver;
@@ -60,13 +65,7 @@ public final class PendingPearlManager implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(PlayerQuitEvent event) {
         if (!plugin.config().pearl().enabled()) return;
-        UUID uuid = event.getPlayer().getUniqueId();
-        boolean changed = false;
-        for (EnderPearl pearl : copyFlyingPearls(event.getPlayer())) {
-            absorb(pearl, uuid);
-            changed = true;
-        }
-        if (changed) store.save();
+        if (absorbFlyingPearls(event.getPlayer())) store.save();
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -74,14 +73,7 @@ public final class PendingPearlManager implements Listener {
         if (!(event.getEntity() instanceof EnderPearl pearl)) return;
         if (!plugin.config().pearl().enabled()) return;
         if (store.consumeHandled(pearl.getUniqueId())) return;
-        UUID owner = ownerResolver.resolve(pearl);
-        if (owner == null) {
-            ownerResolver.warnResolution(pearl);
-            return;
-        }
-        if (ownerResolver.isAuthenticated(owner)) return;
-        absorb(pearl, owner);
-        store.save();
+        absorbIfUnauthenticated(pearl, ownerResolver.resolve(pearl));
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -90,18 +82,10 @@ public final class PendingPearlManager implements Listener {
         UUID owner = ownerResolver.resolve(pearl);
         if (!plugin.config().pearl().enabled()) {
             // 开关关闭时仍清理未登录玩家的恢复珍珠，但不能干扰已登录玩家的正常投掷。
-            if (owner == null) return;
-            if (ownerResolver.isAuthenticated(owner)) return;
-            removePearl(pearl);
+            if (owner != null && !ownerResolver.isAuthenticated(owner)) removePearl(pearl);
             return;
         }
-        if (owner == null) {
-            ownerResolver.warnResolution(pearl);
-            return;
-        }
-        if (ownerResolver.isAuthenticated(owner)) return;
-        absorb(pearl, owner);
-        store.save();
+        absorbIfUnauthenticated(pearl, owner);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
@@ -114,7 +98,12 @@ public final class PendingPearlManager implements Listener {
         Location to = event.getTo();
         World world = to.getWorld();
         if (world == null) return;
-        PearlSnapshot credit = new PearlSnapshot(UUID.randomUUID(), false, world.getName(),
+        // 同一次投掷的移除事件（或前一个传送事件）已经记过快照；再补 credit 会重复返还
+        if (store.hasSnapshotNear(player.getUniqueId(), world.getName(),
+                to.getX(), to.getY(), to.getZ(), TELEPORT_CREDIT_MATCH_RADIUS)) {
+            return;
+        }
+        PearlSnapshot credit = new PearlSnapshot(PendingPearlStore.SYNTHETIC_PEARL_ID, false, world.getName(),
                 to.getX(), to.getY(), to.getZ(), 0, 0, 0);
         store.mergeOne(player.getUniqueId(), credit);
         store.save();
@@ -127,11 +116,7 @@ public final class PendingPearlManager implements Listener {
             if (discarded != null && !discarded.isEmpty()) store.saveSync();
             return;
         }
-        boolean absorbed = false;
-        for (EnderPearl pearl : copyFlyingPearls(player)) {
-            absorb(pearl, player.getUniqueId());
-            absorbed = true;
-        }
+        boolean absorbed = absorbFlyingPearls(player);
         List<PearlSnapshot> snapshots = store.remove(player.getUniqueId());
         if (snapshots == null || snapshots.isEmpty()) {
             if (absorbed) store.saveSync();
@@ -175,6 +160,27 @@ public final class PendingPearlManager implements Listener {
         }
     }
 
+    /** 吸收玩家当前所有在飞珍珠；返回是否至少处理了一颗。 */
+    private boolean absorbFlyingPearls(Player player) {
+        boolean absorbed = false;
+        for (EnderPearl pearl : copyFlyingPearls(player)) {
+            absorb(pearl, player.getUniqueId());
+            absorbed = true;
+        }
+        return absorbed;
+    }
+
+    /** 未认证归属者的珍珠进入/离开世界时统一吸收；已认证或无法解析时跳过。 */
+    private void absorbIfUnauthenticated(EnderPearl pearl, UUID owner) {
+        if (owner == null) {
+            ownerResolver.warnResolution(pearl);
+            return;
+        }
+        if (ownerResolver.isAuthenticated(owner)) return;
+        absorb(pearl, owner);
+        store.save();
+    }
+
     private void absorb(EnderPearl pearl, UUID owner) {
         Location loc = pearl.getLocation();
         World world = loc.getWorld();
@@ -187,18 +193,12 @@ public final class PendingPearlManager implements Listener {
         store.update(owner, (uuid, oldList) -> {
             List<PearlSnapshot> updated = oldList == null
                     ? new ArrayList<>() : new ArrayList<>(oldList);
-            for (int i = 0; i < updated.size(); i++) {
-                PearlSnapshot existing = updated.get(i);
-                if (pearlId.equals(existing.pearlId())) {
-                    updated.set(i, snapshot);
-                    return List.copyOf(updated);
-                }
-                if (existing.legacy() && SnapshotCodec.sameState(existing, worldName, loc, vel)) {
-                    updated.set(i, snapshot);
-                    return List.copyOf(updated);
-                }
+            int index = indexToReplace(updated, pearlId, worldName, loc, vel);
+            if (index >= 0) {
+                updated.set(index, snapshot);
+            } else {
+                updated.add(snapshot);
             }
-            updated.add(snapshot);
             return List.copyOf(updated);
         });
         removePearl(pearl);
@@ -206,6 +206,21 @@ public final class PendingPearlManager implements Listener {
             Debug.log("pearl", "absorb pearl for %s (stored %s)", Debug.shortId(owner),
                     store.pendingCount(owner));
         }
+    }
+
+    /**
+     * 查找应被这颗真实珍珠替换的快照下标：同 UUID、legacy 同状态，或匹配半径内最近的 synthetic credit。
+     * 返回 -1 表示没有可替换项。
+     */
+    private int indexToReplace(List<PearlSnapshot> snapshots, UUID pearlId, String worldName,
+                               Location loc, Vector vel) {
+        for (int i = 0; i < snapshots.size(); i++) {
+            PearlSnapshot existing = snapshots.get(i);
+            if (pearlId.equals(existing.pearlId())) return i;
+            if (existing.legacy() && SnapshotCodec.sameState(existing, worldName, loc, vel)) return i;
+        }
+        return store.nearestSyntheticIndex(snapshots, worldName,
+                loc.getX(), loc.getY(), loc.getZ(), TELEPORT_CREDIT_MATCH_RADIUS);
     }
 
     @SuppressWarnings("UnstableApiUsage")

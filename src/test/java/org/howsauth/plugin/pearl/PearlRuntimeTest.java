@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.destroystokyo.paper.event.entity.EntityAddToWorldEvent;
+import com.destroystokyo.paper.event.entity.EntityRemoveFromWorldEvent;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -11,6 +13,7 @@ import org.bukkit.World;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.EnderPearl;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Vector;
 import org.howsauth.plugin.HowSAuth;
@@ -29,9 +32,14 @@ import java.util.UUID;
 /**
  * 末影珍珠保管模块的运行时行为：退出吸收、返还（物品/实体两种模式）、离线回填与开关关闭清理。
  * <p>
- * 用 {@link MockBukkitHarness} 组装真实插件/配置链路，并直接调用 {@code onQuit}（不注册监听器），
+ * 用 {@link MockBukkitHarness} 组装真实插件/配置链路，并直接调用事件处理器（不注册监听器），
  * 依赖 harness 补齐的 Player#getEnderPearls、RegionScheduler、isOwnedByCurrentRegion 与实体调度器。
+ * <p>
+ * {@code EntityAddToWorldEvent}、{@code EntityRemoveFromWorldEvent}、{@code PlayerTeleportEvent}
+ * 与 {@code PlayerQuitEvent} 的构造器标记为 {@code @ApiStatus.Internal}；测试必须自行构造事件，
+ * 故在类级别抑制该不稳定 API 警告。
  */
+@SuppressWarnings("UnstableApiUsage")
 class PearlRuntimeTest {
 
     private static final double TOLERANCE = 0.01;
@@ -83,12 +91,8 @@ class PearlRuntimeTest {
     void returnAsItemsGivesPearlsAndClearsPending() {
         PendingPearlManager manager = newManager("item");
         TestPlayerMock player = env.addScheduledPlayer("pearl-items");
-        // 先制造 1 条记录，再补一颗使数量=2
-        TestEnderPearlMock first = newPearl(1, 64, 1, 0, 0, 0);
-        player.trackEnderPearl(first);
-        manager.onQuit(quitEvent(player));
-        TestEnderPearlMock second = newPearl(2, 64, 2, 0, 0, 0);
-        player.trackEnderPearl(second);
+        player.trackEnderPearl(newPearl(1, 64, 1, 0, 0, 0));
+        player.trackEnderPearl(newPearl(2, 64, 2, 0, 0, 0));
         manager.onQuit(quitEvent(player));
         assertEquals(1, storeMapSize(manager, "pending"), "both pearls belong to the same player");
 
@@ -190,6 +194,124 @@ class PearlRuntimeTest {
         assertEquals(0, countEnderPearls(player), "disabled recovery must not give pearl items");
     }
 
+    /** 未登录玩家的珍珠传送被取消，并记一条 credit 供登录后返还 */
+    @Test
+    void pearlTeleportForUnauthenticatedPlayerIsCancelledAndCredited() {
+        PendingPearlManager manager = newManager("item");
+        TestPlayerMock player = env.addScheduledPlayer("pearl-teleport");
+        PlayerTeleportEvent event = pearlTeleport(player, 8, 64, 8);
+
+        manager.onPearlTeleport(event);
+        // 同一颗珍珠重复触发传送事件时，不应重复补 credit
+        manager.onPearlTeleport(event);
+
+        assertTrue(event.isCancelled(), "an unauthenticated pearl teleport must be cancelled");
+        assertEquals(1, storeSnapshotCount(manager, player.getUniqueId()),
+                "the cancelled teleport must leave exactly one credit snapshot");
+    }
+
+    /** 已登录玩家的珍珠传送不受干预，也不写 credit */
+    @Test
+    void pearlTeleportForAuthenticatedPlayerIsLeftAlone() throws Exception {
+        PendingPearlManager manager = newManager("item");
+        TestPlayerMock player = env.addScheduledPlayer("pearl-teleport-auth");
+        markLoggedIn(player.getUniqueId());
+        PlayerTeleportEvent event = pearlTeleport(player, 8, 64, 8);
+
+        manager.onPearlTeleport(event);
+
+        assertFalse(event.isCancelled(), "an authenticated player's pearl teleport must be allowed");
+        assertEquals(0, storeMapSize(manager, "pending"),
+                "no credit must be stored for an authenticated player");
+    }
+
+    /** credit 与实际珍珠移除不得重复计数：一次投掷只能对应一颗返还珍珠 */
+    @Test
+    void creditAndRealPearlRemovalDoNotDoubleCount() {
+        PendingPearlManager manager = newManager("item");
+        TestPlayerMock player = env.addScheduledPlayer("pearl-credit-dup");
+        PlayerTeleportEvent teleport = pearlTeleport(player, 8, 64, 8);
+        manager.onPearlTeleport(teleport);
+        assertEquals(1, storeMapSize(manager, "pending"), "precondition: the teleport credit is stored");
+
+        TestEnderPearlMock pearl = newOwnedPearl(player, 8, 64, 8, 0, 0, 0);
+        manager.onEntityRemoveFromWorld(new EntityRemoveFromWorldEvent(pearl, world()));
+
+        assertEquals(1, storeSnapshotCount(manager, player.getUniqueId()),
+                "one thrown pearl must yield exactly one snapshot even if both events are observed");
+    }
+
+    /** 相反事件顺序：真实珍珠先被吸收，随后的传送事件不得再补 credit */
+    @Test
+    void realPearlRemovalBeforeTeleportDoesNotDoubleCount() {
+        PendingPearlManager manager = newManager("item");
+        TestPlayerMock player = env.addScheduledPlayer("pearl-credit-dup-reverse");
+        TestEnderPearlMock pearl = newOwnedPearl(player, 8, 64, 8, 0, 0, 0);
+        manager.onEntityRemoveFromWorld(new EntityRemoveFromWorldEvent(pearl, world()));
+        assertEquals(1, storeSnapshotCount(manager, player.getUniqueId()),
+                "precondition: the real pearl was absorbed first");
+
+        PlayerTeleportEvent teleport = pearlTeleport(player, 8, 64, 8);
+        manager.onPearlTeleport(teleport);
+
+        assertEquals(1, storeSnapshotCount(manager, player.getUniqueId()),
+                "the teleport event must not add a credit when the real pearl is already stored");
+    }
+
+    /** 未登录玩家的珍珠进入世界：被吸收并移除 */
+    @Test
+    void entityAddForUnauthenticatedPlayerAbsorbsPearl() {
+        PendingPearlManager manager = newManager("item");
+        TestPlayerMock player = env.addScheduledPlayer("pearl-add");
+        TestEnderPearlMock pearl = newOwnedPearl(player, 6, 64, 6, 0, 0, 0);
+
+        manager.onEntityAddToWorld(new EntityAddToWorldEvent(pearl, world()));
+
+        assertFalse(pearl.isValid(), "an unauthenticated player's pearl must be removed from the world");
+        assertEquals(1, storeMapSize(manager, "pending"), "the pearl must be stored for later return");
+    }
+
+    /** 已登录玩家的珍珠进入世界：不干预 */
+    @Test
+    void entityAddForAuthenticatedPlayerLeavesPearlAlone() throws Exception {
+        PendingPearlManager manager = newManager("item");
+        TestPlayerMock player = env.addScheduledPlayer("pearl-add-auth");
+        markLoggedIn(player.getUniqueId());
+        TestEnderPearlMock pearl = newOwnedPearl(player, 6, 64, 6, 0, 0, 0);
+
+        manager.onEntityAddToWorld(new EntityAddToWorldEvent(pearl, world()));
+
+        assertTrue(pearl.isValid(), "an authenticated player's pearl must be left alone");
+        assertEquals(0, storeMapSize(manager, "pending"), "no snapshot must be stored for an authenticated player");
+    }
+
+    /** 关闭状态下，未登录玩家的珍珠仍被清理但不再入库 */
+    @Test
+    void entityAddWhenDisabledRemovesUnauthenticatedPearl() {
+        PendingPearlManager manager = newManager("item");
+        TestPlayerMock player = env.addScheduledPlayer("pearl-add-disabled");
+        TestEnderPearlMock pearl = newOwnedPearl(player, 7, 64, 7, 0, 0, 0);
+        MockBukkitHarness.inject(PearlConfig.class, "enabled", env.config().pearl(), false);
+
+        manager.onEntityAddToWorld(new EntityAddToWorldEvent(pearl, world()));
+
+        assertFalse(pearl.isValid(), "a disabled feature must still remove unauthenticated pearls");
+        assertEquals(0, storeMapSize(manager, "pending"), "a disabled feature must not store new snapshots");
+    }
+
+    /** 已标记 handled 的珍珠移除事件不得再次入库 */
+    @Test
+    void handledPearlRemovalIsNotAbsorbedAgain() {
+        PendingPearlManager manager = newManager("item");
+        TestPlayerMock player = env.addScheduledPlayer("pearl-handled");
+        TestEnderPearlMock pearl = newOwnedPearl(player, 9, 64, 9, 0, 0, 0);
+        storeMarkHandled(manager, pearl.getUniqueId());
+
+        manager.onEntityRemoveFromWorld(new EntityRemoveFromWorldEvent(pearl, world()));
+
+        assertEquals(0, storeMapSize(manager, "pending"), "a handled removal must not be stored again");
+    }
+
     /** 注入开关与返还模式后构造管理器（构造器会读配置并 refresh） */
     private PendingPearlManager newManager(String returnMode) {
         MockBukkitHarness.inject(PearlConfig.class, "enabled", env.config().pearl(), true);
@@ -207,18 +329,43 @@ class PearlRuntimeTest {
         }
     }
 
-    /** 读存储层私有状态：管理器拆分后，pending/handledPearls 由 PendingPearlStore 持有。 */
+    /** 取管理器持有的存储层实例（store 字段为私有）。 */
+    private PendingPearlStore storeOf(PendingPearlManager manager) {
+        try {
+            Field field = PendingPearlManager.class.getDeclaredField("store");
+            field.setAccessible(true);
+            return (PendingPearlStore) field.get(manager);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("failed to read pearl store", e);
+        }
+    }
+
+    /** 读存储层的私有 Map 字段大小（pending / handledPearls）。 */
     private int storeMapSize(PendingPearlManager manager, String fieldName) {
         try {
-            Field storeField = PendingPearlManager.class.getDeclaredField("store");
-            storeField.setAccessible(true);
-            Object store = storeField.get(manager);
-            Field mapField = store.getClass().getDeclaredField(fieldName);
+            Field mapField = PendingPearlStore.class.getDeclaredField(fieldName);
             mapField.setAccessible(true);
-            return ((java.util.Map<?, ?>) mapField.get(store)).size();
+            return ((java.util.Map<?, ?>) mapField.get(storeOf(manager))).size();
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("failed to read pearl store field: " + fieldName, e);
         }
+    }
+
+    /** 某玩家在 pending 中的快照数量（同一玩家的多条快照只占一个键）。 */
+    private int storeSnapshotCount(PendingPearlManager manager, UUID owner) {
+        return storeOf(manager).pendingCount(owner);
+    }
+
+    /** 标记登录态：SessionStore.markLoggedIn 为包内方法，测试经反射调用。 */
+    private void markLoggedIn(UUID uuid) throws Exception {
+        var method = env.sessions().getClass().getDeclaredMethod("markLoggedIn", UUID.class);
+        method.setAccessible(true);
+        method.invoke(env.sessions(), uuid);
+    }
+
+    /** 标记珍珠已被处理：验证移除事件不会重复入库。 */
+    private void storeMarkHandled(PendingPearlManager manager, UUID pearlId) {
+        storeOf(manager).markHandled(pearlId);
     }
 
     private World world() {
@@ -233,9 +380,22 @@ class PearlRuntimeTest {
         return pearl;
     }
 
-    // PlayerQuitEvent 构造器全部标记为 @ApiStatus.Internal（测试需自行构造事件并直接调用 onQuit），
-    // 3 参 Component 版是唯一未被标记待删除的
-    @SuppressWarnings("UnstableApiUsage")
+    /** 造一颗归属指定玩家的珍珠。 */
+    @SuppressWarnings("SameParameterValue")
+    private TestEnderPearlMock newOwnedPearl(TestPlayerMock player,
+                                             double x, double y, double z,
+                                             double vx, double vy, double vz) {
+        TestEnderPearlMock pearl = newPearl(x, y, z, vx, vy, vz);
+        pearl.setShooter(player);
+        return pearl;
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    private PlayerTeleportEvent pearlTeleport(TestPlayerMock player, double x, double y, double z) {
+        return new PlayerTeleportEvent(player, new Location(world(), 0, 64, 0),
+                new Location(world(), x, y, z), PlayerTeleportEvent.TeleportCause.ENDER_PEARL);
+    }
+
     private PlayerQuitEvent quitEvent(TestPlayerMock player) {
         return new PlayerQuitEvent(player,
                 Component.text(player.getName() + " left the game"), PlayerQuitEvent.QuitReason.DISCONNECTED);
