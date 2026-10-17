@@ -26,7 +26,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -79,11 +84,11 @@ class PearlRuntimeTest {
         assertEquals(1, storeMapSize(manager, "pending"),
                 "one absorbed snapshot must be stored for the quitting player");
         assertFalse(pearl.isValid(), "the absorbed flying pearl must be removed from the world");
-        // onQuit 的 save() 是 100ms 合并异步写，测试无 tick；shutdown 触发同步落盘以验证持久化
+        assertTrue(pearlsFile(player.getUniqueId()).exists(),
+                "onQuit must write the player's binary record before returning");
+        assertEquals(1, loadPearls(player.getUniqueId()).size(),
+                "the binary record must contain the absorbed snapshot");
         shutdownManager();
-        assertTrue(pearlsFile().exists(), "pearls.dat must be written after the record is absorbed");
-        assertTrue(loadPearls().contains(player.getUniqueId().toString()),
-                "pearls.dat must contain the owning player uuid as a top-level key");
     }
 
     /** item 模式返还：按快照数量发放末影珍珠物品并清空 pending */
@@ -96,10 +101,10 @@ class PearlRuntimeTest {
         manager.onQuit(quitEvent(player));
         assertEquals(1, storeMapSize(manager, "pending"), "both pearls belong to the same player");
 
-        // 记录仍在 pending 中时同步落盘，验证持久化写入了该玩家 uuid 的两条快照
+        // 记录仍在 pending 中时同步落盘，验证持久化写入了该玩家的两条快照
         shutdownManager();
-        assertEquals(2, loadPearls().getMapList(player.getUniqueId().toString()).size(),
-                "pearls.dat must persist both absorbed snapshots for the player");
+        assertEquals(2, loadPearls(player.getUniqueId()).size(),
+                "the binary record must persist both absorbed snapshots for the player");
 
         manager.returnPearls(player);
 
@@ -149,7 +154,7 @@ class PearlRuntimeTest {
 
         assertEquals(1, storeMapSize(manager, "pending"),
                 "an offline return must requeue the snapshot instead of spawning it");
-        assertTrue(loadPearls().contains(offline.getUniqueId().toString()),
+        assertEquals(1, loadPearls(offline.getUniqueId()).size(),
                 "the requeued snapshot must be persisted for the offline player");
     }
 
@@ -168,9 +173,9 @@ class PearlRuntimeTest {
 
         assertEquals(0, storeMapSize(manager, "pending"), "disabling must clear pending records");
         assertEquals(0, storeMapSize(manager, "handledPearls"), "disabling must clear handled pearls");
-        assertFalse(loadPearls().contains(player.getUniqueId().toString()),
-                "pearls.dat must no longer contain the player uuid after clearing");
-        assertTrue(loadPearls().getKeys(false).isEmpty(), "pearls.dat must contain no player records");
+        assertFalse(pearlsFile(player.getUniqueId()).exists(),
+                "the player's binary record must be deleted after clearing");
+        assertEquals(0, recordFileCount(), "the pearls directory must contain no player records");
     }
 
     /** 返还开关关闭时，登录收尾仍须丢弃上次退出留下的待返还快照 */
@@ -189,7 +194,7 @@ class PearlRuntimeTest {
 
         assertEquals(0, storeMapSize(manager, "pending"),
                 "disabled pearl recovery must discard stale snapshots for the logging-in player");
-        assertFalse(loadPearls().contains(player.getUniqueId().toString()),
+        assertFalse(pearlsFile(player.getUniqueId()).exists(),
                 "discarded snapshots must not reappear after a later restart or re-enable");
         assertEquals(0, countEnderPearls(player), "disabled recovery must not give pearl items");
     }
@@ -312,6 +317,95 @@ class PearlRuntimeTest {
         assertEquals(0, storeMapSize(manager, "pending"), "a handled removal must not be stored again");
     }
 
+    /** 记录写入磁盘后，新实例（模拟重启）应能重新载入同一批快照 */
+    @Test
+    void recordSurvivesRestart() {
+        PendingPearlManager first = newManager("item");
+        TestPlayerMock player = env.addScheduledPlayer("pearl-restart");
+        player.trackEnderPearl(newPearl(11, 64, 11, 0.1, 0.2, 0.3));
+        first.onQuit(quitEvent(player));
+        assertEquals(1, storeSnapshotCount(first, player.getUniqueId()), "precondition: one snapshot stored");
+        shutdownManager();
+
+        PendingPearlManager reloaded = newManager("item");
+
+        assertEquals(1, storeSnapshotCount(reloaded, player.getUniqueId()),
+                "a new store instance must reload the persisted snapshot");
+    }
+
+    /** 旧版 pearls.dat 启动时迁移为二进制记录，并把原文件改名为 .migrated */
+    @Test
+    void migratesLegacyYamlFile() throws Exception {
+        TestPlayerMock player = env.addScheduledPlayer("pearl-legacy");
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("world", world().getName());
+        snapshot.put("x", 1.5);
+        snapshot.put("y", 64.0);
+        snapshot.put("z", -2.5);
+        snapshot.put("vx", 0.1);
+        snapshot.put("vy", 0.2);
+        snapshot.put("vz", 0.3);
+        YamlConfiguration legacy = new YamlConfiguration();
+        legacy.set(player.getUniqueId().toString(), List.of(snapshot));
+        File legacyFile = new File(env.plugin().getDataFolder(), "pearls.dat");
+        legacy.save(legacyFile);
+
+        PendingPearlManager manager = newManager("item");
+
+        assertEquals(1, storeSnapshotCount(manager, player.getUniqueId()),
+                "the legacy record must be imported into memory");
+        assertEquals(1, loadPearls(player.getUniqueId()).size(),
+                "the legacy record must be rewritten as a binary player record");
+        assertFalse(legacyFile.exists(), "the legacy YAML file must be moved aside after a successful import");
+        assertTrue(new File(env.plugin().getDataFolder(), "pearls.dat.migrated").exists(),
+                "the legacy YAML file must be preserved as a backup");
+    }
+
+    /** 旧版文件里的非法条目应被跳过，合法玩家的记录仍要迁移成功 */
+    @Test
+    void migrationSkipsInvalidLegacyEntries() throws Exception {
+        TestPlayerMock validPlayer = env.addScheduledPlayer("pearl-legacy-valid");
+        UUID invalidOwner = UUID.randomUUID();
+        Map<String, Object> validSnapshot = new LinkedHashMap<>();
+        validSnapshot.put("world", world().getName());
+        validSnapshot.put("x", 1.0);
+        validSnapshot.put("y", 64.0);
+        validSnapshot.put("z", 1.0);
+        Map<String, Object> invalidSnapshot = new LinkedHashMap<>();
+        invalidSnapshot.put("world", world().getName());
+        invalidSnapshot.put("x", Double.NaN);
+        YamlConfiguration legacy = new YamlConfiguration();
+        legacy.set(validPlayer.getUniqueId().toString(), List.of(validSnapshot));
+        legacy.set(invalidOwner.toString(), List.of(invalidSnapshot));
+        File legacyFile = new File(env.plugin().getDataFolder(), "pearls.dat");
+        legacy.save(legacyFile);
+
+        PendingPearlManager manager = newManager("item");
+
+        assertEquals(1, storeSnapshotCount(manager, validPlayer.getUniqueId()),
+                "the valid legacy player must be migrated");
+        assertEquals(0, storeSnapshotCount(manager, invalidOwner),
+                "an invalid legacy snapshot must not enter memory");
+        assertTrue(pearlsFile(validPlayer.getUniqueId()).exists(),
+                "the valid legacy player must have a binary record");
+        assertFalse(pearlsFile(invalidOwner).exists(),
+                "an invalid legacy player must not get a binary record");
+    }
+
+    /** 损坏的记录文件应被隔离，而不是让启动失败或静默当成有效坐标 */
+    @Test
+    void corruptRecordIsQuarantined() throws Exception {
+        UUID owner = UUID.randomUUID();
+        Files.createDirectories(pearlsDirectory().toPath());
+        Files.write(pearlsFile(owner).toPath(), new byte[]{1, 2, 3});
+
+        PendingPearlManager manager = newManager("item");
+
+        assertEquals(0, storeSnapshotCount(manager, owner), "a corrupt record must not be loaded");
+        assertTrue(new File(pearlsDirectory(), owner + ".bin.corrupt").exists(),
+                "a corrupt record must be quarantined for inspection");
+    }
+
     /** 注入开关与返还模式后构造管理器（构造器会读配置并 refresh） */
     private PendingPearlManager newManager(String returnMode) {
         MockBukkitHarness.inject(PearlConfig.class, "enabled", env.config().pearl(), true);
@@ -401,12 +495,26 @@ class PearlRuntimeTest {
                 Component.text(player.getName() + " left the game"), PlayerQuitEvent.QuitReason.DISCONNECTED);
     }
 
-    private File pearlsFile() {
-        return new File(env.plugin().getDataFolder(), "pearls.dat");
+    private File pearlsDirectory() {
+        return new File(env.plugin().getDataFolder(), "pearls");
     }
 
-    private YamlConfiguration loadPearls() {
-        return YamlConfiguration.loadConfiguration(pearlsFile());
+    private File pearlsFile(UUID owner) {
+        return new File(pearlsDirectory(), owner + ".bin");
+    }
+
+    private List<SnapshotCodec.PearlSnapshot> loadPearls(UUID owner) {
+        File file = pearlsFile(owner);
+        try {
+            return SnapshotCodec.decode(Files.readAllBytes(file.toPath()));
+        } catch (IOException e) {
+            throw new AssertionError("failed to read pearl record " + file, e);
+        }
+    }
+
+    private int recordFileCount() {
+        File[] files = pearlsDirectory().listFiles((dir, name) -> name.endsWith(".bin"));
+        return files == null ? 0 : files.length;
     }
 
     private int countEnderPearls(TestPlayerMock player) {

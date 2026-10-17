@@ -65,7 +65,8 @@ public final class PendingPearlManager implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(PlayerQuitEvent event) {
         if (!plugin.config().pearl().enabled()) return;
-        if (absorbFlyingPearls(event.getPlayer())) store.save();
+        // 退出是珍珠恢复最关键的一次写入：只同步落盘该玩家的小文件，避免 100ms 合并窗口内崩溃丢记录。
+        if (absorbFlyingPearls(event.getPlayer())) store.saveSync(event.getPlayer().getUniqueId());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -113,19 +114,19 @@ public final class PendingPearlManager implements Listener {
         if (!plugin.config().pearl().enabled()) {
             // 功能关闭时不返还旧快照，也不保留到下次重新开启，避免过期状态被再次恢复。
             List<PearlSnapshot> discarded = store.remove(player.getUniqueId());
-            if (discarded != null && !discarded.isEmpty()) store.saveSync();
+            if (discarded != null && !discarded.isEmpty()) store.saveSync(player.getUniqueId());
             return;
         }
         boolean absorbed = absorbFlyingPearls(player);
         List<PearlSnapshot> snapshots = store.remove(player.getUniqueId());
         if (snapshots == null || snapshots.isEmpty()) {
-            if (absorbed) store.saveSync();
+            if (absorbed) store.saveSync(player.getUniqueId());
             if (absorbed && Debug.on()) {
                 Debug.log("pearl", "return pearls to %s: only absorbed flying pearls", player.getName());
             }
             return;
         }
-        store.saveSync();
+        store.saveSync(player.getUniqueId());
         if (!plugin.config().pearl().returnEntity()) {
             if (Debug.on()) {
                 Debug.log("pearl", "return %s pearls to %s as items", snapshots.size(), player.getName());
@@ -144,7 +145,7 @@ public final class PendingPearlManager implements Listener {
             Bukkit.getRegionScheduler().run(plugin, loc, task -> {
                 if (!player.isOnline()) {
                     store.mergeOne(player.getUniqueId(), snapshot);
-                    store.saveSync();
+                    store.saveSync(player.getUniqueId());
                     return;
                 }
                 world.spawn(loc, EnderPearl.class, p -> {

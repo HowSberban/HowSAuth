@@ -130,3 +130,7 @@ players.db-wal
 players.db-shm
 identifier.sqlite
 
+# 珍珠暂存记录（运行时生成，每个玩家一个二进制文件）
+pearls/
+pearls.dat
+pearls.dat.migrated

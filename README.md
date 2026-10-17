@@ -52,6 +52,7 @@
 > 珍珠恢复可能会出现非预期行为。  
 > Folia 上的珍珠处理很迷，插件无法保证珍珠会被正确捕捉或防止玩家未登录时被珍珠传送。  
 > 推荐使用 Folia 的第三方 fork，例如 [Canvas](https://canvasmc.io/downloads/canvas).
+> 珍珠暂存记录按玩家保存在 `plugins/HowSAuth/pearls/<uuid>.bin`（带校验的二进制格式）；首次启动会自动导入旧版 `pearls.dat`，并备份为 `pearls.dat.migrated`。
 - **正版验证**：在离线服务端上通过 `PacketEvents` 验证正版玩家，同时使用正版 UUID
 - **正版回退**：在正版验证失败时，允许已注册正版玩家使用密码登录
 > [!caution]

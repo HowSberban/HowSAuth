@@ -1,71 +1,133 @@
 package org.howsauth.plugin.pearl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.howsauth.plugin.pearl.SnapshotCodec.PearlSnapshot;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * 末影珍珠快照编解码：pearls.dat 的读写契约。
+ * 末影珍珠快照编解码：二进制记录格式与旧版 YAML 迁移解析的读写契约。
  * <p>
- * 覆盖新格式（带 pearlId）、旧格式（legacy 标记、无 pearlId）、损坏数据（非法 UUID、缺 world）
- * 与缺省数值，保证升级/降级与人工改坏文件后不会抛异常或产生错误快照。
+ * 覆盖完整往返、旧格式兼容、截断/魔数/版本/CRC 损坏以及非法字段。
  */
 class SnapshotCodecTest {
 
     private static final String WORLD = "world";
     private static final UUID PEARL_ID = UUID.fromString("11111111-2222-3333-4444-555555555555");
 
-    /** 新格式快照：写出 pearlId，不写 legacy 标记 */
+    /** 新格式快照（带 pearlId）应在二进制往返后逐字段一致 */
     @Test
-    void serializesModernSnapshotWithPearlId() {
-        PearlSnapshot snapshot = new PearlSnapshot(PEARL_ID, false, WORLD, 1.5, 64.0, -2.25, 0.1, 0.2, 0.3);
+    void roundTripsModernSnapshot() throws IOException {
+        PearlSnapshot original = new PearlSnapshot(PEARL_ID, false, WORLD, 1.5, 64.0, -2.25, 0.1, 0.2, 0.3);
 
-        List<Map<String, Object>> maps = SnapshotCodec.serializeSnapshots(List.of(snapshot));
+        List<PearlSnapshot> decoded = SnapshotCodec.decode(SnapshotCodec.encode(List.of(original)));
 
-        assertEquals(1, maps.size(), "exactly 1 snapshot record must be written");
-        Map<String, Object> map = maps.getFirst();
-        assertEquals(PEARL_ID.toString(), map.get("pearlId"), "the pearl id must be written");
-        assertEquals(WORLD, map.get("world"), "the world name must be written");
-        assertEquals(1.5, map.get("x"), "x must be written");
-        assertEquals(64.0, map.get("y"), "y must be written");
-        assertEquals(-2.25, map.get("z"), "z must be written");
-        assertEquals(0.1, map.get("vx"), "vx must be written");
-        assertEquals(0.2, map.get("vy"), "vy must be written");
-        assertEquals(0.3, map.get("vz"), "vz must be written");
-        assertFalse(map.containsKey("legacy"), "a modern snapshot must not write the legacy flag");
+        assertEquals(List.of(original), decoded, "round-tripped snapshot must equal the original");
     }
 
-    /** 旧格式快照（无编号）：写出 legacy 标记，不写 pearlId */
+    /** 旧格式快照（无编号、legacy 标记）同样可往返 */
     @Test
-    void serializesLegacySnapshotWithLegacyFlag() {
-        PearlSnapshot snapshot = new PearlSnapshot(null, true, WORLD, 0, 0, 0, 0, 0, 0);
+    void roundTripsLegacySnapshot() throws IOException {
+        PearlSnapshot original = new PearlSnapshot(null, true, WORLD, 0, 0, 0, 0, 0, 0);
 
-        Map<String, Object> map = SnapshotCodec.serializeSnapshots(List.of(snapshot)).getFirst();
+        List<PearlSnapshot> decoded = SnapshotCodec.decode(SnapshotCodec.encode(List.of(original)));
 
-        assertFalse(map.containsKey("pearlId"), "a legacy entry without an id must not write pearlId");
-        assertEquals(Boolean.TRUE, map.get("legacy"), "a legacy entry must write the legacy flag");
+        assertEquals(List.of(original), decoded, "legacy snapshot must survive the binary round trip");
     }
 
-    /** 序列化再解析应还原全部字段（往返一致） */
+    /** 多条快照保持输入顺序，每个世界独立保存 */
     @Test
-    void roundTripPreservesEveryField() {
-        PearlSnapshot original = new PearlSnapshot(PEARL_ID, false, WORLD, 12.5, 70.25, -30.75, -0.5, 0.25, 1.5);
+    void preservesOrderAndMultipleWorlds() throws IOException {
+        UUID secondId = UUID.fromString("99999999-8888-7777-6666-555555555555");
+        List<PearlSnapshot> snapshots = new ArrayList<>();
+        snapshots.add(new PearlSnapshot(PEARL_ID, false, WORLD, 1, 1, 1, 0, 0, 0));
+        snapshots.add(new PearlSnapshot(secondId, false, "nether", 2, 2, 2, 0, 0, 0));
 
-        PearlSnapshot parsed = SnapshotCodec.parseSnapshot(
-                SnapshotCodec.serializeSnapshots(List.of(original)).getFirst());
+        List<PearlSnapshot> decoded = SnapshotCodec.decode(SnapshotCodec.encode(snapshots));
 
-        assertEquals(original, parsed, "round-tripped snapshot must equal the original (record equality)");
+        assertEquals(snapshots, decoded, "order and world names must be preserved");
+    }
+
+    /** 空记录可编码/解码（正常流程不会写空文件，但解码端不应因此崩溃） */
+    @Test
+    void roundTripsEmptyRecord() throws IOException {
+        assertTrue(SnapshotCodec.decode(SnapshotCodec.encode(List.of())).isEmpty(),
+                "an empty record must decode to an empty list");
+    }
+
+    /** 截断的记录必须报错，而不是返回半条数据 */
+    @Test
+    void rejectsTruncatedRecord() {
+        byte[] record = SnapshotCodec.encode(List.of(
+                new PearlSnapshot(PEARL_ID, false, WORLD, 1, 2, 3, 0, 0, 0)));
+        byte[] truncated = Arrays.copyOf(record, record.length - 1);
+
+        assertThrows(IOException.class, () -> SnapshotCodec.decode(truncated),
+                "a truncated record must be rejected");
+    }
+
+    /** 魔数不符必须报错 */
+    @Test
+    void rejectsBadMagic() {
+        byte[] record = SnapshotCodec.encode(List.of(
+                new PearlSnapshot(PEARL_ID, false, WORLD, 1, 2, 3, 0, 0, 0)));
+        record[0] ^= 0x01;
+
+        assertThrows(IOException.class, () -> SnapshotCodec.decode(record),
+                "a record with the wrong magic must be rejected");
+    }
+
+    /** 版本号不支持必须报错（为未来升级留出明确失败点，而不是误读） */
+    @Test
+    void rejectsUnsupportedVersion() {
+        byte[] record = SnapshotCodec.encode(List.of(
+                new PearlSnapshot(PEARL_ID, false, WORLD, 1, 2, 3, 0, 0, 0)));
+        record[5] = 2;
+
+        assertThrows(IOException.class, () -> SnapshotCodec.decode(record),
+                "an unknown format version must be rejected");
+    }
+
+    /** CRC 不匹配必须报错，避免磁盘位翻转被当成有效坐标 */
+    @Test
+    void rejectsBadChecksum() {
+        byte[] record = SnapshotCodec.encode(List.of(
+                new PearlSnapshot(PEARL_ID, false, WORLD, 1, 2, 3, 0, 0, 0)));
+        record[record.length - 1] ^= 0x01;
+
+        assertThrows(IOException.class, () -> SnapshotCodec.decode(record),
+                "a checksum mismatch must be rejected");
+    }
+
+    /** 非有限坐标不允许写入 */
+    @Test
+    void rejectsNonFiniteCoordinate() {
+        PearlSnapshot snapshot = new PearlSnapshot(PEARL_ID, false, WORLD,
+                Double.NaN, 2, 3, 0, 0, 0);
+
+        assertThrows(IllegalArgumentException.class, () -> SnapshotCodec.encode(List.of(snapshot)),
+                "NaN coordinates must be rejected before writing");
+    }
+
+    /** 缺少世界名不允许写入 */
+    @Test
+    void rejectsSnapshotWithoutWorld() {
+        PearlSnapshot snapshot = new PearlSnapshot(PEARL_ID, false, null, 1, 2, 3, 0, 0, 0);
+
+        assertThrows(IllegalArgumentException.class, () -> SnapshotCodec.encode(List.of(snapshot)),
+                "a snapshot without a world must be rejected");
     }
 
     /** 旧格式记录（无 pearlId 字段）解析为 legacy 快照 */
@@ -139,19 +201,35 @@ class SnapshotCodecTest {
         assertTrue(parsed.legacy(), "an entry with neither id nor flag must be treated as legacy");
     }
 
-    /** 多条快照按输入顺序逐一写出 */
+    /** 旧 YAML 中的 NaN/Infinity 不得进入内存：否则迁移永远写不出去，返还时还会污染世界坐标 */
     @Test
-    void serializesMultipleSnapshotsInOrder() {
-        UUID secondId = UUID.fromString("99999999-8888-7777-6666-555555555555");
+    void rejectsLegacyEntryWithNonFiniteCoordinate() {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("world", WORLD);
+        map.put("x", Double.NaN);
+
+        assertNull(SnapshotCodec.parseSnapshot(map), "NaN coordinates must be discarded during migration");
+    }
+
+    /** 空世界名或超出编码上限的世界名同样丢弃，避免迁移卡在永远失败的记录上 */
+    @Test
+    void rejectsLegacyEntryWithEmptyOrOversizedWorld() {
+        Map<String, Object> empty = new LinkedHashMap<>();
+        empty.put("world", "");
+        assertNull(SnapshotCodec.parseSnapshot(empty), "an empty world must be discarded");
+
+        Map<String, Object> oversized = new LinkedHashMap<>();
+        oversized.put("world", "w".repeat(300));
+        assertNull(SnapshotCodec.parseSnapshot(oversized), "an oversized world must be discarded");
+    }
+
+    /** 编码入口显式拒绝 null，避免只在写入深层抛 NPE */
+    @Test
+    void rejectsNullSnapshot() {
         List<PearlSnapshot> snapshots = new ArrayList<>();
-        snapshots.add(new PearlSnapshot(PEARL_ID, false, WORLD, 1, 1, 1, 0, 0, 0));
-        snapshots.add(new PearlSnapshot(secondId, false, "nether", 2, 2, 2, 0, 0, 0));
+        snapshots.add(null);
 
-        List<Map<String, Object>> maps = SnapshotCodec.serializeSnapshots(snapshots);
-
-        assertEquals(2, maps.size(), "exactly 2 records must be written");
-        assertEquals(PEARL_ID.toString(), maps.getFirst().get("pearlId"), "order must match the input order");
-        assertEquals(secondId.toString(), maps.get(1).get("pearlId"), "order must match the input order");
-        assertEquals("nether", maps.get(1).get("world"), "each world must be preserved");
+        assertThrows(IllegalArgumentException.class, () -> SnapshotCodec.encode(snapshots),
+                "a null snapshot must be rejected");
     }
 }
