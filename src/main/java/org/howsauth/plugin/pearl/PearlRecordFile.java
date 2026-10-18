@@ -25,9 +25,9 @@ import java.util.UUID;
  */
 final class PearlRecordFile {
 
-    static final String RECORD_SUFFIX = ".bin";
-    static final String TEMP_SUFFIX = ".tmp";
-    static final String CORRUPT_SUFFIX = ".corrupt";
+    private static final String RECORD_SUFFIX = ".bin";
+    private static final String TEMP_SUFFIX = ".tmp";
+    private static final String CORRUPT_SUFFIX = ".corrupt";
 
     /** Windows 不允许用 FileChannel 打开目录做 fsync；其余平台尽力把 rename/delete 的目录项也刷盘。 */
     private static final boolean DIRECTORY_FORCE_SUPPORTED =
@@ -43,7 +43,7 @@ final class PearlRecordFile {
         return directory;
     }
 
-    Path fileOf(UUID owner) {
+    private Path fileOf(UUID owner) {
         return directory.resolve(owner + RECORD_SUFFIX);
     }
 

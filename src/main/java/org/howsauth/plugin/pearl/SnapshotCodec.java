@@ -13,7 +13,6 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.zip.CRC32;
 
@@ -31,15 +30,15 @@ import java.util.zip.CRC32;
  * payload 为 {@code int count} 加若干快照记录。每个快照记录使用固定顺序的
  * flags/pearlId/world/六个 double，不依赖反射，也不会因为字段名拼写变化而静默丢数据。
  * <p>
- * 解析旧版 {@code pearls.dat}（YAML 映射）的方法保留在 {@link #parseSnapshot(Map)}，
- * 仅用于启动时的一次性迁移；运行期只读写二进制记录。
+ * 旧版 {@code pearls.dat}（YAML 映射）的解析在 {@link LegacyPearlImport}，仅用于启动迁移；
+ * 本类运行期只处理二进制记录。
  * <p>
  * 编解码方法为包内可见：供 {@code SnapshotCodecTest} 直接单测。
  */
 final class SnapshotCodec {
 
     /** 单玩家最多保存的快照数：超过视为损坏文件，避免恶意/异常数据无限占用内存 */
-    static final int MAX_SNAPSHOTS = 1024;
+    private static final int MAX_SNAPSHOTS = 1024;
     /** 单条记录允许的最大字节数（含头），用于拒绝明显损坏或异常膨胀的文件 */
     static final int MAX_RECORD_BYTES = 1024 * 1024;
 
@@ -145,13 +144,10 @@ final class SnapshotCodec {
 
     private static void writeSnapshot(DataOutputStream out, PearlSnapshot snapshot) throws IOException {
         String world = snapshot.world();
-        if (world == null) {
-            throw new IllegalArgumentException("pearl snapshot world must not be null");
+        if (!isValidWorld(world)) {
+            throw new IllegalArgumentException("invalid pearl snapshot world");
         }
         byte[] worldBytes = world.getBytes(StandardCharsets.UTF_8);
-        if (worldBytes.length == 0 || worldBytes.length > MAX_WORLD_BYTES) {
-            throw new IllegalArgumentException("invalid pearl snapshot world length: " + worldBytes.length);
-        }
         int flags = (snapshot.pearlId() != null ? FLAG_PEARL_ID : 0)
                 | (snapshot.legacy() || snapshot.pearlId() == null ? FLAG_LEGACY : 0);
         out.writeByte(flags);
@@ -195,6 +191,12 @@ final class SnapshotCodec {
         return new PearlSnapshot(pearlId, legacy, world, x, y, z, vx, vy, vz);
     }
 
+    /** 世界名必须非空且长度在二进制格式可表达的范围内（编码/旧 YAML 迁移共用） */
+    static boolean isValidWorld(String world) {
+        if (world == null || world.isEmpty()) return false;
+        return world.getBytes(StandardCharsets.UTF_8).length <= MAX_WORLD_BYTES;
+    }
+
     private static void writeFinite(DataOutputStream out, double value) throws IOException {
         if (!Double.isFinite(value)) {
             throw new IllegalArgumentException("pearl snapshot coordinate must be finite: " + value);
@@ -214,43 +216,6 @@ final class SnapshotCodec {
         CRC32 crc = new CRC32();
         crc.update(payload, 0, payload.length);
         return (int) crc.getValue();
-    }
-
-    /**
-     * 解析旧版 YAML 快照（包内可见：仅迁移与单测使用）。
-     * <p>
-     * 与新的二进制解码一样拒绝无法落盘的数据：world 缺失/为空/过长、坐标非有限值时返回 null。
-     * 这些记录若留在内存里，迁移会永远失败，返还时还可能把 NaN 坐标传给世界生成逻辑。
-     */
-    static PearlSnapshot parseSnapshot(Map<?, ?> map) {
-        Object worldValue = map.get("world");
-        if (!(worldValue instanceof String world)) return null;
-        if (world.isEmpty() || world.getBytes(StandardCharsets.UTF_8).length > MAX_WORLD_BYTES) return null;
-        double x = number(map.get("x"));
-        double y = number(map.get("y"));
-        double z = number(map.get("z"));
-        double vx = number(map.get("vx"));
-        double vy = number(map.get("vy"));
-        double vz = number(map.get("vz"));
-        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)
-                || !Double.isFinite(vx) || !Double.isFinite(vy) || !Double.isFinite(vz)) {
-            return null;
-        }
-        Object pearlIdValue = map.get("pearlId");
-        UUID pearlId = null;
-        boolean legacy = pearlIdValue == null || Boolean.TRUE.equals(map.get("legacy"));
-        if (pearlIdValue instanceof String id) {
-            try {
-                pearlId = UUID.fromString(id);
-            } catch (IllegalArgumentException ignored) {
-                legacy = true;
-            }
-        }
-        return new PearlSnapshot(pearlId, legacy, world, x, y, z, vx, vy, vz);
-    }
-
-    private static double number(Object value) {
-        return value instanceof Number n ? n.doubleValue() : 0;
     }
 
     /** 快照是否描述同一世界下的同一位置与速度（带 {@link #STATE_MATCH_EPSILON} 容差） */

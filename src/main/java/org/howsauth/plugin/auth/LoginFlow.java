@@ -2,8 +2,6 @@ package org.howsauth.plugin.auth;
 
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.HowSAuth;
-import org.howsauth.plugin.I18n;
-import org.howsauth.plugin.api.event.HSAuthLoginEvent;
 import org.howsauth.plugin.api.event.HSAuthRegisterEvent;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
@@ -36,6 +34,8 @@ public final class LoginFlow {
     private final FailProtection failProtection;
     private final TwoFactorAuth twoFactor;
     private final AccountLifecycle accounts;
+    private final LoginSuccessHandler loginSuccess;
+    private final PasswordFlow passwordFlow;
 
     LoginFlow(HowSAuth plugin, PlayerDataManager dataManager, ConfigManager configManager,
               AuthEvents events, SessionStore sessions, FailProtection failProtection,
@@ -48,6 +48,10 @@ public final class LoginFlow {
         this.failProtection = failProtection;
         this.twoFactor = twoFactor;
         this.accounts = accounts;
+        this.loginSuccess = new LoginSuccessHandler(plugin, dataManager, configManager,
+                sessions, failProtection, twoFactor, accounts);
+        this.passwordFlow = new PasswordFlow(plugin, dataManager, configManager,
+                sessions, twoFactor, accounts);
     }
 
     /**
@@ -86,8 +90,8 @@ public final class LoginFlow {
                     return;
                 }
                 sessions.markLoginSession(uuid, ip);
-                markLoggedIn(uuid);
-                onLoginSuccess(player);
+                loginSuccess.markLoggedIn(uuid);
+                loginSuccess.onLoginSuccess(player);
                 events.register(uuid, player);
                 if (Debug.on()) {
                     Debug.log("auth", "register %s: success", player.getName());
@@ -141,7 +145,7 @@ public final class LoginFlow {
                         twoFactor.markPending(uuid);
                         done.accept(AuthManager.LoginResult.NEED_2FA, 0L);
                     } else {
-                        completeLogin(player, snapshot);
+                        loginSuccess.completeLogin(player, snapshot);
                         done.accept(AuthManager.LoginResult.SUCCESS, 0L);
                     }
                 }
@@ -220,70 +224,9 @@ public final class LoginFlow {
         return PasswordHash.hashPassword(password, configured, configManager.password().bcryptCost());
     }
 
-    /** 登录成功收尾：IP 变动提醒、更新 IP/时间/活跃时间、标记登录、恢复模式、触发事件（须在玩家区域线程调用） */
-    private void completeLogin(Player player, PlayerData data) {
-        UUID uuid = player.getUniqueId();
-        String oldIp = data.ip();
-        String ip = SessionStore.clientIp(player);
-        long now = PlayerDataManager.nowEpochSeconds();
-        data.lastLogin(now);
-        if (ip != null) {
-            data.ip(ip);
-        }
-        data.lastActive(now);
-        dataManager.save(uuid);
-
-        // 建立登录会话：同 IP 短时间内重连免输密码（固定窗口，命中不续期）
-        sessions.markLoginSession(uuid, ip);
-        markLoggedIn(uuid);
-        // 正版回退玩家密码登录成功，清除回退标记（下次正版验证成功即自动免密）
-        accounts.clearPremiumFallback(uuid);
-        onLoginSuccess(player);
-        Bukkit.getPluginManager().callEvent(new HSAuthLoginEvent(player));
-        // IP 变动提醒：上次登录 IP 存在且与本次不同（首次登录无旧 IP 可比，不提醒）。
-        // 正版玩家身份经 Mojang 验证，仅在开启正版验证回退（正版可能转密码登录）时才提醒；
-        // 离线（非正版）玩家始终提醒。
-        if (configManager.login().ipChangeNotifyEnabled()
-                && oldIp != null && !oldIp.isEmpty()
-                && !oldIp.equals(data.ip())
-                && notifyIpChangeFor(data)) {
-            player.sendMessage(I18n.msg("login.ip_changed", player, oldIp));
-        }
-    }
-
-    /** IP 变动提醒是否适用于该玩家：离线玩家提醒；正版玩家仅当正版验证回退开启时提醒（fallback 仅约束正版） */
-    private boolean notifyIpChangeFor(PlayerData data) {
-        return !data.premium() || configManager.premium().passwordFallbackEnabled();
-    }
-
-    /**
-     * 移除密码，转为无密码账户。
-     * 离线账户已绑定 2FA 时验证码作为确认凭据（移除后即为唯一登录因素）；正版账户凭正版验证放行。
-     * @return true 移除成功；false 验证码错误或账号不存在
-     */
+    /** 移除密码，转为无密码账户（验证码/正版验证规则见 PasswordFlow）。 */
     public boolean removePassword(Player player, String code) {
-        UUID uuid = player.getUniqueId();
-        PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null) {
-            if (Debug.on()) {
-                Debug.log("auth", "remove password %s: failed (no account)", player.getName());
-            }
-            return false;
-        }
-        // 离线账户移除密码前须验证 TOTP（验证码成为唯一登录因素）；正版账户凭正版验证放行，无需验证码
-        if (data.totpSecret() != null && !data.premium()) {
-            if (code == null || code.isEmpty() || !Totp.verifyCode(data.totpSecret(), code)) {
-                if (Debug.on()) {
-                    Debug.log("auth", "remove password %s: rejected (invalid 2fa code)", player.getName());
-                }
-                return false;
-            }
-        }
-        dataManager.updatePassword(uuid, "");
-        if (Debug.on()) {
-            Debug.log("auth", "remove password %s: success", player.getName());
-        }
-        return true;
+        return passwordFlow.removePassword(player, code);
     }
 
     /**
@@ -293,7 +236,7 @@ public final class LoginFlow {
     public boolean verify2fa(Player player, String code) {
         PlayerData data = twoFactor.verifyCode(player.getUniqueId(), player, code, SessionStore.clientIp(player));
         if (data == null) return false;
-        completeLogin(player, data);
+        loginSuccess.completeLogin(player, data);
         return true;
     }
 
@@ -327,38 +270,19 @@ public final class LoginFlow {
         if (Debug.on()) {
             Debug.log("auth", "force logout: %s (live login state invalidated, connection flag kept)", uuid);
         }
-        invalidateLoginSessions(uuid);
+        passwordFlow.invalidateLoginSessions(uuid);
         events.logout(uuid);
         return true;
     }
 
     /** 强制修改玩家密码（无需验证旧密码，玩家无需在线） */
     public boolean forceChangePassword(UUID uuid, String newPassword) {
-        if (!dataManager.hasAccount(uuid)) return false;
-        String newHash = PasswordHash.hashPassword(newPassword, configManager.password().hashAlgorithm(), configManager.password().bcryptCost());
-        dataManager.updatePassword(uuid, newHash);
-        invalidateLoginSessions(uuid);
-        return true;
+        return passwordFlow.forceChangePassword(uuid, newPassword);
     }
 
     /** 管理员强制清空玩家密码（转为无密码账户）：无需验证旧密码或 2FA 验证码，玩家无需在线 */
     public boolean forceRemovePassword(UUID uuid) {
-        if (!dataManager.hasAccount(uuid)) return false;
-        dataManager.updatePassword(uuid, "");
-        invalidateLoginSessions(uuid);
-        return true;
-    }
-
-    /** 使登录会话失效（凭据变更、强制登出等场景）：清除 lastLogin（免密窗口）与登录/2FA 会话，下次必须重新验证 */
-    private void invalidateLoginSessions(UUID uuid) {
-        accounts.invalidateUnregisterConfirm(uuid);
-        PlayerData data = dataManager.getPlayer(uuid);
-        if (data != null) {
-            data.lastLogin(0);
-            dataManager.save(uuid);
-        }
-        sessions.clearLoginSession(uuid);
-        twoFactor.clearSession(uuid);
+        return passwordFlow.forceRemovePassword(uuid);
     }
 
     /** 强制登录玩家（不管有没有账号，仅对在线玩家生效） */
@@ -367,8 +291,8 @@ public final class LoginFlow {
         if (Debug.on()) {
             Debug.log("auth", "force login: %s", player.getName());
         }
-        markLoggedIn(uuid);
-        onLoginSuccess(player);
+        loginSuccess.markLoggedIn(uuid);
+        loginSuccess.onLoginSuccess(player);
         events.login(player);
     }
 
@@ -386,7 +310,7 @@ public final class LoginFlow {
             twoFactor.markPending(player.getUniqueId());
             return;
         }
-        completeLogin(player, data);
+        loginSuccess.completeLogin(player, data);
     }
 
     // ===== Pre-join Dialog 收尾（配置阶段认证后，玩家进入世界时调用） =====
@@ -399,7 +323,7 @@ public final class LoginFlow {
     public boolean finishPreJoinLogin(Player player) {
         PlayerData data = dataManager.getPlayer(player.getUniqueId());
         if (data == null) return false;
-        completeLogin(player, data);
+        loginSuccess.completeLogin(player, data);
         return true;
     }
 
@@ -411,8 +335,8 @@ public final class LoginFlow {
     public boolean finishPreJoinRegister(Player player) {
         if (!dataManager.hasAccount(player.getUniqueId())) return false;
         sessions.markLoginSession(player.getUniqueId(), SessionStore.clientIp(player));
-        markLoggedIn(player.getUniqueId());
-        onLoginSuccess(player);
+        loginSuccess.markLoggedIn(player.getUniqueId());
+        loginSuccess.onLoginSuccess(player);
         Bukkit.getPluginManager().callEvent(new HSAuthRegisterEvent(player.getUniqueId(), player));
         return true;
     }
@@ -428,35 +352,7 @@ public final class LoginFlow {
      * 正版与离线同规则，均须先验证旧密码（无密码账户不进入此路径，命令层拦截并引导 /addpassword）
      */
     public void changePasswordAsync(Player player, String oldPassword, String newPassword, Consumer<Boolean> done) {
-        UUID uuid = player.getUniqueId();
-        PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null) {
-            if (Debug.on()) {
-                Debug.log("auth", "change password %s: failed (no account)", player.getName());
-            }
-            done.accept(false);
-            return;
-        }
-        Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            if (!PasswordHash.checkPassword(oldPassword, data.passwordHash())) {
-                player.getScheduler().run(plugin, task2 -> {
-                    if (Debug.on()) {
-                        Debug.log("auth", "change password %s: failed (wrong old password)", player.getName());
-                    }
-                    done.accept(false);
-                }, null);
-                return;
-            }
-            String newHash = PasswordHash.hashPassword(newPassword, configManager.password().hashAlgorithm(), configManager.password().bcryptCost());
-            player.getScheduler().run(plugin, task2 -> {
-                dataManager.updatePassword(uuid, newHash);
-                invalidateLoginSessions(uuid);
-                if (Debug.on()) {
-                    Debug.log("auth", "change password %s: success", player.getName());
-                }
-                done.accept(true);
-            }, null);
-        });
+        passwordFlow.changePasswordAsync(player, oldPassword, newPassword, done);
     }
 
     /**
@@ -464,32 +360,7 @@ public final class LoginFlow {
      * 已有密码或账号不存在时回调 false
      */
     public void addPasswordAsync(Player player, String newPassword, Consumer<Boolean> done) {
-        UUID uuid = player.getUniqueId();
-        PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null || (data.passwordHash() != null && !data.passwordHash().isEmpty())) {
-            if (Debug.on()) {
-                Debug.log("auth", "add password %s: failed (no account or already has password)", player.getName());
-            }
-            done.accept(false);
-            return;
-        }
-        Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            String newHash = PasswordHash.hashPassword(newPassword, configManager.password().hashAlgorithm(), configManager.password().bcryptCost());
-            player.getScheduler().run(plugin, task2 -> {
-                dataManager.updatePassword(uuid, newHash);
-                if (Debug.on()) {
-                    Debug.log("auth", "add password %s: success", player.getName());
-                }
-                done.accept(true);
-            }, null);
-        });
-    }
-
-    /** 标记玩家为已登录：置位实时登录态与本次连接认证标记，清理双因素待验证、失败计数、踢出记录 */
-    private void markLoggedIn(UUID uuid) {
-        sessions.markLoggedIn(uuid);
-        twoFactor.clearPending(uuid);
-        failProtection.clear(uuid);
+        passwordFlow.addPasswordAsync(player, newPassword, done);
     }
 
     /**
@@ -517,40 +388,8 @@ public final class LoginFlow {
 
     // ===== 登录成功后的状态恢复 =====
 
-    /**
-     * 登录/注册成功后的状态恢复：
-     * 1. 恢复游戏模式：仅对被设为旁观的玩家恢复，有保存的游戏模式则恢复，否则使用服务器默认游戏模式（新玩家）
-     * 2. 物品状态恢复：未登录期间数据包监听器清空了该玩家的背包和装备（仅本人视角，他人不受影响），
-     *    登录后调用 updateInventory 让服务器重发真实背包内容（含装备槽）。
-     * <p>
-     * 使用玩家调度器执行，保证 Folia 下在玩家区域线程调用（非线程安全操作）。
-     */
+    /** 登录/注册成功后的状态恢复（游戏模式、背包、提醒、珍珠）。 */
     public void onLoginSuccess(Player player) {
-        player.getScheduler().run(plugin, task -> {
-            // 立即隐藏提醒 BossBar（不等下一个提醒周期；非 bossbar 方式时为空操作）
-            plugin.authReminder().hide(player);
-            // 返还退出时保管的飞行末影珍珠（无记录时为空操作）
-            plugin.pendingPearls().returnPearls(player);
-            // 仅对被设为旁观的玩家恢复游戏模式
-            if (sessions.consumeSpectatorPending(player.getUniqueId())) {
-                PlayerData data = dataManager.getPlayer(player.getUniqueId());
-                // 默认使用服务器默认游戏模式（server.properties 中的 level-default-gamemode）
-                org.bukkit.GameMode mode = org.bukkit.Bukkit.getDefaultGameMode();
-                if (data != null && data.gameMode() != null) {
-                    try {
-                        mode = org.bukkit.GameMode.valueOf(data.gameMode());
-                    } catch (IllegalArgumentException ignored) {
-                        // 存储的游戏模式无效，使用服务器默认值
-                    }
-                }
-                player.setGameMode(mode);
-                // 新玩家首次注册时保存默认游戏模式，下次登录可恢复
-                if (data != null && data.gameMode() == null) {
-                    data.gameMode(mode.name());
-                    dataManager.save(player.getUniqueId());
-                }
-            }
-            player.updateInventory();
-        }, null);
+        loginSuccess.onLoginSuccess(player);
     }
 }

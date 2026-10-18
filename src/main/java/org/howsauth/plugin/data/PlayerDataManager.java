@@ -13,12 +13,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 // 表 players 在运行时由 PlayerDatabase 创建，静态分析无法解析
 @SuppressWarnings("SqlResolve")
@@ -27,41 +22,29 @@ public final class PlayerDataManager implements AutoCloseable {
     private final HowSAuth plugin;
     // 连接池与全部表级 SQL 集中在 PlayerDatabase
     private final PlayerDatabase database;
+    // 脏标记消费、批量落库、写队列与关服排空
+    private final PlayerPersistence persistence;
     // 账号身份迁移（离线↔正版）：需要同时操控缓存、名字索引与写队列，故独立成类
     private final AccountMigration migration;
     // 内存缓存：启动时全量加载，运行时读操作走缓存，写操作标记脏后由周期任务批量落库
     private final Map<UUID, PlayerData> players = new ConcurrentHashMap<>();
     // 脏标记：内存数据已修改但尚未落库的玩家 UUID，由周期任务批量 flush
     private final Set<UUID> dirty = ConcurrentHashMap.newKeySet();
-    // 批量落库失败重试计数：达到上限后放弃该玩家，防止数据库故障时无限重试刷日志
-    private final Map<UUID, Integer> flushFailures = new ConcurrentHashMap<>();
-    // 批量落库最大重试次数
-    private static final int MAX_FLUSH_RETRY = 3;
     // 数据库加载失败后的自动重试周期（秒）
     private static final int LOAD_RETRY_PERIOD_SECONDS = 10;
-    // 关服/等待写队列排空的等待上限（秒）：超时后强制关停，避免卡住关服
-    private static final int DB_DRAIN_TIMEOUT_SECONDS = 30;
     // 正版玩家名索引：name(小写) → uuid，用于 getByName 快速查找，避免 O(n) 遍历
     private final Map<String, UUID> premiumNameIndex = new ConcurrentHashMap<>();
     // 数据库全量加载是否失败：失败期间 fail-closed，拒绝新玩家进入（空缓存会把所有玩家误判为未注册）
     private volatile boolean loadFailed;
     // 加载失败自动重试任务是否已挂起，防止周期任务叠加
     private volatile boolean retryScheduled;
-    // DB 写串行执行器：所有含 INSERT/REPLACE/DELETE 的写任务单线程排队执行
-    // 注销/迁移先移除内存记录再入队删除任务，upsert 任务执行时复检内存记录仍在——
-    // 复检可见的记录其删除任务必排在本次 upsert 之后，杜绝"已删行被并发 upsert 复活"
-    // （注销账号重启后复活、迁移后新旧 UUID 双记录）
-    private final ExecutorService dbWriteExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "HowSAuth-DB-Writer");
-        t.setDaemon(true);
-        return t;
-    });
     // IP 注册名额锁：同 IP 计数与建号须在同一临界区内完成，防止并发注册同时通过检查突破上限
     private final Object ipLimitLock = new Object();
 
     public PlayerDataManager(HowSAuth plugin) {
         this.plugin = plugin;
         this.database = new PlayerDatabase(plugin);
+        this.persistence = new PlayerPersistence(plugin, database, players, dirty);
         this.migration = new AccountMigration(plugin, this, database);
         load();
     }
@@ -110,9 +93,7 @@ public final class PlayerDataManager implements AutoCloseable {
 
     /** 标记玩家数据为脏：由周期任务批量落库（合并写、降 DB 开销；崩溃时最多丢失一个 flush 周期内的改动） */
     public void save(UUID uuid) {
-        if (players.containsKey(uuid)) {
-            dirty.add(uuid);
-        }
+        persistence.save(uuid);
     }
 
     /**
@@ -120,79 +101,17 @@ public final class PlayerDataManager implements AutoCloseable {
      * 经串行写队列直写，失败时兜底转交周期 flush 重试
      */
     public void saveNow(UUID uuid) {
-        PlayerData data = players.get(uuid);
-        if (data != null) {
-            if (Debug.on()) {
-                Debug.log("db", "save now: %s", Debug.shortId(uuid));
-            }
-            saveNow(data);
-        }
+        persistence.saveNow(uuid);
     }
 
     /** 周期任务调用（已在异步调度线程）：将脏标记的玩家数据批量落库，失败按上限重试 */
     public void flushDirty() {
-        if (dirty.isEmpty()) return;
-        final List<PlayerData> toSave = new ArrayList<>(dirty.size());
-        // 逐个移除而非整体 clear：避免与主线程并发 save() 竞态（clear 可能清掉刚标记的脏数据）
-        for (UUID uuid : dirty) {
-            dirty.remove(uuid);
-            PlayerData data = players.get(uuid);
-            if (data != null) toSave.add(data);
-        }
-        if (toSave.isEmpty()) return;
-        if (Debug.on()) {
-            Debug.log("db", "flush dirty: %s records queued", toSave.size());
-        }
-        // 落库经串行写队列执行：与注销/迁移的删除任务按入队顺序落库
-        submitDbWrite(() -> {
-            // 执行时复检内存状态：快照后被移除或替换的记录跳过（已注销/迁移的账号不得被 upsert 复活）
-            List<PlayerData> valid = new ArrayList<>(toSave.size());
-            for (PlayerData data : toSave) {
-                if (players.get(data.uuid()) == data) valid.add(data);
-            }
-            if (valid.isEmpty()) return;
-            // 批量写失败时按重试上限重新标记脏，等待下轮 flush；成功则清除重试计数
-            if (upsertBatchSync(valid)) {
-                for (PlayerData data : valid) {
-                    flushFailures.remove(data.uuid());
-                }
-            } else {
-                for (PlayerData data : valid) {
-                    int n = flushFailures.merge(data.uuid(), 1, Integer::sum);
-                    if (n < MAX_FLUSH_RETRY) {
-                        dirty.add(data.uuid());
-                    } else {
-                        flushFailures.remove(data.uuid()); // 放弃，停止重试
-                    }
-                }
-            }
-        });
+        persistence.flushDirty();
     }
 
-    /** DB 写任务加入串行队列。插件停用后队列已关闭，提交被丢弃（saveSync 全量落库兜底） */
-    private void submitDbWrite(Runnable job) {
-        try {
-            dbWriteExecutor.execute(job);
-        } catch (RejectedExecutionException ignored) {
-            // 队列已关闭（停用中）：丢弃，saveSync 全量保存兜底
-        }
-    }
-
-    /** 同步全量保存，用于 onDisable（必须在关服前完成，覆盖全部内存数据含脏标记）。
-     *  先排空串行写队列（在途删除/upsert 先落库），再直接全量写入最终状态 */
+    /** 同步全量保存，用于 onDisable（必须在关服前完成，覆盖全部内存数据含脏标记）。 */
     public void saveSync() {
-        dirty.clear();
-        dbWriteExecutor.shutdown();
-        try {
-            if (!dbWriteExecutor.awaitTermination(DB_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                // 超时未排空（DB 严重卡顿）：丢弃剩余任务（旧快照晚于全量保存落库会回退数据），最终状态由全量保存覆盖
-                plugin.getLogger().severe(I18n.get("log.db_write_queue_timeout"));
-                dbWriteExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        saveAllSync();
+        persistence.saveSync();
     }
 
     /**
@@ -200,35 +119,7 @@ public final class PlayerDataManager implements AutoCloseable {
      * 供需要"写入确定"的调用方与测试使用；关服保存请用 {@link #saveSync()}。
      */
     public void awaitPendingWrites() {
-        try {
-            dbWriteExecutor.submit(() -> {
-            }).get(DB_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (RejectedExecutionException e) {
-            // 队列已关闭（saveSync/close 之后）：不存在在途写入需要等待
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (ExecutionException | TimeoutException e) {
-            plugin.getLogger().warning(I18n.get("log.db_write_await_timeout", DB_DRAIN_TIMEOUT_SECONDS));
-        }
-    }
-
-    /** 批量 upsert，整批一个事务；成功返回 true，失败返回 false */
-    private boolean upsertBatchSync(List<PlayerData> list) {
-        try {
-            database.upsertRows(list);
-            return true;
-        } catch (SQLException e) {
-            plugin.getLogger().severe(I18n.get("log.save_all_failed", e.getMessage()));
-            if (Debug.on()) {
-                Debug.log("db", "upsert batch failed: %s", e.getMessage());
-            }
-            return false;
-        }
-    }
-
-    private void saveAllSync() {
-        if (players.isEmpty()) return;
-        upsertBatchSync(new ArrayList<>(players.values()));
+        persistence.awaitPendingWrites();
     }
 
     /** 获取所有已注册玩家的 UUID 集合 */
@@ -261,7 +152,7 @@ public final class PlayerDataManager implements AutoCloseable {
         PlayerData data = new PlayerData(uuid, null, passwordHash, ip, nowEpochSeconds(), null, false, null, null, null, 0);
         players.put(uuid, data);
         // 创建账号为关键操作：立即落库，避免崩溃丢新账号（区别于登录/退出等的周期批量 flush）
-        saveNow(data);
+        persistence.saveNow(data);
     }
 
     /**
@@ -284,23 +175,9 @@ public final class PlayerDataManager implements AutoCloseable {
             PlayerData data = new PlayerData(uuid, null, passwordHash, ip, nowEpochSeconds(), null, false, null, null, null, 0);
             players.put(uuid, data);
             // 创建账号为关键操作：立即落库，避免崩溃丢新账号
-            saveNow(data);
+            persistence.saveNow(data);
             return data;
         }
-    }
-
-    /** 立即落库单个玩家数据，失败时退化为脏标记由周期任务兜底重试。
-     *  经串行写队列执行并复检内存记录仍在：快照后被移除（注销/迁移）的账号不得被落库复活 */
-    private void saveNow(PlayerData data) {
-        submitDbWrite(() -> {
-            if (players.get(data.uuid()) != data) return;
-            if (!upsertBatchSync(List.of(data))) {
-                // 立即写失败：转交周期 flush 兜底重试
-                dirty.add(data.uuid());
-            } else {
-                flushFailures.remove(data.uuid());
-            }
-        });
     }
 
     /**
@@ -314,7 +191,7 @@ public final class PlayerDataManager implements AutoCloseable {
             premiumNameIndex.put(name.toLowerCase(), uuid);
         }
         // 创建正版账号同样为关键操作：立即落库，避免崩溃丢新账号
-        saveNow(data);
+        persistence.saveNow(data);
     }
 
     /** 标记已有账号为正版（premium=1），更新 properties 和 name */
@@ -331,7 +208,7 @@ public final class PlayerDataManager implements AutoCloseable {
         if (name != null) {
             premiumNameIndex.put(name.toLowerCase(), uuid);
         }
-        saveNow(data);
+        persistence.saveNow(data);
     }
 
     /**
@@ -342,7 +219,7 @@ public final class PlayerDataManager implements AutoCloseable {
         PlayerData data = players.get(uuid);
         if (data == null) return;
         data.premium(true);
-        saveNow(data);
+        persistence.saveNow(data);
     }
 
     /**
@@ -353,7 +230,7 @@ public final class PlayerDataManager implements AutoCloseable {
         PlayerData data = players.get(uuid);
         if (data == null) return;
         data.premium(false);
-        saveNow(data);
+        persistence.saveNow(data);
     }
 
     /**
@@ -386,7 +263,7 @@ public final class PlayerDataManager implements AutoCloseable {
     /** 移出缓存并清理落库相关状态：记录即将被删除，脏标记与重试计数不再有意义 */
     PlayerData take(UUID uuid) {
         PlayerData data = players.remove(uuid);
-        forget(uuid);
+        persistence.forget(uuid);
         return data;
     }
 
@@ -396,7 +273,7 @@ public final class PlayerDataManager implements AutoCloseable {
         if (nameToUnindex != null) {
             premiumNameIndex.remove(nameToUnindex.toLowerCase());
         }
-        forget(uuid);
+        persistence.forget(uuid);
     }
 
     /** 写入/替换一个缓存记录，并按需建立正版名字索引 */
@@ -419,13 +296,7 @@ public final class PlayerDataManager implements AutoCloseable {
 
     /** 入队一次数据库写任务（迁移事务走这里，保证与 flush/saveNow 的落库顺序） */
     void submitWrite(Runnable job) {
-        submitDbWrite(job);
-    }
-
-    /** 清理某 UUID 的落库相关状态：脏标记与重试计数 */
-    private void forget(UUID uuid) {
-        dirty.remove(uuid);
-        flushFailures.remove(uuid);
+        persistence.submitWrite(job);
     }
 
     public PlayerData getByName(String name) {
@@ -474,7 +345,7 @@ public final class PlayerDataManager implements AutoCloseable {
             premiumNameIndex.remove(data.name().toLowerCase());
         }
         // 清理落库相关状态：账号已删除，脏标记与重试计数不再有意义（防止残留）
-        forget(uuid);
+        persistence.forget(uuid);
         // 删除经串行写队列执行：内存已先移除，排在前面的在途 upsert 会因执行时复检被跳过
         submitWrite(() -> {
             try {
@@ -519,22 +390,13 @@ public final class PlayerDataManager implements AutoCloseable {
         PlayerData data = players.get(uuid);
         if (data == null) return;
         data.passwordHash(newHash);
-        saveNow(data);
+        persistence.saveNow(data);
     }
 
     /** 关闭数据源，释放连接池（确保串行写队列先排空，防止在途写任务打到已关闭的池） */
     @Override
     public void close() {
-        dbWriteExecutor.shutdown();
-        try {
-            if (!dbWriteExecutor.awaitTermination(DB_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                // 超时未排空：丢弃剩余任务，防止关闭数据源后在途任务获取连接失败刷错误日志
-                plugin.getLogger().severe(I18n.get("log.db_write_queue_timeout"));
-                dbWriteExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        persistence.close();
         if (database != null) {
             database.close();
         }

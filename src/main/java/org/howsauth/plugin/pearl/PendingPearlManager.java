@@ -66,7 +66,8 @@ public final class PendingPearlManager implements Listener {
     public void onQuit(PlayerQuitEvent event) {
         if (!plugin.config().pearl().enabled()) return;
         // 退出是珍珠恢复最关键的一次写入：只同步落盘该玩家的小文件，避免 100ms 合并窗口内崩溃丢记录。
-        if (absorbFlyingPearls(event.getPlayer())) store.saveSync(event.getPlayer().getUniqueId());
+        Player player = event.getPlayer();
+        if (absorbFlyingPearls(player)) store.saveSync(player.getUniqueId());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -99,34 +100,36 @@ public final class PendingPearlManager implements Listener {
         Location to = event.getTo();
         World world = to.getWorld();
         if (world == null) return;
+        UUID owner = player.getUniqueId();
         // 同一次投掷的移除事件（或前一个传送事件）已经记过快照；再补 credit 会重复返还
-        if (store.hasSnapshotNear(player.getUniqueId(), world.getName(),
+        if (store.hasSnapshotNear(owner, world.getName(),
                 to.getX(), to.getY(), to.getZ(), TELEPORT_CREDIT_MATCH_RADIUS)) {
             return;
         }
         PearlSnapshot credit = new PearlSnapshot(PendingPearlStore.SYNTHETIC_PEARL_ID, false, world.getName(),
                 to.getX(), to.getY(), to.getZ(), 0, 0, 0);
-        store.mergeOne(player.getUniqueId(), credit);
+        store.mergeOne(owner, credit);
         store.save();
     }
 
     public void returnPearls(Player player) {
+        UUID owner = player.getUniqueId();
         if (!plugin.config().pearl().enabled()) {
             // 功能关闭时不返还旧快照，也不保留到下次重新开启，避免过期状态被再次恢复。
-            List<PearlSnapshot> discarded = store.remove(player.getUniqueId());
-            if (discarded != null && !discarded.isEmpty()) store.saveSync(player.getUniqueId());
+            List<PearlSnapshot> discarded = store.remove(owner);
+            if (discarded != null && !discarded.isEmpty()) store.saveSync(owner);
             return;
         }
         boolean absorbed = absorbFlyingPearls(player);
-        List<PearlSnapshot> snapshots = store.remove(player.getUniqueId());
+        List<PearlSnapshot> snapshots = store.remove(owner);
         if (snapshots == null || snapshots.isEmpty()) {
-            if (absorbed) store.saveSync(player.getUniqueId());
+            if (absorbed) store.saveSync(owner);
             if (absorbed && Debug.on()) {
                 Debug.log("pearl", "return pearls to %s: only absorbed flying pearls", player.getName());
             }
             return;
         }
-        store.saveSync(player.getUniqueId());
+        store.saveSync(owner);
         if (!plugin.config().pearl().returnEntity()) {
             if (Debug.on()) {
                 Debug.log("pearl", "return %s pearls to %s as items", snapshots.size(), player.getName());
@@ -144,8 +147,8 @@ public final class PendingPearlManager implements Listener {
             Location loc = new Location(world, snapshot.x(), snapshot.y(), snapshot.z());
             Bukkit.getRegionScheduler().run(plugin, loc, task -> {
                 if (!player.isOnline()) {
-                    store.mergeOne(player.getUniqueId(), snapshot);
-                    store.saveSync(player.getUniqueId());
+                    store.mergeOne(owner, snapshot);
+                    store.saveSync(owner);
                     return;
                 }
                 world.spawn(loc, EnderPearl.class, p -> {
@@ -163,9 +166,10 @@ public final class PendingPearlManager implements Listener {
 
     /** 吸收玩家当前所有在飞珍珠；返回是否至少处理了一颗。 */
     private boolean absorbFlyingPearls(Player player) {
+        UUID owner = player.getUniqueId();
         boolean absorbed = false;
         for (EnderPearl pearl : copyFlyingPearls(player)) {
-            absorb(pearl, player.getUniqueId());
+            absorb(pearl, owner);
             absorbed = true;
         }
         return absorbed;
@@ -200,7 +204,7 @@ public final class PendingPearlManager implements Listener {
             } else {
                 updated.add(snapshot);
             }
-            return List.copyOf(updated);
+            return updated;
         });
         removePearl(pearl);
         if (Debug.on()) {

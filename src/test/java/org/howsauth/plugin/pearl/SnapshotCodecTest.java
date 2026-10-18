@@ -139,7 +139,7 @@ class SnapshotCodecTest {
         map.put("y", 2.0);
         map.put("z", 3.0);
 
-        PearlSnapshot parsed = SnapshotCodec.parseSnapshot(map);
+        PearlSnapshot parsed = LegacyPearlImport.parseSnapshot(map);
 
         assertNotNull(parsed, "a legacy entry with a world must be parsed");
         assertNull(parsed.pearlId(), "a legacy entry has no id");
@@ -154,7 +154,7 @@ class SnapshotCodecTest {
         map.put("pearlId", "not-a-uuid");
         map.put("world", WORLD);
 
-        PearlSnapshot parsed = SnapshotCodec.parseSnapshot(map);
+        PearlSnapshot parsed = LegacyPearlImport.parseSnapshot(map);
 
         assertNotNull(parsed, "an entry with a world and a corrupt id must be parsed as legacy");
         assertNull(parsed.pearlId(), "an invalid id must be discarded");
@@ -164,10 +164,10 @@ class SnapshotCodecTest {
     /** 缺少 world（或类型不对）的记录整条丢弃，返回 null */
     @Test
     void rejectsEntryWithoutUsableWorld() {
-        assertNull(SnapshotCodec.parseSnapshot(new LinkedHashMap<>()), "a missing world field must be discarded");
+        assertNull(LegacyPearlImport.parseSnapshot(new LinkedHashMap<>()), "a missing world field must be discarded");
         Map<String, Object> wrongType = new LinkedHashMap<>();
         wrongType.put("world", 123);
-        assertNull(SnapshotCodec.parseSnapshot(wrongType), "a non-string world must be discarded");
+        assertNull(LegacyPearlImport.parseSnapshot(wrongType), "a non-string world must be discarded");
     }
 
     /** 数值字段缺失时按 0 处理，不应抛异常 */
@@ -177,7 +177,7 @@ class SnapshotCodecTest {
         map.put("world", WORLD);
         map.put("legacy", true);
 
-        PearlSnapshot parsed = SnapshotCodec.parseSnapshot(map);
+        PearlSnapshot parsed = LegacyPearlImport.parseSnapshot(map);
 
         assertNotNull(parsed, "an entry with only a world must be parsed");
         assertEquals(0.0, parsed.x(), "missing x must default to 0");
@@ -194,7 +194,7 @@ class SnapshotCodecTest {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("world", WORLD);
 
-        PearlSnapshot parsed = SnapshotCodec.parseSnapshot(map);
+        PearlSnapshot parsed = LegacyPearlImport.parseSnapshot(map);
 
         assertNotNull(parsed, "an entry without id or flag must still be parsed");
         assertNull(parsed.pearlId(), "no id");
@@ -208,7 +208,7 @@ class SnapshotCodecTest {
         map.put("world", WORLD);
         map.put("x", Double.NaN);
 
-        assertNull(SnapshotCodec.parseSnapshot(map), "NaN coordinates must be discarded during migration");
+        assertNull(LegacyPearlImport.parseSnapshot(map), "NaN coordinates must be discarded during migration");
     }
 
     /** 空世界名或超出编码上限的世界名同样丢弃，避免迁移卡在永远失败的记录上 */
@@ -216,11 +216,11 @@ class SnapshotCodecTest {
     void rejectsLegacyEntryWithEmptyOrOversizedWorld() {
         Map<String, Object> empty = new LinkedHashMap<>();
         empty.put("world", "");
-        assertNull(SnapshotCodec.parseSnapshot(empty), "an empty world must be discarded");
+        assertNull(LegacyPearlImport.parseSnapshot(empty), "an empty world must be discarded");
 
         Map<String, Object> oversized = new LinkedHashMap<>();
         oversized.put("world", "w".repeat(300));
-        assertNull(SnapshotCodec.parseSnapshot(oversized), "an oversized world must be discarded");
+        assertNull(LegacyPearlImport.parseSnapshot(oversized), "an oversized world must be discarded");
     }
 
     /** 编码入口显式拒绝 null，避免只在写入深层抛 NPE */

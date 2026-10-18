@@ -1,6 +1,7 @@
 package org.howsauth.plugin.listener;
 
 import io.papermc.paper.event.player.AsyncPlayerSpawnLocationEvent;
+
 import org.bukkit.Bukkit;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.Debug;
@@ -15,7 +16,6 @@ import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.api.event.HSAuthLoginEvent;
 import org.howsauth.plugin.api.event.HSAuthRegisterEvent;
 import org.howsauth.plugin.dialog.PreJoinAuthListener;
-import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -32,99 +32,36 @@ public final class PlayerListener implements Listener {
 
     private final HowSAuth plugin;
     private final SessionStore sessions;
-    private final FailProtection failProtection;
     private final TwoFactorAuth twoFactor;
     private final LogoutLocation locations;
     private final AccountLifecycle accounts;
     private final LoginFlow loginFlow;
     private final AuthReminder reminders;
+    private final PreLoginGuard preLoginGuard;
+    private final SpawnLocationHandler spawnLocationHandler;
+    private final QuitHandler quitHandler;
 
     public PlayerListener(HowSAuth plugin, SessionStore sessions,
                           FailProtection failProtection, TwoFactorAuth twoFactor, LogoutLocation locations,
                           AccountLifecycle accounts, LoginFlow loginFlow, AuthReminder reminders) {
         this.plugin = plugin;
         this.sessions = sessions;
-        this.failProtection = failProtection;
         this.twoFactor = twoFactor;
         this.locations = locations;
         this.accounts = accounts;
         this.loginFlow = loginFlow;
         this.reminders = reminders;
+        this.preLoginGuard = new PreLoginGuard(plugin, sessions, failProtection, accounts, locations);
+        this.spawnLocationHandler = new SpawnLocationHandler(plugin, sessions, twoFactor, locations);
+        this.quitHandler = new QuitHandler(plugin, sessions, locations, reminders, loginFlow,
+                this::clearLoginBlindness);
     }
 
     // 在玩家加入世界前拦截：踢出期玩家、同一 IP 账号数量超限
     // 使用 AsyncPlayerPreLoginEvent 替代已弃用的 PlayerLoginEvent（1.21.6+）
-    // PlayerDataManager 为插件生命周期内共享的服务，不在此处关闭；此处仅调用其查询方法
-    @SuppressWarnings("resource")
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPreLogin(AsyncPlayerPreLoginEvent event) {
-        var uuid = event.getUniqueId();
-        // 取一次配置快照：本方法多处读配置，reload 换掉领域对象时避免读到新旧混合的值
-        ConfigManager config = plugin.config();
-
-        // 数据库加载失败（fail-closed）：缓存为空会把所有玩家误判为未注册，拒绝进入直至恢复
-        if (plugin.playerData().isLoadFailed()) {
-            if (Debug.on()) {
-                Debug.log("flow", "prelogin reject %s: database load failed", event.getName());
-            }
-            event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER,
-                    I18n.msg("login.db_unavailable"));
-            return;
-        }
-
-        // 踢出期内拒绝进入
-        if (failProtection.isKicked(uuid)) {
-            long remaining = failProtection.getKickRemaining(uuid);
-            if (Debug.on()) {
-                Debug.log("flow", "prelogin reject %s: kick period active (%s ms left)", event.getName(), remaining);
-            }
-            event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED,
-                    I18n.msg("login.kicked", remaining));
-            return;
-        }
-
-        // 有账号但无任何可用登录方式（无密码/未绑 2FA/非正版）。
-        // 配置开启时在连接阶段直接拦截；关闭时放行，由 beginAuthFlow 挂起（永远无法通过，超时踢出）
-        if (config.protectionMisc().rejectNoAuthAccount()
-                && accounts.hasNoUsableLoginMethod(uuid)) {
-            if (Debug.on()) {
-                Debug.log("flow", "prelogin reject %s: no usable login method", event.getName());
-            }
-            event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER,
-                    I18n.msg("prelogin.account_locked"));
-            return;
-        }
-
-        // 注销后 5 秒内拒绝重连，确保 .dat 删除完成
-        if (sessions.isRecentlyUnregistered(uuid)) {
-            long remaining = sessions.getRecentUnregisterRemaining(uuid);
-            if (Debug.on()) {
-                Debug.log("flow", "prelogin reject %s: recently unregistered (%s ms left)", event.getName(), remaining);
-            }
-            event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER,
-                    I18n.msg("unregister.recently_deleted", remaining));
-            return;
-        }
-
-        // 同 IP 已达上限时仅在连接层拦截无账号新玩家，避免名额已满的 IP 涌入未注册玩家；
-        // max-accounts-per-ip.reject-join 关闭时放行进服，由注册动作精确判定（共享 IP 环境友好）
-        // 已达上限判定内部已处理 max<=0，无需在此重复判断
-        if (config.register().ipLimitRejectJoin()
-                && !accounts.hasAccount(uuid)
-                && accounts.isIpAccountLimitReached(event.getAddress().getHostAddress())) {
-            if (Debug.on()) {
-                Debug.log("flow", "prelogin reject %s: ip account limit reached (max %s)",
-                        event.getName(), config.register().maxAccountsPerIp());
-            }
-            event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER,
-                    I18n.msg("register.ip_limit",
-                            config.register().maxAccountsPerIp()));
-        }
-
-        // 放行玩家异步预载退出位置区块：fire-and-forget，不阻塞、不影响放行判定
-        if (event.getLoginResult() == AsyncPlayerPreLoginEvent.Result.ALLOWED) {
-            locations.preloadChunk(uuid);
-        }
+        preLoginGuard.check(event);
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
@@ -357,67 +294,9 @@ public final class PlayerListener implements Listener {
         }
     }
 
-    /**
-     * 在 JoinGamePacket 发送前调整老玩家 spawn 位置。
-     * - 会话命中的玩家：直接在退出位置出生，避免后续传送。
-     * - 启用坐标保护：强制主世界随机位置，防止坐标泄露（F3、小地图 mod 等）。
-     * 新玩家不干预，保留原版出生机制。
-     * 此事件在 configuration phase 触发（异步线程），玩家尚未真正加入世界。
-     */
     @EventHandler(priority = EventPriority.LOWEST)
     public void onSpawnLocation(AsyncPlayerSpawnLocationEvent event) {
-        // 新玩家不干预，保留原版出生机制
-        if (event.isNewPlayer()) return;
-
-        var conn = event.getConnection();
-        java.util.UUID uuid = conn.getProfile().getId();
-        // 代理协议下地址可能未解析（getAddress() 返回 null），统一走 SessionStore.ipOf 判空
-        String ip = SessionStore.ipOf(conn.getClientAddress());
-
-        // 会话命中（免输密码）的玩家直接在退出位置出生，避免后续传送
-        // 登录需 2FA 的除外：验证完成前不放行到退出位置（/2fa 验证后再传送）；
-        // 2FA 会话命中（同 IP 且未过期）视同已完成验证
-        if (uuid != null && sessions.hasSession(uuid, ip) && !twoFactor.requiresAtLogin(uuid, ip)) {
-            Location logoutLoc = locations.get(uuid);
-            if (logoutLoc != null) {
-                if (Debug.on()) {
-                    Debug.log("flow", "spawn %s: logout location (login session hit)", Debug.shortId(uuid));
-                }
-                event.setSpawnLocation(logoutLoc);
-                return;
-            }
-        }
-
-        // Pre-join 已认证玩家：与会话命中一致，直接在退出位置出生，避免随机出生后再传送
-        PreJoinAuthListener preJoin = plugin.preJoinAuth();
-        if (uuid != null && preJoin != null && preJoin.hasCompleted(uuid)) {
-            Location logoutLoc = locations.get(uuid);
-            if (logoutLoc != null) {
-                if (Debug.on()) {
-                    Debug.log("flow", "spawn %s: logout location (pre-join completed)", Debug.shortId(uuid));
-                }
-                event.setSpawnLocation(logoutLoc);
-            } else if (Debug.on()) {
-                Debug.log("flow", "spawn %s: pre-join completed, no logout location (default spawn)",
-                        Debug.shortId(uuid));
-            }
-            // 已认证：登录前未接收任何世界信息，无需坐标保护
-            return;
-        }
-
-        // 启用坐标保护：强制主世界随机位置，防止坐标泄露
-        if (plugin.config().protectionPosition().enabled()) {
-            org.bukkit.World world = org.bukkit.Bukkit.getWorlds().getFirst();
-            Location safeSpawn = locations.findSafeAuthSpawn(world);
-            event.setSpawnLocation(safeSpawn);
-            if (Debug.on()) {
-                Debug.log("flow", "spawn %s: coordinate protection location",
-                        Debug.shortId(uuid));
-            }
-        } else if (Debug.on()) {
-            Debug.log("flow", "spawn %s: default spawn (no intervention)",
-                    Debug.shortId(uuid));
-        }
+        spawnLocationHandler.handle(event);
     }
 
     /** 启动登录/注册超时踢出任务（onJoin 和 forceRegister 共用，重复调用会自动作废旧任务）
@@ -445,49 +324,13 @@ public final class PlayerListener implements Listener {
         }, null, delayTicks);
     }
 
-    /**
-     * 玩家退出阶段一（LOWEST，最先执行）：处理依赖认证结果的业务并保存退出数据。
-     * 认证判定用 SessionStore#hasAuthenticatedThisConnection（与 isLoggedIn 的差异见该方法注释），
-     * 会话状态清理在阶段二（onQuitCleanup），须晚于本阶段的判定
-     */
     @EventHandler(priority = EventPriority.LOWEST)
     public void onQuit(PlayerQuitEvent event) {
-        Player player = event.getPlayer();
-        UUID uuid = player.getUniqueId();
-        boolean authenticated = sessions.hasAuthenticatedThisConnection(uuid);
-        if (Debug.on()) {
-            Debug.log("flow", "quit %s: authenticatedThisConnection=%s loggedIn=%s", player.getName(),
-                    authenticated, sessions.isLoggedIn(player));
-        }
-        // 本次连接已认证的玩家退出时保存退出位置（用于下次登录后传送回来）
-        // 未认证玩家不保存：其位置是登录前的保护/出生点，写入会覆盖真实退出位置
-        if (authenticated) {
-            locations.save(player);
-        }
-        // 退出时不在登录态（从未认证，或登录态被强制登出/注销提前失效）：清理可能残留的登录失明，
-        // 避免效果随 .dat 存档到下次会话（与位置保存是两个独立判定，不共用条件）
-        if (!sessions.isLoggedIn(player)) {
-            clearLoginBlindness(player);
-        }
-        // 立即清理提醒 BossBar：玩家调度器随退出 retired，任务内的清理分支不再执行
-        reminders.hide(player);
-        // 清理提醒任务引用（任务随玩家调度器 retired 不再执行，防止 Map 残留）
-        reminders.cancelTask(player.getUniqueId());
-        // 注销玩家退出时删除原版 .dat（服务器已保存并释放文件锁）
-        plugin.playerFiles().deleteOnQuit(player.getUniqueId());
+        quitHandler.onQuit(event);
     }
 
-    /**
-     * 玩家退出阶段二（MONITOR，最后执行）：清理会话状态。
-     * 退出监听按「保存数据（LOWEST）→ 消息决策（HIGH）→ 状态清理（MONITOR）」分层，
-     * 本阶段须保持在最后：加入/退出消息与退出位置保存依据本次连接认证标记判定，
-     * 提前清理会让本次已认证的玩家被误判为未认证
-     */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuitCleanup(PlayerQuitEvent event) {
-        if (Debug.on()) {
-            Debug.log("flow", "quit cleanup for %s: clearing session state (MONITOR, after message decision)", event.getPlayer().getName());
-        }
-        loginFlow.clearSession(event.getPlayer());
+        quitHandler.onQuitCleanup(event);
     }
 }
