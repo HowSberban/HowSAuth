@@ -23,7 +23,8 @@ import static io.papermc.paper.command.brigadier.Commands.literal;
 /**
  * hsauth 管理命令，使用 brigadier 原生注册。
  * <p>
- * 本类只负责命令树、补全和用法提示；各子命令的实际处理在 {@link AdminCommandHandlers}。
+ * 本类只负责命令树、补全和用法提示；检查类与账号操作类子命令分别由
+ * {@link AdminInspectionHandlers} 与 {@link AdminAccountHandlers} 处理。
  */
 @SuppressWarnings("SameReturnValue")
 public final class HSAuthCommand {
@@ -41,11 +42,13 @@ public final class HSAuthCommand {
                 return builder.buildFuture();
             };
 
-    private final AdminCommandHandlers handlers;
+    private final AdminInspectionHandlers inspectionHandlers;
+    private final AdminAccountHandlers accountHandlers;
     private final SuggestionProvider<io.papermc.paper.command.brigadier.CommandSourceStack> suggestAllPlayers;
 
     public HSAuthCommand(HowSAuth plugin, PlayerDataManager dataManager) {
-        this.handlers = new AdminCommandHandlers(plugin, dataManager);
+        this.inspectionHandlers = new AdminInspectionHandlers(plugin, dataManager);
+        this.accountHandlers = new AdminAccountHandlers(plugin, dataManager);
         this.suggestAllPlayers = suggestAllPlayers(dataManager);
     }
 
@@ -82,53 +85,53 @@ public final class HSAuthCommand {
                 .executes(this::showUsage)
                 // /hsauth reload
                 .then(literal("reload")
-                        .executes(handlers::handleReload))
+                        .executes(inspectionHandlers::handleReload))
                 // /hsauth debug dump
                 .then(literal("debug")
                         .then(literal("dump")
-                                .executes(handlers::handleDebugDump)))
+                                .executes(inspectionHandlers::handleDebugDump)))
                 // /hsauth accounts <player>
                 .then(literal("accounts")
                         .then(argument("player", StringArgumentType.word())
                                 .suggests(suggestAllPlayers)
-                                .executes(handlers::handleAccounts)))
+                                .executes(inspectionHandlers::handleAccounts)))
                 // /hsauth forcelogout <player>
                 .then(literal("forcelogout")
                         .then(argument("player", StringArgumentType.word())
                                 .suggests(suggestAllPlayers)
-                                .executes(handlers::handleForceLogout)))
+                                .executes(accountHandlers::handleForceLogout)))
                 // /hsauth forcechangepw <player> <newpassword>
                 .then(literal("forcechangepw")
                         .then(argument("player", StringArgumentType.word())
                                 .suggests(suggestAllPlayers)
                                 .then(argument("newpassword", StringArgumentType.word())
-                                        .executes(handlers::handleForceChangePw))))
+                                        .executes(accountHandlers::handleForceChangePw))))
                 // /hsauth forcermpw <player>：管理员强制清空玩家密码（转为无密码账户，凭正版验证或 2FA 登录）
                 .then(literal("forcermpw")
                         .then(argument("player", StringArgumentType.word())
                                 .suggests(suggestAllPlayers)
-                                .executes(handlers::handleForceRemovePw)))
+                                .executes(accountHandlers::handleForceRemovePw)))
                 // /hsauth forcelogin <player>
                 .then(literal("forcelogin")
                         .then(argument("player", StringArgumentType.word())
                                 .suggests(SUGGEST_PLAYERS)
-                                .executes(handlers::handleForceLogin)))
+                                .executes(accountHandlers::handleForceLogin)))
                 // /hsauth forceregister <player> <password>
                 .then(literal("forceregister")
                         .then(argument("player", StringArgumentType.word())
                                 .suggests(SUGGEST_PLAYERS)
                                 .then(argument("password", StringArgumentType.word())
-                                        .executes(handlers::handleForceRegister))))
+                                        .executes(accountHandlers::handleForceRegister))))
                 // /hsauth reset2fa <player>：管理员强制解除 2FA 绑定（玩家误删验证器密钥时解锁）
                 .then(literal("reset2fa")
                         .then(argument("player", StringArgumentType.word())
                                 .suggests(suggestAllPlayers)
-                                .executes(handlers::handleReset2fa)))
+                                .executes(accountHandlers::handleReset2fa)))
                 // /hsauth unreg <player>：删除账号（管理员，无别名）
                 .then(literal("unreg")
                         .then(argument("player", StringArgumentType.word())
                                 .suggests(suggestAllPlayers)
-                                .executes(handlers::handleUnregister)))
+                                .executes(accountHandlers::handleUnregister)))
                 .build();
     }
 

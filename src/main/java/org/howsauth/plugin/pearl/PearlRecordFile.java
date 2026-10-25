@@ -23,25 +23,17 @@ import java.util.UUID;
  * 保存时只重写该玩家的记录，不再重写全服数据；文件之间互不影响，单个文件损坏也只
  * 影响一名玩家。写入先落临时文件并 {@code fsync}，再原子替换，崩溃时旧文件仍然完整。
  */
-final class PearlRecordFile {
+record PearlRecordFile(Path directory) {
 
     private static final String RECORD_SUFFIX = ".bin";
     private static final String TEMP_SUFFIX = ".tmp";
     private static final String CORRUPT_SUFFIX = ".corrupt";
 
-    /** Windows 不允许用 FileChannel 打开目录做 fsync；其余平台尽力把 rename/delete 的目录项也刷盘。 */
+    /**
+     * Windows 不允许用 FileChannel 打开目录做 fsync；其余平台尽力把 rename/delete 的目录项也刷盘。
+     */
     private static final boolean DIRECTORY_FORCE_SUPPORTED =
             !System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
-
-    private final Path directory;
-
-    PearlRecordFile(Path directory) {
-        this.directory = directory;
-    }
-
-    Path directory() {
-        return directory;
-    }
 
     private Path fileOf(UUID owner) {
         return directory.resolve(owner + RECORD_SUFFIX);
@@ -51,7 +43,9 @@ final class PearlRecordFile {
         Files.createDirectories(directory);
     }
 
-    /** 列出目录中文件名可解析为 UUID 的记录文件；无法解析的文件交给调用方告警，不在此处删除。 */
+    /**
+     * 列出目录中文件名可解析为 UUID 的记录文件；无法解析的文件交给调用方告警，不在此处删除。
+     */
     List<UUID> listOwners() throws IOException {
         List<UUID> owners = new ArrayList<>();
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory, "*" + RECORD_SUFFIX)) {
@@ -128,13 +122,17 @@ final class PearlRecordFile {
         }
     }
 
-    /** 把损坏的记录移出正常命名空间，保留现场供排查，且下次保存不会静默覆盖它。 */
+    /**
+     * 把损坏的记录移出正常命名空间，保留现场供排查，且下次保存不会静默覆盖它。
+     */
     void quarantine(UUID owner) throws IOException {
         Files.move(fileOf(owner), directory.resolve(owner + RECORD_SUFFIX + CORRUPT_SUFFIX),
                 StandardCopyOption.REPLACE_EXISTING);
     }
 
-    /** 清理上次崩溃残留的临时文件；这些文件从未被原子替换成正式记录，删除是安全的。 */
+    /**
+     * 清理上次崩溃残留的临时文件；这些文件从未被原子替换成正式记录，删除是安全的。
+     */
     void cleanupTempFiles() throws IOException {
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory, "*" + TEMP_SUFFIX)) {
             for (Path file : stream) {
