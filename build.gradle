@@ -134,7 +134,7 @@ tasks.withType(JavaCompile).configureEach {
 processResources {
     def fullVersion = version
     inputs.properties([version: fullVersion])
-    filteringCharset 'UTF-8'
+    filteringCharset = 'UTF-8'
     filesMatching('paper-plugin.yml') {
         expand version: fullVersion
     }
