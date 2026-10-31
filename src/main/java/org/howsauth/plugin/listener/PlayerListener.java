@@ -79,11 +79,6 @@ public final class PlayerListener implements Listener {
         joinAuthFlow.refreshPendingPlayers();
     }
 
-    /** 重启登录/注册超时任务。 */
-    public void scheduleLoginTimeout(Player player, boolean needsLogin) {
-        joinAuthFlow.scheduleLoginTimeout(player, needsLogin);
-    }
-
     @EventHandler(priority = EventPriority.LOWEST)
     public void onSpawnLocation(AsyncPlayerSpawnLocationEvent event) {
         spawnLocationHandler.handle(event);

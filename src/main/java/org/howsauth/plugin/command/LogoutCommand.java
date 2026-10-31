@@ -34,7 +34,7 @@ public final class LogoutCommand implements BasicCommand {
 
         // 登出流程：进入待登录状态 → 踢出服务器
         // 退出位置由退出流程统一保存（PlayerListener#onQuit 对本次连接已认证的玩家保存）
-        loginFlow.logout(player);
+        loginFlow.forceLogout(player.getUniqueId());
         player.kick(I18n.msg("logout.success", player));
     }
 }

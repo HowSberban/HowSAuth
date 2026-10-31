@@ -225,11 +225,6 @@ public final class LoginFlow {
         return true;
     }
 
-    // Logout
-    public void logout(Player player) {
-        forceLogout(player.getUniqueId());
-    }
-
     // Change password
     /**
      * 异步修改密码：旧密码校验与新密码哈希（bcrypt 耗时）在异步线程执行，结果回调回到玩家区域线程。
@@ -272,8 +267,4 @@ public final class LoginFlow {
 
     // ===== 登录成功后的状态恢复 =====
 
-    /** 登录/注册成功后的状态恢复（游戏模式、背包、提醒、珍珠）。 */
-    public void onLoginSuccess(Player player) {
-        loginSuccess.onLoginSuccess(player);
-    }
 }

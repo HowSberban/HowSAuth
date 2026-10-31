@@ -6,8 +6,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-// 表 players 在运行时由 PlayerDatabase 创建，静态分析无法解析
-@SuppressWarnings("SqlResolve")
 public final class PlayerDataManager implements AutoCloseable {
 
     // 连接池与全部表级 SQL 集中在 PlayerDatabase
@@ -22,7 +20,9 @@ public final class PlayerDataManager implements AutoCloseable {
     private final PlayerDataLoader loader;
     // 账号写操作（创建/标记/删除/清理/改密）
     private final PlayerAccountOperations operations;
-    // 脏标记：内存数据已修改但尚未落库的玩家 UUID，由周期任务批量 flush
+    // 脏标记：内存数据已修改但尚未落库的玩家 UUID，由周期任务批量 flush。
+    // 测试通过反射读取该字段断言 flush 后收敛，故保留为实例字段。
+    @SuppressWarnings("FieldCanBeLocal")
     private final Set<UUID> dirty = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public PlayerDataManager(HowSAuth plugin) {
@@ -31,11 +31,6 @@ public final class PlayerDataManager implements AutoCloseable {
         this.loader = new PlayerDataLoader(plugin, database, cache);
         this.operations = new PlayerAccountOperations(plugin, database, cache, persistence);
         this.migration = new AccountMigration(plugin, this, database);
-        loader.load();
-    }
-
-    /** 启动时全量加载玩家数据到内存缓存；失败时置 fail-closed 标记并自动重试直至成功 */
-    public void load() {
         loader.load();
     }
 
