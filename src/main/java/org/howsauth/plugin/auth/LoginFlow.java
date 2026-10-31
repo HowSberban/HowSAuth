@@ -31,10 +31,10 @@ public final class LoginFlow {
     private final ConfigManager configManager;
     private final AuthEvents events;
     private final SessionStore sessions;
-    private final FailProtection failProtection;
     private final TwoFactorAuth twoFactor;
     private final AccountLifecycle accounts;
     private final LoginSuccessHandler loginSuccess;
+    private final LoginVerification verification;
     private final PasswordFlow passwordFlow;
 
     LoginFlow(HowSAuth plugin, PlayerDataManager dataManager, ConfigManager configManager,
@@ -45,11 +45,12 @@ public final class LoginFlow {
         this.configManager = configManager;
         this.events = events;
         this.sessions = sessions;
-        this.failProtection = failProtection;
         this.twoFactor = twoFactor;
         this.accounts = accounts;
         this.loginSuccess = new LoginSuccessHandler(plugin, dataManager, configManager,
                 sessions, failProtection, twoFactor, accounts);
+        this.verification = new LoginVerification(plugin, dataManager, configManager,
+                sessions, failProtection, twoFactor, loginSuccess, events);
         this.passwordFlow = new PasswordFlow(plugin, dataManager, configManager,
                 sessions, twoFactor, accounts);
     }
@@ -102,126 +103,15 @@ public final class LoginFlow {
     }
 
     public void loginAsync(Player player, String password, BiConsumer<AuthManager.LoginResult, Long> done) {
-        UUID uuid = player.getUniqueId();
-        // 轻量检查（主线程/调用线程）
-        if (failProtection.isKicked(player)) {
-            done.accept(AuthManager.LoginResult.FAILED, failProtection.getKickRemaining(player));
-            return;
-        }
-        PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null) {
-            done.accept(AuthManager.LoginResult.FAILED, 0L);
-            return;
-        }
-        // 重入保护：已有一次密码校验进行中时静默忽略本次，避免重复校验、重复登录事件与消息
-        if (!sessions.beginVerifying(uuid)) {
-            return;
-        }
-        final PlayerData snapshot = data;
-        // bcrypt 校验与算法对齐重哈希均耗时，移到异步线程执行
-        Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            boolean ok = PasswordHash.checkPassword(password, snapshot.passwordHash());
-            // 密码算法对齐：配置算法与存储算法不一致时按配置算法重新哈希
-            // 哈希计算在异步线程完成（约 200-300ms），仅结果写回区域线程
-            String alignedHash = ok ? alignedPasswordHash(snapshot, password) : null;
-            // 状态变更需回到玩家区域线程（Folia 线程安全）
-            player.getScheduler().run(plugin, task2 -> {
-                sessions.endVerifying(uuid);
-                // 回调期间被强制登录或账号被注销（管理员操作与异步校验的竞态）：丢弃本次结果
-                // 避免二次登录收尾（重复事件/覆盖会话时间）与注销后的幽灵登录
-                if (sessions.isLoggedIn(uuid) || dataManager.getPlayer(uuid) == null) {
-                    return;
-                }
-                if (!ok) {
-                    handleLoginFailure(uuid, player);
-                    done.accept(AuthManager.LoginResult.FAILED, failProtection.isKicked(player) ? failProtection.getKickRemaining(player) : 0L);
-                } else {
-                    // 密码明文仅此处可用，须在进入 2FA 等待前完成对齐
-                    if (alignedHash != null) snapshot.passwordHash(alignedHash);
-                    String playerIp = SessionStore.clientIp(player);
-                    if (twoFactor.requiresAtLogin(uuid, playerIp)) {
-                        // 密码正确但需双因素认证：进入待验证状态，不算已登录
-                        // 开关关闭时跳过验证（密钥保留在数据库，重新开启后恢复）
-                        twoFactor.markPending(uuid);
-                        done.accept(AuthManager.LoginResult.NEED_2FA, 0L);
-                    } else {
-                        loginSuccess.completeLogin(player, snapshot);
-                        done.accept(AuthManager.LoginResult.SUCCESS, 0L);
-                    }
-                }
-            }, null);
-        });
+        verification.loginAsync(player, password, done);
     }
 
     /**
-     * 配置阶段异步登录（Pre-join Dialog，无 Player 实体）：
-     * bcrypt 校验在异步线程执行，回调也在异步线程（调用方仅做线程安全操作：重弹窗口/断连/闭锁）。
-     * 成功不立即完成登录——登录收尾（IP/时间更新、事件）延迟到玩家进入世界时由 finishPreJoinLogin 处理。
-     * @param ip 玩家 IP（用于 2FA 会话判断，null 视为无会话）
-     * @param done 回调（异步线程调用）：参数 1 登录结果；参数 2 失败时的剩余踢出秒数
+     * 配置阶段异步登录（Pre-join Dialog）：校验在异步线程执行，成功后由
+     * {@link #finishPreJoinLogin(Player)} 在进入世界时收尾。
      */
     public void loginConfigAsync(UUID uuid, String password, String ip, BiConsumer<AuthManager.LoginResult, Long> done) {
-        if (failProtection.isKicked(uuid)) {
-            long remaining = failProtection.getKickRemaining(uuid);
-            if (Debug.on()) {
-                Debug.log("auth", "login config %s: %s (kick %ss remaining)",
-                        Debug.shortId(uuid), AuthManager.LoginResult.FAILED, remaining);
-            }
-            done.accept(AuthManager.LoginResult.FAILED, remaining);
-            return;
-        }
-        PlayerData data = dataManager.getPlayer(uuid);
-        if (data == null) {
-            if (Debug.on()) {
-                Debug.log("auth", "login config %s: %s (no account)", Debug.shortId(uuid), AuthManager.LoginResult.FAILED);
-            }
-            done.accept(AuthManager.LoginResult.FAILED, 0L);
-            return;
-        }
-        // 注意：此处不复用 loginAsync 的 verifying 重入保护。pre-join 窗口提交后即关闭（串行），
-        // 不会并发双提交；且若重入直接 return 不回调 done，会导致配置线程永久阻塞（连接卡死）。
-        final PlayerData snapshot = data;
-        Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            boolean ok = PasswordHash.checkPassword(password, snapshot.passwordHash());
-            if (!ok) {
-                handleLoginFailure(uuid, null);
-                long remaining = failProtection.isKicked(uuid) ? failProtection.getKickRemaining(uuid) : 0L;
-                if (Debug.on()) {
-                    if (remaining > 0) {
-                        Debug.log("auth", "login config %s: %s (wrong password, kick %ss remaining)",
-                                Debug.shortId(uuid), AuthManager.LoginResult.FAILED, remaining);
-                    } else {
-                        Debug.log("auth", "login config %s: %s (wrong password)",
-                                Debug.shortId(uuid), AuthManager.LoginResult.FAILED);
-                    }
-                }
-                done.accept(AuthManager.LoginResult.FAILED, remaining);
-            } else {
-                String alignedHash = alignedPasswordHash(snapshot, password);
-                if (alignedHash != null) snapshot.passwordHash(alignedHash);
-                if (twoFactor.requiresAtLogin(uuid, ip)) {
-                    twoFactor.markPending(uuid);
-                    if (Debug.on()) {
-                        Debug.log("auth", "login config %s: %s", Debug.shortId(uuid), AuthManager.LoginResult.NEED_2FA);
-                    }
-                    done.accept(AuthManager.LoginResult.NEED_2FA, 0L);
-                } else {
-                    if (Debug.on()) {
-                        Debug.log("auth", "login config %s: %s", Debug.shortId(uuid), AuthManager.LoginResult.SUCCESS);
-                    }
-                    done.accept(AuthManager.LoginResult.SUCCESS, 0L);
-                }
-            }
-        });
-    }
-
-    /** 密码算法对齐：配置算法与存储算法不一致时按配置算法重新哈希（异步线程调用，返回新哈希；无需对齐返回 null） */
-    private String alignedPasswordHash(PlayerData data, String password) {
-        String configured = configManager.password().hashAlgorithm();
-        boolean storedIsBcrypt = PasswordHash.isBcrypt(data.passwordHash());
-        boolean configIsBcrypt = "bcrypt".equalsIgnoreCase(configured);
-        if (configIsBcrypt == storedIsBcrypt) return null;
-        return PasswordHash.hashPassword(password, configured, configManager.password().bcryptCost());
+        verification.loginConfigAsync(uuid, password, ip, done);
     }
 
     /** 移除密码，转为无密码账户（验证码/正版验证规则见 PasswordFlow）。 */
@@ -254,12 +144,6 @@ public final class LoginFlow {
         if (data == null) return;
         data.lastActive(PlayerDataManager.nowEpochSeconds());
         dataManager.save(player.getUniqueId());
-    }
-
-    /** 登录失败处理：失败计数（可能触发踢出）+ 触发失败事件（须在玩家区域线程调用；配置阶段 player 为 null，事件转全局调度器触发） */
-    private void handleLoginFailure(UUID uuid, Player player) {
-        failProtection.recordFailure(uuid, player);
-        events.loginFail(player);
     }
 
     // ===== 管理员强制操作 =====

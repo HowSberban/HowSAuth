@@ -3,8 +3,6 @@ package org.howsauth.plugin.listener;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.potion.PotionEffect;
-import org.bukkit.potion.PotionEffectType;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
@@ -34,6 +32,7 @@ final class JoinAuthFlow {
     private final LogoutLocation locations;
     private final LoginFlow loginFlow;
     private final AuthReminder reminders;
+    private final LoginBlindness blindness;
 
     JoinAuthFlow(HowSAuth plugin, SessionStore sessions, AccountLifecycle accounts,
                  TwoFactorAuth twoFactor, LogoutLocation locations,
@@ -45,6 +44,7 @@ final class JoinAuthFlow {
         this.locations = locations;
         this.loginFlow = loginFlow;
         this.reminders = reminders;
+        this.blindness = new LoginBlindness(plugin);
     }
 
     void onJoin(PlayerJoinEvent event) {
@@ -155,38 +155,15 @@ final class JoinAuthFlow {
                     needsLogin, plugin.config().protectionMisc().gamemodeEnabled());
         }
         locations.setSpectator(player);
-        applyLoginBlindness(player);
+        blindness.apply(player);
         player.sendMessage(I18n.msg(messageKey, player));
         reminders.schedule(player, needsLogin);
         scheduleLoginTimeout(player, needsLogin);
     }
 
-    /**
-     * 登录前失明：开关开启则施加无限时长失明（无颗粒无图标，重复挂起幂等），
-     * 关闭则移除——reload 经 refreshPendingPlayers 重新挂起时按新配置双向同步，
-     * 已失明的玩家可被解除，无需额外的 reload 同步逻辑。
-     */
-    private void applyLoginBlindness(Player player) {
-        if (plugin.config().protectionMisc().blindnessEnabled()) {
-            if (Debug.on()) {
-                Debug.log("flow", "apply login blindness for %s", player.getName());
-            }
-            player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS,
-                    PotionEffect.INFINITE_DURATION, 0, false, false, false));
-        } else {
-            clearLoginBlindness(player);
-        }
-    }
-
-    /**
-     * 移除登录失明：登录/注册成功、reload 关闭失明、加入时残留清理、
-     * 未登录退出四个场景共用此出口，效果类型改动只需修改一处。
-     */
+    /** 移除登录失明（包装类统一出口）。 */
     void clearLoginBlindness(Player player) {
-        if (Debug.on()) {
-            Debug.log("flow", "clear login blindness for %s", player.getName());
-        }
-        player.removePotionEffect(PotionEffectType.BLINDNESS);
+        blindness.clear(player);
     }
 
     /**

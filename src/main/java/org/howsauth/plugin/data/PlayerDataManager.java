@@ -1,94 +1,47 @@
 package org.howsauth.plugin.data;
 
-import org.howsauth.plugin.OfflineUuids;
 import org.howsauth.plugin.HowSAuth;
-import org.howsauth.plugin.Debug;
-import org.howsauth.plugin.I18n;
-import org.bukkit.Bukkit;
 
-import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 
 // 表 players 在运行时由 PlayerDatabase 创建，静态分析无法解析
 @SuppressWarnings("SqlResolve")
 public final class PlayerDataManager implements AutoCloseable {
 
-    private final HowSAuth plugin;
     // 连接池与全部表级 SQL 集中在 PlayerDatabase
     private final PlayerDatabase database;
     // 脏标记消费、批量落库、写队列与关服排空
     private final PlayerPersistence persistence;
     // 账号身份迁移（离线↔正版）：需要同时操控缓存、名字索引与写队列，故独立成类
     private final AccountMigration migration;
-    // 内存缓存：启动时全量加载，运行时读操作走缓存，写操作标记脏后由周期任务批量落库
-    private final Map<UUID, PlayerData> players = new ConcurrentHashMap<>();
+    // 内存缓存与名字索引：本类只做门面与迁移钩子，不直接维护缓存结构
+    private final PlayerCache cache = new PlayerCache();
+    // 启动加载与 fail-closed 重试
+    private final PlayerDataLoader loader;
+    // 账号写操作（创建/标记/删除/清理/改密）
+    private final PlayerAccountOperations operations;
     // 脏标记：内存数据已修改但尚未落库的玩家 UUID，由周期任务批量 flush
-    private final Set<UUID> dirty = ConcurrentHashMap.newKeySet();
-    // 数据库加载失败后的自动重试周期（秒）
-    private static final int LOAD_RETRY_PERIOD_SECONDS = 10;
-    // 正版玩家名索引：name(小写) → uuid，用于 getByName 快速查找，避免 O(n) 遍历
-    private final Map<String, UUID> premiumNameIndex = new ConcurrentHashMap<>();
-    // 数据库全量加载是否失败：失败期间 fail-closed，拒绝新玩家进入（空缓存会把所有玩家误判为未注册）
-    private volatile boolean loadFailed;
-    // 加载失败自动重试任务是否已挂起，防止周期任务叠加
-    private volatile boolean retryScheduled;
-    // IP 注册名额锁：同 IP 计数与建号须在同一临界区内完成，防止并发注册同时通过检查突破上限
-    private final Object ipLimitLock = new Object();
+    private final Set<UUID> dirty = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public PlayerDataManager(HowSAuth plugin) {
-        this.plugin = plugin;
         this.database = new PlayerDatabase(plugin);
-        this.persistence = new PlayerPersistence(plugin, database, players, dirty);
+        this.persistence = new PlayerPersistence(plugin, database, cache.players(), dirty);
+        this.loader = new PlayerDataLoader(plugin, database, cache);
+        this.operations = new PlayerAccountOperations(plugin, database, cache, persistence);
         this.migration = new AccountMigration(plugin, this, database);
-        load();
+        loader.load();
     }
 
     /** 启动时全量加载玩家数据到内存缓存；失败时置 fail-closed 标记并自动重试直至成功 */
     public void load() {
-        players.clear();
-        premiumNameIndex.clear();
-        try {
-            for (PlayerData data : database.loadAllRows()) {
-                players.put(data.uuid(), data);
-                if (data.premium() && data.name() != null) {
-                    premiumNameIndex.put(data.name().toLowerCase(), data.uuid());
-                }
-            }
-            loadFailed = false;
-            if (Debug.on()) {
-                Debug.log("db", "load complete: %s accounts loaded", players.size());
-            }
-        } catch (SQLException e) {
-            loadFailed = true;
-            plugin.getLogger().severe(I18n.get("log.load_players_failed", e.getMessage()));
-            scheduleLoadRetry();
-        }
-    }
-
-    /** 数据库恢复前的自动重试（10 秒周期，成功即停）；期间 isLoadFailed=true 拒绝新玩家进入 */
-    private void scheduleLoadRetry() {
-        if (retryScheduled) return;
-        retryScheduled = true;
-        Bukkit.getAsyncScheduler().runAtFixedRate(plugin, task -> {
-            if (!loadFailed) {
-                retryScheduled = false;
-                task.cancel();
-                return;
-            }
-            plugin.getLogger().warning(I18n.get("log.load_retry"));
-            load();
-        }, LOAD_RETRY_PERIOD_SECONDS, LOAD_RETRY_PERIOD_SECONDS, TimeUnit.SECONDS);
+        loader.load();
     }
 
     /** 数据库是否处于加载失败状态（fail-closed：玩家数据不可见，调用方应拒绝进入） */
     public boolean isLoadFailed() {
-        return loadFailed;
+        return loader.isLoadFailed();
     }
 
     /** 标记玩家数据为脏：由周期任务批量落库（合并写、降 DB 开销；崩溃时最多丢失一个 flush 周期内的改动） */
@@ -124,23 +77,20 @@ public final class PlayerDataManager implements AutoCloseable {
 
     /** 获取所有已注册玩家的 UUID 集合 */
     public Set<UUID> getAllUuids() {
-        return players.keySet();
+        return cache.uuids();
     }
 
     public boolean hasAccount(UUID uuid) {
-        return players.containsKey(uuid);
+        return cache.contains(uuid);
     }
 
     public PlayerData getPlayer(UUID uuid) {
-        return players.get(uuid);
+        return cache.get(uuid);
     }
 
     /** 查找指定 IP 下的所有账号（用于管理员排查多账号） */
     public List<PlayerData> findByIp(String ip) {
-        if (ip == null || ip.isEmpty()) return List.of();
-        return players.values().stream()
-                .filter(d -> ip.equals(d.ip()))
-                .toList();
+        return cache.findByIp(ip);
     }
 
     /** 当前 epoch 秒（PlayerData 时间戳字段的统一存储精度） */
@@ -149,10 +99,7 @@ public final class PlayerDataManager implements AutoCloseable {
     }
 
     public void createPlayer(UUID uuid, String passwordHash, String ip) {
-        PlayerData data = new PlayerData(uuid, null, passwordHash, ip, nowEpochSeconds(), null, false, null, null, null, 0);
-        players.put(uuid, data);
-        // 创建账号为关键操作：立即落库，避免崩溃丢新账号（区别于登录/退出等的周期批量 flush）
-        persistence.saveNow(data);
+        operations.createPlayer(uuid, passwordHash, ip);
     }
 
     /**
@@ -162,22 +109,7 @@ public final class PlayerDataManager implements AutoCloseable {
      * @return 建号成功返回账号数据；名额已满返回 null
      */
     public PlayerData createPlayerIfIpAllowed(UUID uuid, String passwordHash, String ip, int maxAccounts) {
-        synchronized (ipLimitLock) {
-            if (maxAccounts > 0 && ip != null) {
-                long count = players.values().stream().filter(d -> ip.equals(d.ip())).count();
-                if (count >= maxAccounts) {
-                    if (Debug.on()) {
-                        Debug.log("db", "create player %s rejected: ip account limit reached", Debug.shortId(uuid));
-                    }
-                    return null;
-                }
-            }
-            PlayerData data = new PlayerData(uuid, null, passwordHash, ip, nowEpochSeconds(), null, false, null, null, null, 0);
-            players.put(uuid, data);
-            // 创建账号为关键操作：立即落库，避免崩溃丢新账号
-            persistence.saveNow(data);
-            return data;
-        }
+        return operations.createPlayerIfIpAllowed(uuid, passwordHash, ip, maxAccounts);
     }
 
     /**
@@ -185,30 +117,12 @@ public final class PlayerDataManager implements AutoCloseable {
      * 正版验证即身份凭证，无需密码；玩家可用 /addpassword 自行设置
      */
     public void createPremiumPlayer(UUID uuid, String name, String ip, String properties) {
-        PlayerData data = new PlayerData(uuid, name, "", ip, nowEpochSeconds(), null, true, properties, null, null, 0);
-        players.put(uuid, data);
-        if (name != null) {
-            premiumNameIndex.put(name.toLowerCase(), uuid);
-        }
-        // 创建正版账号同样为关键操作：立即落库，避免崩溃丢新账号
-        persistence.saveNow(data);
+        operations.createPremiumPlayer(uuid, name, ip, properties);
     }
 
     /** 标记已有账号为正版（premium=1），更新 properties 和 name */
     public void markPremium(UUID uuid, String name, String properties) {
-        PlayerData data = players.get(uuid);
-        if (data == null) return;
-        // 更新索引：移除旧名映射，添加新名映射
-        if (data.name() != null) {
-            premiumNameIndex.remove(data.name().toLowerCase());
-        }
-        data.premium(true);
-        data.properties(properties);
-        data.name(name);
-        if (name != null) {
-            premiumNameIndex.put(name.toLowerCase(), uuid);
-        }
-        persistence.saveNow(data);
+        operations.markPremium(uuid, name, properties);
     }
 
     /**
@@ -216,10 +130,7 @@ public final class PlayerDataManager implements AutoCloseable {
      * 其余字段（UUID/名字/皮肤等）留待玩家下次正版验证进服时由正式流程写入
      */
     public void forceMarkPremium(UUID uuid) {
-        PlayerData data = players.get(uuid);
-        if (data == null) return;
-        data.premium(true);
-        persistence.saveNow(data);
+        operations.forceMarkPremium(uuid);
     }
 
     /**
@@ -227,10 +138,7 @@ public final class PlayerDataManager implements AutoCloseable {
      * 该记录本是离线 UUID 且无名字，撤标记后即恢复普通离线账号
      */
     public void forceMarkOffline(UUID uuid) {
-        PlayerData data = players.get(uuid);
-        if (data == null) return;
-        data.premium(false);
-        persistence.saveNow(data);
+        operations.forceMarkOffline(uuid);
     }
 
     /**
@@ -257,41 +165,36 @@ public final class PlayerDataManager implements AutoCloseable {
 
     /** 读取缓存中的账号（迁移判定的入口） */
     PlayerData cached(UUID uuid) {
-        return players.get(uuid);
+        return cache.get(uuid);
     }
 
     /** 移出缓存并清理落库相关状态：记录即将被删除，脏标记与重试计数不再有意义 */
     PlayerData take(UUID uuid) {
-        PlayerData data = players.remove(uuid);
+        PlayerData data = cache.remove(uuid);
         persistence.forget(uuid);
         return data;
     }
 
     /** 丢弃一个缓存记录（不返回），用于迁移中"旧记录作废"的场景 */
     void discard(UUID uuid, String nameToUnindex) {
-        players.remove(uuid);
-        if (nameToUnindex != null) {
-            premiumNameIndex.remove(nameToUnindex.toLowerCase());
-        }
+        cache.remove(uuid);
+        cache.unindex(nameToUnindex);
         persistence.forget(uuid);
     }
 
     /** 写入/替换一个缓存记录，并按需建立正版名字索引 */
     void store(UUID uuid, PlayerData data, String nameToIndex) {
-        players.put(uuid, data);
-        if (nameToIndex != null) {
-            premiumNameIndex.put(nameToIndex.toLowerCase(), uuid);
-        }
+        cache.putIndexed(uuid, data, nameToIndex);
     }
 
     /** 写入/替换一个缓存记录（不涉名字索引） */
     void put(UUID uuid, PlayerData data) {
-        players.put(uuid, data);
+        cache.put(uuid, data);
     }
 
     /** 摘除正版名字索引 */
     void unindex(String name) {
-        premiumNameIndex.remove(name.toLowerCase());
+        cache.unindex(name);
     }
 
     /** 入队一次数据库写任务（迁移事务走这里，保证与 flush/saveNow 的落库顺序） */
@@ -300,9 +203,7 @@ public final class PlayerDataManager implements AutoCloseable {
     }
 
     public PlayerData getByName(String name) {
-        if (name == null) return null;
-        UUID uuid = premiumNameIndex.get(name.toLowerCase());
-        return uuid != null ? players.get(uuid) : null;
+        return cache.getByName(name);
     }
 
     /**
@@ -310,11 +211,7 @@ public final class PlayerDataManager implements AutoCloseable {
      * 以数据库记录为准，避免 usercache 同名缓存到不同 UUID 造成误删
      */
     public UUID findUuidByName(String name) {
-        if (name == null) return null;
-        UUID uuid = premiumNameIndex.get(name.toLowerCase());
-        if (uuid != null) return uuid;
-        UUID offlineUuid = OfflineUuids.of(name);
-        return players.containsKey(offlineUuid) ? offlineUuid : null;
+        return cache.findUuidByName(name);
     }
 
     /**
@@ -322,41 +219,21 @@ public final class PlayerDataManager implements AutoCloseable {
      * 正版账号记录名字，按名索引判定；离线账号不记名，但离线 UUID 由用户名确定推导，按推导 UUID 判定等价
      */
     public boolean hasAccountByName(String name) {
-        return findUuidByName(name) != null;
+        return cache.hasAccountByName(name);
     }
 
     /** 是否为正版账号（premium=1） */
     public boolean isPremium(UUID uuid) {
-        PlayerData data = players.get(uuid);
-        return data != null && data.premium();
+        return cache.isPremium(uuid);
     }
 
     /** 数据库中是否存在正版账号（premium=1）：premiumNameIndex 仅收录正版账号 */
     public boolean hasPremiumAccount() {
-        return !premiumNameIndex.isEmpty();
+        return cache.hasPremiumAccount();
     }
 
     public void removePlayer(UUID uuid) {
-        if (Debug.on()) {
-            Debug.log("db", "remove player: %s", Debug.shortId(uuid));
-        }
-        PlayerData data = players.remove(uuid);
-        if (data != null && data.name() != null) {
-            premiumNameIndex.remove(data.name().toLowerCase());
-        }
-        // 清理落库相关状态：账号已删除，脏标记与重试计数不再有意义（防止残留）
-        persistence.forget(uuid);
-        // 删除经串行写队列执行：内存已先移除，排在前面的在途 upsert 会因执行时复检被跳过
-        submitWrite(() -> {
-            try {
-                database.deleteRow(uuid);
-            } catch (SQLException e) {
-                plugin.getLogger().severe(I18n.get("log.delete_player_failed", uuid, e.getMessage()));
-                if (Debug.on()) {
-                    Debug.log("db", "delete player failed: %s", e.getMessage());
-                }
-            }
-        });
+        operations.removePlayer(uuid);
     }
 
     /**
@@ -366,31 +243,11 @@ public final class PlayerDataManager implements AutoCloseable {
      * @return 清理的账号数量
      */
     public int purgeInactive(int days) {
-        long threshold = nowEpochSeconds() - days * 86400L;
-        List<UUID> toDelete = new ArrayList<>();
-        for (PlayerData data : players.values()) {
-            if (data.premium()) continue;
-            // 在线玩家跳过：/reload 重新启用时不会触发 PlayerJoinEvent 刷新活跃时间，在线期间的活跃度停留在上线时刻
-            if (Bukkit.getPlayer(data.uuid()) != null) continue;
-            long activity = Math.max(data.lastActive(), data.lastLogin());
-            if (activity > 0 && activity < threshold) {
-                toDelete.add(data.uuid());
-            }
-        }
-        for (UUID uuid : toDelete) {
-            removePlayer(uuid);
-        }
-        if (!toDelete.isEmpty() && Debug.on()) {
-            Debug.log("db", "purge inactive: %s accounts removed", toDelete.size());
-        }
-        return toDelete.size();
+        return operations.purgeInactive(days);
     }
 
     public void updatePassword(UUID uuid, String newHash) {
-        PlayerData data = players.get(uuid);
-        if (data == null) return;
-        data.passwordHash(newHash);
-        persistence.saveNow(data);
+        operations.updatePassword(uuid, newHash);
     }
 
     /** 关闭数据源，释放连接池（确保串行写队列先排空，防止在途写任务打到已关闭的池） */
