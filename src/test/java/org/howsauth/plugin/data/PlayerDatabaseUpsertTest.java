@@ -77,6 +77,9 @@ class PlayerDatabaseUpsertTest {
         UUID uuid = UUID.randomUUID();
         PlayerDataManager data = env.data();
         data.createPlayer(uuid, "hash-keep", "198.51.100.4");
+        // createPlayer 只是把 INSERT 提交给串行写队列（异步落库）。必须等它真正落库，
+        // 否则下面的 UPDATE 可能先于 INSERT 执行（CI 上就因此命中 0 行），前置断言会误判。
+        data.awaitPendingWrites();
 
         // 造一行"额外字段"：模拟将来新增但未加入 upsert 语句的列
         try (Connection conn = openRawConnection(); Statement st = conn.createStatement()) {
