@@ -5,6 +5,7 @@ import io.netty.channel.Channel;
 import org.howsauth.plugin.OfflineUuids;
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.HowSAuth;
+import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.data.PlayerData;
 import org.howsauth.plugin.data.PlayerDataManager;
 
@@ -145,6 +146,7 @@ final class PremiumVerifier {
             Debug.log("premium", "premium verified for %s: entering as premium uuid %s (upgrade=%s)",
                     username, Debug.shortId(uuid), session.isUpgradeAttempt());
         }
+        plugin.getLogger().info(I18n.get("log.premium_verified", username, uuid));
 
         // 13. 进入游戏（异步触发 AsyncPlayerPreLoginEvent + 推进 state）
         handler.proceedWithLogin(channel, user, session, uuid, username, properties);

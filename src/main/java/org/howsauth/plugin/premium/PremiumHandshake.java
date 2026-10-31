@@ -125,7 +125,7 @@ final class PremiumHandshake {
         if (profile.exists() && profile.premium()
                 && verifier.premiumFallbackAllowed(profile.uuid())
                 && dataService.isPremiumFallbackConfirmed(ip, username)) {
-            plugin.getLogger().info(I18n.get("log.premium_fallback_login", username, ip));
+            plugin.getLogger().info(I18n.get("log.premium_fallback_login", username, profile.uuid()));
             event.setCancelled(true);
             // 标记本次需密码登录，onJoin 时不自动免密
             plugin.accounts().markPremiumFallback(profile.uuid());
@@ -136,7 +136,7 @@ final class PremiumHandshake {
             return;
         }
 
-        plugin.getLogger().info(I18n.get("log.premium_verifying", username, ip));
+        plugin.getLogger().info(I18n.get("log.premium_verifying", username));
 
         // 5. premium=1/新玩家/升级尝试 → 取消 LoginStart，走正版验证流程
         event.setCancelled(true);
@@ -215,7 +215,6 @@ final class PremiumHandshake {
     // ===== 阶段2-3：加密握手与启用 =====
 
     // EventLoop 为长生命周期资源，不应关闭
-    @SuppressWarnings("resource")
     void handleEncryptionResponse(PacketReceiveEvent event) {
         Channel channel = (Channel) event.getChannel();
         User user = event.getUser();
