@@ -224,13 +224,12 @@ public final class HSAuthApi {
             }
             return false;
         }
-        if (!authManager.accounts().forceRegister(player.getUniqueId(), player.getName(), password)) {
+        if (!authManager.loginFlow().forceRegisterAndLogin(player, player.getName(), password)) {
             if (Debug.on()) {
                 Debug.log("api", "force register %s: failed (account already exists)", player.getName());
             }
             return false;
         }
-        authManager.loginFlow().forceLogin(player);
         if (Debug.on()) {
             Debug.log("api", "force register %s: success", player.getName());
         }

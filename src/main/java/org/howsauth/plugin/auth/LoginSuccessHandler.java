@@ -67,6 +67,12 @@ final class LoginSuccessHandler {
         }
     }
 
+    /** 无账号数据收尾的强制登录：仅标记会话与恢复状态，事件由调用方触发。 */
+    void forceLogin(Player player) {
+        markLoggedIn(player.getUniqueId());
+        onLoginSuccess(player);
+    }
+
     /** 标记玩家为已登录：置位实时登录态与本次连接认证标记，清理双因素待验证、失败计数、踢出记录 */
     void markLoggedIn(java.util.UUID uuid) {
         sessions.markLoggedIn(uuid);

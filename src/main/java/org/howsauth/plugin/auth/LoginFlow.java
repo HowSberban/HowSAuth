@@ -2,7 +2,6 @@ package org.howsauth.plugin.auth;
 
 import org.howsauth.plugin.Debug;
 import org.howsauth.plugin.HowSAuth;
-import org.howsauth.plugin.api.event.HSAuthRegisterEvent;
 import org.howsauth.plugin.config.ConfigManager;
 import org.howsauth.plugin.data.PlayerDataManager;
 import org.howsauth.plugin.data.PlayerData;
@@ -90,10 +89,7 @@ public final class LoginFlow {
                     done.accept(false);
                     return;
                 }
-                sessions.markLoginSession(uuid, ip);
-                loginSuccess.markLoggedIn(uuid);
-                loginSuccess.onLoginSuccess(player);
-                events.register(uuid, player);
+                completeRegistration(player);
                 if (Debug.on()) {
                     Debug.log("auth", "register %s: success", player.getName());
                 }
@@ -171,13 +167,20 @@ public final class LoginFlow {
 
     /** 强制登录玩家（不管有没有账号，仅对在线玩家生效） */
     public void forceLogin(Player player) {
-        UUID uuid = player.getUniqueId();
         if (Debug.on()) {
             Debug.log("auth", "force login: %s", player.getName());
         }
-        loginSuccess.markLoggedIn(uuid);
-        loginSuccess.onLoginSuccess(player);
+        loginSuccess.forceLogin(player);
         events.login(player);
+    }
+
+    /** 在线玩家强制注册并直接登录；bcrypt 建号，调用方应在异步线程执行。 */
+    public boolean forceRegisterAndLogin(Player player, String name, String password) {
+        if (!accounts.forceRegister(player.getUniqueId(), name, password)) {
+            return false;
+        }
+        forceLogin(player);
+        return true;
     }
 
     // 免密登录：跳过密码验证直接完成登录（会话命中或正版验证通过后调用）
@@ -218,11 +221,17 @@ public final class LoginFlow {
      */
     public boolean finishPreJoinRegister(Player player) {
         if (!dataManager.hasAccount(player.getUniqueId())) return false;
-        sessions.markLoginSession(player.getUniqueId(), SessionStore.clientIp(player));
-        loginSuccess.markLoggedIn(player.getUniqueId());
-        loginSuccess.onLoginSuccess(player);
-        Bukkit.getPluginManager().callEvent(new HSAuthRegisterEvent(player.getUniqueId(), player));
+        completeRegistration(player);
         return true;
+    }
+
+    /** 注册成功后的统一收尾：建立免密会话、标记登录、恢复状态、触发注册事件。 */
+    private void completeRegistration(Player player) {
+        UUID uuid = player.getUniqueId();
+        sessions.markLoginSession(uuid, SessionStore.clientIp(player));
+        loginSuccess.markLoggedIn(uuid);
+        loginSuccess.onLoginSuccess(player);
+        events.register(uuid, player);
     }
 
     // Change password

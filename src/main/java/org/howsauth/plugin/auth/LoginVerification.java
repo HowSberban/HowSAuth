@@ -61,12 +61,10 @@ final class LoginVerification {
             return;
         }
         final PlayerData snapshot = data;
+        String playerIp = SessionStore.clientIp(player);
         // bcrypt 校验与算法对齐重哈希均耗时，移到异步线程执行
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            boolean ok = PasswordHash.checkPassword(password, snapshot.passwordHash());
-            // 密码算法对齐：配置算法与存储算法不一致时按配置算法重新哈希
-            // 哈希计算在异步线程完成（约 200-300ms），仅结果写回区域线程
-            String alignedHash = ok ? alignedPasswordHash(snapshot, password) : null;
+            PasswordVerification verification = verifyPassword(snapshot, uuid, password, playerIp);
             // 状态变更需回到玩家区域线程（Folia 线程安全）
             player.getScheduler().run(plugin, task2 -> {
                 sessions.endVerifying(uuid);
@@ -75,22 +73,17 @@ final class LoginVerification {
                 if (sessions.isLoggedIn(uuid) || dataManager.getPlayer(uuid) == null) {
                     return;
                 }
-                if (!ok) {
+                if (!verification.ok()) {
                     handleLoginFailure(uuid, player);
                     done.accept(AuthManager.LoginResult.FAILED, failProtection.isKicked(player) ? failProtection.getKickRemaining(player) : 0L);
+                } else if (verification.needTwoFactor()) {
+                    twoFactor.markPending(uuid);
+                    done.accept(AuthManager.LoginResult.NEED_2FA, 0L);
                 } else {
                     // 密码明文仅此处可用，须在进入 2FA 等待前完成对齐
-                    if (alignedHash != null) snapshot.passwordHash(alignedHash);
-                    String playerIp = SessionStore.clientIp(player);
-                    if (twoFactor.requiresAtLogin(uuid, playerIp)) {
-                        // 密码正确但需双因素认证：进入待验证状态，不算已登录
-                        // 开关关闭时跳过验证（密钥保留在数据库，重新开启后恢复）
-                        twoFactor.markPending(uuid);
-                        done.accept(AuthManager.LoginResult.NEED_2FA, 0L);
-                    } else {
-                        loginSuccess.completeLogin(player, snapshot);
-                        done.accept(AuthManager.LoginResult.SUCCESS, 0L);
-                    }
+                    if (verification.alignedHash() != null) snapshot.passwordHash(verification.alignedHash());
+                    loginSuccess.completeLogin(player, snapshot);
+                    done.accept(AuthManager.LoginResult.SUCCESS, 0L);
                 }
             }, null);
         });
@@ -127,8 +120,8 @@ final class LoginVerification {
         // 不会并发双提交；且若重入直接 return 不回调 done，会导致配置线程永久阻塞（连接卡死）。
         final PlayerData snapshot = data;
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            boolean ok = PasswordHash.checkPassword(password, snapshot.passwordHash());
-            if (!ok) {
+            PasswordVerification verification = verifyPassword(snapshot, uuid, password, ip);
+            if (!verification.ok()) {
                 handleLoginFailure(uuid, null);
                 long remaining = failProtection.isKicked(uuid) ? failProtection.getKickRemaining(uuid) : 0L;
                 if (Debug.on()) {
@@ -141,23 +134,31 @@ final class LoginVerification {
                     }
                 }
                 done.accept(AuthManager.LoginResult.FAILED, remaining);
-            } else {
-                String alignedHash = alignedPasswordHash(snapshot, password);
-                if (alignedHash != null) snapshot.passwordHash(alignedHash);
-                if (twoFactor.requiresAtLogin(uuid, ip)) {
-                    twoFactor.markPending(uuid);
-                    if (Debug.on()) {
-                        Debug.log("auth", "login config %s: %s", Debug.shortId(uuid), AuthManager.LoginResult.NEED_2FA);
-                    }
-                    done.accept(AuthManager.LoginResult.NEED_2FA, 0L);
-                } else {
-                    if (Debug.on()) {
-                        Debug.log("auth", "login config %s: %s", Debug.shortId(uuid), AuthManager.LoginResult.SUCCESS);
-                    }
-                    done.accept(AuthManager.LoginResult.SUCCESS, 0L);
+            } else if (verification.needTwoFactor()) {
+                twoFactor.markPending(uuid);
+                if (Debug.on()) {
+                    Debug.log("auth", "login config %s: %s", Debug.shortId(uuid), AuthManager.LoginResult.NEED_2FA);
                 }
+                done.accept(AuthManager.LoginResult.NEED_2FA, 0L);
+            } else {
+                if (verification.alignedHash() != null) snapshot.passwordHash(verification.alignedHash());
+                if (Debug.on()) {
+                    Debug.log("auth", "login config %s: %s", Debug.shortId(uuid), AuthManager.LoginResult.SUCCESS);
+                }
+                done.accept(AuthManager.LoginResult.SUCCESS, 0L);
             }
         });
+    }
+
+    /** 同一次密码校验的共享结果：密码是否正确、是否需要重哈希、是否需要 2FA。 */
+    private record PasswordVerification(boolean ok, String alignedHash, boolean needTwoFactor) {}
+
+    /** 在异步线程执行密码校验、算法对齐判断与 2FA 需求判断，避免两条登录路径重复。 */
+    private PasswordVerification verifyPassword(PlayerData data, UUID uuid, String password, String ip) {
+        boolean ok = PasswordHash.checkPassword(password, data.passwordHash());
+        String alignedHash = ok ? alignedPasswordHash(data, password) : null;
+        boolean needTwoFactor = ok && twoFactor.requiresAtLogin(uuid, ip);
+        return new PasswordVerification(ok, alignedHash, needTwoFactor);
     }
 
     /** 密码算法对齐：配置算法与存储算法不一致时按配置算法重新哈希（异步线程调用，返回新哈希；无需对齐返回 null） */

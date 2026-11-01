@@ -155,9 +155,7 @@ final class AdminAccountHandlers {
             sender.sendMessage(I18n.msg("hsauth.already_logged_in", sender, targetName));
             return 0;
         }
-        plugin.loginFlow().forceLogin(target);
-        // 强制登录后传送回上次退出位置
-        plugin.locations().teleportBack(target);
+        forceLoginAndTeleport(target);
         if (Debug.on()) {
             Debug.log("cmd", "forcelogin by %s for %s: success", sender.getName(), targetName);
         }
@@ -165,7 +163,14 @@ final class AdminAccountHandlers {
         return Command.SINGLE_SUCCESS;
     }
 
-    // 强制注册：绕过 IP 限制为玩家创建账号。玩家在线或离线均可，注册后需自行 /login
+    /** 强制登录并传送回退出位置；已登录玩家跳过。 */
+    private void forceLoginAndTeleport(Player player) {
+        if (plugin.sessions().isLoggedIn(player)) return;
+        plugin.loginFlow().forceLogin(player);
+        plugin.locations().teleportBack(player);
+    }
+
+    // 强制注册：绕过 IP 限制为玩家创建账号；在线/Pre-join 玩家创建后直接登录，离线玩家下次登录生效
     int handleForceRegister(CommandContext<io.papermc.paper.command.brigadier.CommandSourceStack> ctx) {
         CommandSender sender = ctx.getSource().getSender();
         String targetName = StringArgumentType.getString(ctx, "player");
@@ -174,8 +179,13 @@ final class AdminAccountHandlers {
             Debug.log("cmd", "forceregister by %s for %s", sender.getName(), targetName);
         }
         if (PasswordValidator.invalidPattern(plugin, sender, password)) return Command.SINGLE_SUCCESS;
+        // 在线玩家使用当前真实 UUID 建号，避免解析到离线 UUID 后 forceLogin 找不到账号
+        Player onlineTarget = Bukkit.getPlayerExact(targetName);
+        UUID targetUuid = onlineTarget != null
+                ? onlineTarget.getUniqueId()
+                : AdminTargetResolver.resolve(dataManager, targetName);
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
-            if (!plugin.accounts().forceRegister(AdminTargetResolver.resolve(dataManager, targetName), targetName, password)) {
+            if (!plugin.accounts().forceRegister(targetUuid, targetName, password)) {
                 if (Debug.on()) {
                     Debug.log("cmd", "forceregister by %s for %s: already exists", sender.getName(), targetName);
                 }
@@ -185,13 +195,24 @@ final class AdminAccountHandlers {
             if (Debug.on()) {
                 Debug.log("cmd", "forceregister by %s for %s: success", sender.getName(), targetName);
             }
-            sender.sendMessage(I18n.msg("hsauth.forceregister_success", sender, targetName));
-            // 在线玩家：挂起等待登录并重启提醒/超时任务（注册提醒会因 hasAccount=true 自动取消）
-            Player online = Bukkit.getPlayerExact(targetName);
-            if (online != null) {
-                // 复用通用挂起：补旁观者保护（登录成功后按存储模式恢复游戏模式）
-                plugin.playerListener().suspend(online, "listener.please_login", true);
+            if (onlineTarget != null) {
+                // 在线玩家：建号后直接在玩家区域线程完成登录，无需重新进入
+                onlineTarget.getScheduler().run(plugin, scheduledTask -> {
+                    if (!onlineTarget.isOnline()) return;
+                    forceLoginAndTeleport(onlineTarget);
+                    sender.sendMessage(I18n.msg("hsauth.forceregister_success_login", sender, targetName));
+                }, null);
+                return;
             }
+            // Pre-join Dialog：账号刚建好，直接唤醒等待中的配置阶段会话；进入世界后走现有登录收尾
+            PreJoinAuthListener preJoin = plugin.preJoinAuth();
+            if (preJoin != null
+                    && preJoin.forceLogin(targetName) == PreJoinAuthListener.ForceResult.COMPLETED) {
+                sender.sendMessage(I18n.msg("hsauth.forceregister_success_login", sender, targetName));
+                return;
+            }
+            // 纯离线玩家：账号已创建，下次进入时按正常登录流程处理
+            sender.sendMessage(I18n.msg("hsauth.forceregister_success", sender, targetName));
         });
         return Command.SINGLE_SUCCESS;
     }
