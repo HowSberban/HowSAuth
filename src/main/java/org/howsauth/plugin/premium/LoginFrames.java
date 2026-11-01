@@ -38,7 +38,7 @@ final class LoginFrames {
                 // 该 NMS 版本无此方法，回退 channel.remoteAddress
             }
         }
-        if (channel.remoteAddress() instanceof InetSocketAddress addr) {
+        if (channel.remoteAddress() instanceof InetSocketAddress addr && addr.getAddress() != null) {
             return addr.getAddress().getHostAddress();
         }
         return null;

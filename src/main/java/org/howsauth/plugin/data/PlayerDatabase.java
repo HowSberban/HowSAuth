@@ -88,9 +88,16 @@ final class PlayerDatabase implements AutoCloseable {
         initTable();
     }
 
-    /**
-     * 建立连接池。MySQL 由配置拼接 JDBC URL 与连接参数；SQLite 固定单连接（写入依赖文件锁，多连接会阻塞）。
+    /*
+      建立连接池。MySQL 由配置拼接 JDBC URL 与连接参数；SQLite 固定单连接（写入依赖文件锁，多连接会阻塞）。
      */
+    /** JDBC URL 中的 IPv6 字面量必须加方括号；主机名/已有方括号保持不变。 */
+    static String jdbcHost(String host) {
+        if (host == null || host.isEmpty()) return host;
+        if (host.startsWith("[") || host.indexOf(':') < 0) return host;
+        return "[" + host + "]";
+    }
+
     private HikariDataSource openDataSource(HowSAuth plugin) {
         var cm = plugin.config();
         HikariConfig config = new HikariConfig();
@@ -100,7 +107,7 @@ final class PlayerDatabase implements AutoCloseable {
             // 拼接 MySQL JDBC URL 与连接参数
             StringBuilder url = new StringBuilder()
                     .append("jdbc:mysql://")
-                    .append(cm.database().host())
+                    .append(jdbcHost(cm.database().host()))
                     .append(":")
                     .append(cm.database().port())
                     .append("/")
