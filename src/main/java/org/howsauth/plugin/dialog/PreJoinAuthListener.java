@@ -15,7 +15,9 @@ import org.howsauth.plugin.auth.SessionStore;
 import org.howsauth.plugin.auth.TwoFactorAuth;
 import org.howsauth.plugin.config.ConfigManager;
 
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -87,6 +89,60 @@ public final class PreJoinAuthListener implements Listener {
     /** 配置阶段是否已完成认证（供出生点决策查询，不消费结果） */
     public boolean hasCompleted(UUID uuid) {
         return outcomes.containsKey(uuid);
+    }
+
+    /** 当前处于 Pre-join 等待中的玩家名（供管理命令补全）。 */
+    public Set<String> waitingPlayerNames() {
+        Set<String> names = new LinkedHashSet<>();
+        for (PreJoinSession session : configSessions.values()) {
+            if (session.kicked || session.fallback) continue;
+            String name = session.connection.getProfile().getName();
+            if (name != null) names.add(name);
+        }
+        return names;
+    }
+
+    /** 管理员强制放行的结果。 */
+    public enum ForceResult {
+        /** 已标记成功并唤醒配置线程。 */
+        COMPLETED,
+        /** 当前没有该玩家的 Pre-join 会话。 */
+        NOT_WAITING,
+        /** 会话存在，但该 UUID 没有账号，不能强制登录。 */
+        NO_ACCOUNT
+    }
+
+    /**
+     * 管理员强制放行处于 Pre-join Dialog 的玩家：只标记会话成功并释放闭锁，
+     * 后续 outcome 消费与进入世界收尾仍走现有流程。
+     * <p>
+     * 调用方需具备管理员权限；本方法绕过密码/2FA，不创建账号。
+     */
+    public ForceResult forceLogin(String playerName) {
+        if (playerName == null) return ForceResult.NOT_WAITING;
+        synchronized (configSessions) {
+            UUID target = null;
+            PreJoinSession targetSession = null;
+            for (Map.Entry<UUID, PreJoinSession> entry : configSessions.entrySet()) {
+                String name = entry.getValue().connection.getProfile().getName();
+                if (playerName.equalsIgnoreCase(name)) {
+                    target = entry.getKey();
+                    targetSession = entry.getValue();
+                    break;
+                }
+            }
+            if (target == null || targetSession == null
+                    || configSessions.get(target) != targetSession
+                    || targetSession.kicked || targetSession.fallback) {
+                return ForceResult.NOT_WAITING;
+            }
+            if (!accounts.hasAccount(target)) {
+                return ForceResult.NO_ACCOUNT;
+            }
+            targetSession.success = true;
+            targetSession.latch.countDown();
+            return ForceResult.COMPLETED;
+        }
     }
 
     @EventHandler

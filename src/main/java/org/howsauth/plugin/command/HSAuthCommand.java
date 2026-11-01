@@ -9,12 +9,15 @@ import com.mojang.brigadier.tree.LiteralCommandNode;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.data.PlayerDataManager;
+import org.howsauth.plugin.dialog.PreJoinAuthListener;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 import static io.papermc.paper.command.brigadier.Commands.argument;
@@ -29,27 +32,16 @@ import static io.papermc.paper.command.brigadier.Commands.literal;
 @SuppressWarnings("SameReturnValue")
 public final class HSAuthCommand {
 
-    /** 在线玩家名补全（不依赖实例状态，static） */
-    private static final SuggestionProvider<io.papermc.paper.command.brigadier.CommandSourceStack> SUGGEST_PLAYERS =
-            (context, builder) -> {
-                String remaining = builder.getRemaining().toLowerCase(Locale.ROOT);
-                for (Player player : Bukkit.getOnlinePlayers()) {
-                    String name = player.getName();
-                    if (remaining.isEmpty() || name.toLowerCase(Locale.ROOT).startsWith(remaining)) {
-                        builder.suggest(name);
-                    }
-                }
-                return builder.buildFuture();
-            };
-
     private final AdminInspectionHandlers inspectionHandlers;
     private final AdminAccountHandlers accountHandlers;
     private final SuggestionProvider<io.papermc.paper.command.brigadier.CommandSourceStack> suggestAllPlayers;
+    private final SuggestionProvider<io.papermc.paper.command.brigadier.CommandSourceStack> suggestLoginTargets;
 
     public HSAuthCommand(HowSAuth plugin, PlayerDataManager dataManager) {
         this.inspectionHandlers = new AdminInspectionHandlers(plugin, dataManager);
         this.accountHandlers = new AdminAccountHandlers(plugin, dataManager);
         this.suggestAllPlayers = suggestAllPlayers(dataManager);
+        this.suggestLoginTargets = suggestLoginTargets(plugin);
     }
 
     /** 补全：在线玩家 + 已注册的离线玩家（大小写不敏感前缀匹配）。static，供其它命令复用。 */
@@ -70,6 +62,28 @@ public final class HSAuthCommand {
                 OfflinePlayer offline = Bukkit.getOfflinePlayer(uuid);
                 String name = offline.getName();
                 if (name != null && (remaining.isEmpty() || name.toLowerCase(Locale.ROOT).startsWith(remaining))) {
+                    builder.suggest(name);
+                }
+            }
+            return builder.buildFuture();
+        };
+    }
+
+    /** 补全强制登录目标：在线玩家 + 处于 Pre-join Dialog 等待中的玩家。 */
+    private static SuggestionProvider<io.papermc.paper.command.brigadier.CommandSourceStack> suggestLoginTargets(
+            HowSAuth plugin) {
+        return (context, builder) -> {
+            String remaining = builder.getRemaining().toLowerCase(Locale.ROOT);
+            Set<String> names = new LinkedHashSet<>();
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                names.add(player.getName());
+            }
+            PreJoinAuthListener preJoin = plugin.preJoinAuth();
+            if (preJoin != null) {
+                names.addAll(preJoin.waitingPlayerNames());
+            }
+            for (String name : names) {
+                if (remaining.isEmpty() || name.toLowerCase(Locale.ROOT).startsWith(remaining)) {
                     builder.suggest(name);
                 }
             }
@@ -114,12 +128,12 @@ public final class HSAuthCommand {
                 // /hsauth forcelogin <player>
                 .then(literal("forcelogin")
                         .then(argument("player", StringArgumentType.word())
-                                .suggests(SUGGEST_PLAYERS)
+                                .suggests(suggestLoginTargets)
                                 .executes(accountHandlers::handleForceLogin)))
                 // /hsauth forceregister <player> <password>
                 .then(literal("forceregister")
                         .then(argument("player", StringArgumentType.word())
-                                .suggests(SUGGEST_PLAYERS)
+                                .suggests(suggestAllPlayers)
                                 .then(argument("password", StringArgumentType.word())
                                         .executes(accountHandlers::handleForceRegister))))
                 // /hsauth reset2fa <player>：管理员强制解除 2FA 绑定（玩家误删验证器密钥时解锁）

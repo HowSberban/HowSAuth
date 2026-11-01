@@ -11,12 +11,15 @@ import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
 import org.howsauth.plugin.auth.PasswordValidator;
 import org.howsauth.plugin.data.PlayerDataManager;
+import org.howsauth.plugin.dialog.PreJoinAuthListener;
 
 import java.util.UUID;
 
 /**
  * 管理员账号操作类子命令：强制登录/登出、改密/清空密码、强制注册、重置 2FA、删除账号。
  */
+// 处理函数统一返回 SINGLE_SUCCESS（含提前返回的校验分支），由命令树消费
+@SuppressWarnings("SameReturnValue")
 final class AdminAccountHandlers {
 
     private final HowSAuth plugin;
@@ -120,6 +123,24 @@ final class AdminAccountHandlers {
         }
         Player target = Bukkit.getPlayerExact(targetName);
         if (target == null) {
+            // Pre-join Dialog 阶段玩家还没有 Player 实体，不能走普通在线强制登录；
+            // 尝试直接放行等待中的配置阶段会话。
+            PreJoinAuthListener preJoin = plugin.preJoinAuth();
+            if (preJoin != null) {
+                PreJoinAuthListener.ForceResult result = preJoin.forceLogin(targetName);
+                if (result == PreJoinAuthListener.ForceResult.COMPLETED) {
+                    if (Debug.on()) {
+                        Debug.log("cmd", "forcelogin by %s for %s: pre-join session released",
+                                sender.getName(), targetName);
+                    }
+                    sender.sendMessage(I18n.msg("hsauth.forcelogin_success", sender, targetName));
+                    return Command.SINGLE_SUCCESS;
+                }
+                if (result == PreJoinAuthListener.ForceResult.NO_ACCOUNT) {
+                    sender.sendMessage(I18n.msg("hsauth.accounts_not_found", sender));
+                    return 0;
+                }
+            }
             if (Debug.on()) {
                 Debug.log("cmd", "forcelogin by %s for %s: player not online", sender.getName(), targetName);
             }
