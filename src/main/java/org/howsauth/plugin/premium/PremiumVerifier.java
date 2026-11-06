@@ -116,9 +116,25 @@ final class PremiumVerifier {
                                 UUID uuid, String properties) {
         // 12. 保存正版数据（异步落盘）
         if (session.isUpgradeAttempt()) {
-            // 升级成功：将离线账号迁移到正版 UUID（保留退出位置等数据，密码置空）+ 迁移原版玩家数据（背包/成就/统计），清除升级标记
-            dataService.migrateToPremium(session.offlineUuid(), uuid, username, session.ip(), properties);
-            plugin.playerFiles().migrateAsync(session.offlineUuid(), uuid);
+            var request = plugin.accounts().getUpgradeRequest(session.offlineUuid());
+            boolean inheritTarget = request != null && request.inherit();
+            if (inheritTarget) {
+                // 指定正版账号升级：保留目标账号原有数据，不把离线数据/原版文件覆盖过去
+                if (dataService.migrateToPremiumInheritingTarget(session.offlineUuid(), uuid, username, properties)) {
+                    if (Debug.on()) {
+                        Debug.log("premium", "upgrade success for %s: inherited existing premium uuid %s",
+                                username, Debug.shortId(uuid));
+                    }
+                } else {
+                    // 目标记录已不存在（竞态）：退回普通升级，避免卡在离线账号
+                    dataService.migrateToPremium(session.offlineUuid(), uuid, username, session.ip(), properties);
+                    plugin.playerFiles().migrateAsync(session.offlineUuid(), uuid);
+                }
+            } else {
+                // 默认升级：离线账号数据覆盖目标正版 UUID，并迁移原版玩家数据（背包/成就/统计）
+                dataService.migrateToPremium(session.offlineUuid(), uuid, username, session.ip(), properties);
+                plugin.playerFiles().migrateAsync(session.offlineUuid(), uuid);
+            }
             plugin.accounts().clearUpgradePending(session.offlineUuid());
             if (Debug.on()) {
                 Debug.log("premium", "upgrade success for %s: migrated offline account to premium uuid %s",

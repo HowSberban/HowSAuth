@@ -66,6 +66,33 @@ final class AccountMigration {
     }
 
     /**
+     * 将离线账号升级为正版，但保留目标正版账号原有账号数据（不覆盖）。
+     * <p>
+     * 与 {@link #migrateToPremium} 的区别：目标 UUID 已有记录时，密码/2FA/退出位置/
+     * 游戏模式/活跃时间沿用目标记录，只更新名字与皮肤 properties；离线记录被删除。
+     * 原版玩家数据文件不迁移，保留目标正版 UUID 的旧文件。
+     *
+     * @return true 迁移完成；false 离线记录或目标正版记录不存在
+     */
+    boolean migrateToPremiumInheritingTarget(UUID offlineUuid, UUID premiumUuid, String name, String properties) {
+        PlayerData offline = manager.cached(offlineUuid);
+        PlayerData target = manager.cached(premiumUuid);
+        if (offline == null || target == null || !target.premium()) return false;
+        if (Debug.on()) {
+            Debug.log("db", "migrate offline->premium (inherit target): %s", name);
+        }
+        manager.unindex(target.name());
+        manager.discard(offlineUuid, offline.name());
+        PlayerData merged = new PlayerData(premiumUuid, name, target.passwordHash(), target.ip(),
+                target.lastLogin(), target.logoutLocation(), true, properties, target.gameMode(),
+                target.totpSecret(), target.lastActive());
+        manager.store(premiumUuid, merged, name);
+        submitMigration(offlineUuid, "migrate offline->premium (inherit) failed (transaction)",
+                conn -> database.upsertRow(conn, merged));
+        return true;
+    }
+
+    /**
      * 将正版账号迁移回离线账号（正版降级为离线）。
      * 用离线 UUID 创建新记录，保留密码、2FA 密钥、退出位置等数据，premium=0，清除皮肤 properties。
      * 异步落库：删除正版记录 + 写入离线记录。

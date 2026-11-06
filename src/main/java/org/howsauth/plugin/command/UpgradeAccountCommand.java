@@ -4,6 +4,7 @@ import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import org.howsauth.plugin.HowSAuth;
 import org.howsauth.plugin.I18n;
+import org.howsauth.plugin.data.PlayerData;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
@@ -12,8 +13,11 @@ import java.util.UUID;
 
 /**
  * 升级指令：将离线账号升级为正版账号。
- * 玩家输入指令后添加升级标记，下一次进入服务器时尝试正版验证，
- * 验证成功则迁移账号为正版（保留退出位置等数据），失败则回退为离线账号。
+ * <p>
+ * /upgrade：切换升级标记（默认覆盖模式）。
+ * /upgrade confirm：使用当前离线账号数据覆盖目标正版账号。
+ * /upgrade &lt;玩家名&gt;：升级到指定正版账号，并保留该账号原有数据，不执行覆盖。
+ * /upgrade cancel：取消升级请求。
  */
 public final class UpgradeAccountCommand implements BasicCommand {
 
@@ -34,6 +38,15 @@ public final class UpgradeAccountCommand implements BasicCommand {
             player.sendMessage(I18n.msg("listener.must_login", player));
             return;
         }
+        String sub = args.length > 0 ? args[0] : "";
+        UUID offlineUuid = player.getUniqueId();
+
+        // 取消不依赖当前账号状态，随时可用
+        if (sub.equalsIgnoreCase("cancel")) {
+            player.sendMessage(I18n.msg(plugin.accounts().cancelUpgrade(offlineUuid)
+                    ? "upgrade.cancelled" : "upgrade.nothing_to_cancel", player));
+            return;
+        }
         if (plugin.accounts().isPremium(player)) {
             player.sendMessage(I18n.msg("upgrade.already_premium", player));
             return;
@@ -43,18 +56,37 @@ public final class UpgradeAccountCommand implements BasicCommand {
             player.sendMessage(I18n.msg("feature.disabled", player));
             return;
         }
-
-        UUID offlineUuid = player.getUniqueId();
         if (!plugin.accounts().hasAccount(offlineUuid)) {
             player.sendMessage(I18n.msg("upgrade.no_account", player));
             return;
         }
 
-        // 重复执行即取消已提交的升级请求
-        if (plugin.accounts().toggleUpgrade(offlineUuid)) {
+        // 显式覆盖模式；与默认无参升级一致
+        if (sub.equalsIgnoreCase("confirm")) {
+            plugin.accounts().markUpgrade(offlineUuid, false, null);
             player.sendMessage(I18n.msg("upgrade.marked_success", player));
-        } else {
+            return;
+        }
+
+        // 指定正版玩家名：升级到该账号，但保留目标账号原有数据
+        if (!sub.isEmpty()) {
+            PlayerData target = plugin.playerData().getByName(sub);
+            if (target == null || !target.premium() || target.uuid().equals(offlineUuid)) {
+                player.sendMessage(I18n.msg("upgrade.inherit_target_missing", player, sub));
+                return;
+            }
+            plugin.accounts().markUpgrade(offlineUuid, true, target.name());
+            player.sendMessage(I18n.msg("upgrade.inherit_marked", player, target.name()));
+            return;
+        }
+
+        // 无参数保持原有切换语义：无标记则默认覆盖升级，已有标记则取消
+        if (plugin.accounts().hasPendingUpgrade(offlineUuid)) {
+            plugin.accounts().cancelUpgrade(offlineUuid);
             player.sendMessage(I18n.msg("upgrade.cancelled", player));
+        } else {
+            plugin.accounts().markUpgrade(offlineUuid, false, null);
+            player.sendMessage(I18n.msg("upgrade.marked_success", player));
         }
     }
 }

@@ -154,6 +154,12 @@ public final class PlayerDataManager implements AutoCloseable {
         return migration.migrateToOffline(premiumUuid, offlineUuid);
     }
 
+    /** 升级到已存在的正版 UUID，但保留目标账号原有数据（不覆盖）。 */
+    public boolean migrateToPremiumInheritingTarget(UUID offlineUuid, UUID premiumUuid,
+                                                    String name, String properties) {
+        return migration.migrateToPremiumInheritingTarget(offlineUuid, premiumUuid, name, properties);
+    }
+
     // ===== 供 AccountMigration 使用的缓存钩子 =====
     // 迁移需要在"同一时刻"同时改动缓存、名字索引、脏标记与写队列；这些动作集中在此，
     // 让迁移逻辑不必了解缓存的数据结构，也让脏标记/重试计数的清理只写一遍。

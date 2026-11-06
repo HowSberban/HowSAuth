@@ -231,6 +231,48 @@ class PlayerDataManagerMigrationTest {
         assertNull(data.getPlayer(offlineUuid), "no offline record may be created");
     }
 
+    /** 指定正版账号升级：保留目标记录原有数据，只更新名字/皮肤，离线记录被删除 */
+    @Test
+    void migrateToPremiumInheritingTargetKeepsTargetData() {
+        UUID offlineUuid = offlineUuidOf("OfflineNewName");
+        UUID premiumUuid = UUID.randomUUID();
+        PlayerDataManager data = env.data();
+
+        data.createPlayer(offlineUuid, "offline-pw", IP);
+        PlayerData offline = data.getPlayer(offlineUuid);
+        offline.logoutLocation("offline_world:1.0:2.0:3.0:0.0:0.0");
+        offline.totpSecret("OFFLINETOTP");
+        offline.gameMode("SURVIVAL");
+        data.saveNow(offlineUuid);
+
+        data.createPremiumPlayer(premiumUuid, "OldPremiumName", IP, "{\"old\":true}");
+        PlayerData target = data.getPlayer(premiumUuid);
+        target.passwordHash("premium-pw");
+        target.totpSecret("PREMIUMTOTP");
+        target.logoutLocation("premium_world:9.0:70.0:9.0:90.0:0.0");
+        target.gameMode("CREATIVE");
+        target.lastLogin(1234L);
+        data.saveNow(premiumUuid);
+
+        assertTrue(data.migrateToPremiumInheritingTarget(offlineUuid, premiumUuid,
+                        "NewPremiumName", "{\"new\":true}"),
+                "an existing premium target must be inheritable");
+
+        assertFalse(data.hasAccount(offlineUuid), "the offline record must be removed");
+        PlayerData merged = data.getPlayer(premiumUuid);
+        assertNotNull(merged, "the premium record must remain");
+        assertEquals("NewPremiumName", merged.name(), "the official name must be applied");
+        assertEquals("premium-pw", merged.passwordHash(), "the target password must be kept");
+        assertEquals("PREMIUMTOTP", merged.totpSecret(), "the target 2FA secret must be kept");
+        assertEquals("premium_world:9.0:70.0:9.0:90.0:0.0", merged.logoutLocation(),
+                "the target logout location must be kept");
+        assertEquals("CREATIVE", merged.gameMode(), "the target game mode must be kept");
+        assertEquals(1234L, merged.lastLogin(), "the target last login must be kept");
+        assertEquals("{\"new\":true}", merged.properties(), "the skin must be refreshed from Mojang");
+        assertNull(data.getByName("OldPremiumName"), "the old premium name index must be removed");
+        assertEquals(premiumUuid, data.findUuidByName("NewPremiumName"), "the new name must be indexed");
+    }
+
     // ---------- 辅助 ----------
 
     /** 原版离线模式 UUID 推导，与生产实现同式 */

@@ -99,6 +99,12 @@ public final class DataService {
         return dataManager.migrateToPremium(offlineUuid, premiumUuid, name, ip, propertiesJson);
     }
 
+    /** 升级到已存在的正版 UUID，保留目标账号原有数据（不覆盖）。 */
+    public boolean migrateToPremiumInheritingTarget(UUID offlineUuid, UUID premiumUuid,
+                                                    String name, String propertiesJson) {
+        return dataManager.migrateToPremiumInheritingTarget(offlineUuid, premiumUuid, name, propertiesJson);
+    }
+
     /** 按玩家名查询正版账号（premium=1），用于正版验证失败时回退密码登录的 UUID 定位 */
     public PlayerData getByName(String name) {
         return dataManager.getByName(name);

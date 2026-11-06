@@ -42,7 +42,7 @@ public final class AccountLifecycle {
     private final Runnable expiredStateCleanup;
 
     // 待升级离线账号（离线 UUID）：玩家执行升级指令后标记，下次登录时尝试正版验证
-    private final Set<UUID> pendingUpgrade = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, UpgradeRequest> pendingUpgrade = new ConcurrentHashMap<>();
     // 正版账号降级标记（内存，不持久化）：下次进入时迁移数据到离线 UUID
     private final Set<UUID> pendingDowngrade = ConcurrentHashMap.newKeySet();
     // 正版验证失败回退进入的正版玩家（正版 UUID → 标记时间戳）：本次需密码登录，不自动免密。
@@ -250,21 +250,33 @@ public final class AccountLifecycle {
 
     // ===== 离线账号升级为正版 =====
 
+    /** 升级请求：inherit=true 时保留目标正版账号原有数据，不执行覆盖。 */
+    public record UpgradeRequest(boolean inherit, String targetName) {
+    }
+
     /**
-     * 切换升级标记：无标记则打上（返回 true），已有标记则取消（返回 false）。
-     * 重复执行 /upgrade 即取消已提交的升级请求
+     * 标记升级：confirm/普通升级为覆盖模式，指定玩家名为继承模式。
+     * 返回 false 表示此前已有同 UUID 的标记（已被本次覆盖）。
      */
-    public boolean toggleUpgrade(UUID offlineUuid) {
-        if (!pendingUpgrade.add(offlineUuid)) {
-            pendingUpgrade.remove(offlineUuid);
-            return false;
-        }
-        return true;
+    public boolean markUpgrade(UUID offlineUuid, boolean inherit, String targetName) {
+        UpgradeRequest previous = pendingUpgrade.put(offlineUuid,
+                new UpgradeRequest(inherit, targetName));
+        return previous == null;
+    }
+
+    /** 取消升级标记 */
+    public boolean cancelUpgrade(UUID offlineUuid) {
+        return pendingUpgrade.remove(offlineUuid) != null;
     }
 
     /** 检查离线账号是否有升级标记 */
     public boolean hasPendingUpgrade(UUID offlineUuid) {
-        return pendingUpgrade.contains(offlineUuid);
+        return pendingUpgrade.containsKey(offlineUuid);
+    }
+
+    /** 读取升级请求（迁移前判断是否继承目标账号） */
+    public UpgradeRequest getUpgradeRequest(UUID offlineUuid) {
+        return pendingUpgrade.get(offlineUuid);
     }
 
     /** 清除升级标记（验证成功或失败回退时调用） */
