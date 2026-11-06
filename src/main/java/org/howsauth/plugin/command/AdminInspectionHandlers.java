@@ -20,6 +20,8 @@ import java.util.UUID;
 /**
  * 管理员检查类子命令：reload、debug dump、账号关联查询。
  */
+// 检查类处理函数统一返回 SINGLE_SUCCESS，由命令树消费
+@SuppressWarnings("SameReturnValue")
 final class AdminInspectionHandlers {
 
     private final HowSAuth plugin;

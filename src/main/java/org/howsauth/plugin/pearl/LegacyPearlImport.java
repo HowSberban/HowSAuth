@@ -30,7 +30,7 @@ final class LegacyPearlImport {
     static PearlSnapshot parseSnapshot(Map<?, ?> map) {
         Object worldValue = map.get("world");
         if (!(worldValue instanceof String world)) return null;
-        if (!SnapshotCodec.isValidWorld(world)) return null;
+        if (SnapshotCodec.isInvalidWorld(world)) return null;
         double x = number(map.get("x"));
         double y = number(map.get("y"));
         double z = number(map.get("z"));

@@ -144,7 +144,7 @@ final class SnapshotCodec {
 
     private static void writeSnapshot(DataOutputStream out, PearlSnapshot snapshot) throws IOException {
         String world = snapshot.world();
-        if (!isValidWorld(world)) {
+        if (isInvalidWorld(world)) {
             throw new IllegalArgumentException("invalid pearl snapshot world");
         }
         byte[] worldBytes = world.getBytes(StandardCharsets.UTF_8);
@@ -191,10 +191,10 @@ final class SnapshotCodec {
         return new PearlSnapshot(pearlId, legacy, world, x, y, z, vx, vy, vz);
     }
 
-    /** 世界名必须非空且长度在二进制格式可表达的范围内（编码/旧 YAML 迁移共用） */
-    static boolean isValidWorld(String world) {
-        if (world == null || world.isEmpty()) return false;
-        return world.getBytes(StandardCharsets.UTF_8).length <= MAX_WORLD_BYTES;
+    /** 世界名是否无法写入二进制格式：缺失、为空或超出长度上限（编码/旧 YAML 迁移共用）。 */
+    static boolean isInvalidWorld(String world) {
+        if (world == null || world.isEmpty()) return true;
+        return world.getBytes(StandardCharsets.UTF_8).length > MAX_WORLD_BYTES;
     }
 
     private static void writeFinite(DataOutputStream out, double value) throws IOException {

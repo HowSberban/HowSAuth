@@ -64,11 +64,6 @@ public final class PlayerListener implements Listener {
         joinAuthFlow.onRegisterSuccess(event);
     }
 
-    /** 挂起玩家等待登录/2FA：旁观保护、提示、提醒与超时。 */
-    public void suspend(Player player, String messageKey, boolean needsLogin) {
-        joinAuthFlow.suspend(player, messageKey, needsLogin);
-    }
-
     /** 根据账号状态开始登录/注册挂起流程。 */
     public void beginAuthFlow(Player player) {
         joinAuthFlow.beginAuthFlow(player);
